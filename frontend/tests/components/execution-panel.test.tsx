@@ -119,19 +119,8 @@ describe('ExecutionPanel', () => {
     expect(screen.getByRole('button', { name: /^Execute$/ })).toBeDisabled();
   });
 
-  it('shows Compensate Workflow only for an eligible (failed/succeeded) workflow', () => {
-    const { rerender } = render(
-      <ExecutionPanel
-        workflow={makeWorkflow({ status: 'pending' })}
-        onExecute={vi.fn()}
-        onCompensate={vi.fn()}
-        executing={false}
-        compensating={false}
-      />
-    );
-    expect(screen.queryByRole('button', { name: /Compensate Workflow/ })).not.toBeInTheDocument();
-
-    rerender(
+  it('shows Compensate Workflow for a failed workflow — the only status the backend accepts', () => {
+    render(
       <ExecutionPanel
         workflow={makeWorkflow({ status: 'failed' })}
         onExecute={vi.fn()}
@@ -141,6 +130,48 @@ describe('ExecutionPanel', () => {
       />
     );
     expect(screen.getByRole('button', { name: /Compensate Workflow/ })).toBeInTheDocument();
+  });
+
+  // Every status other than 'failed' must hide the action — most notably
+  // 'succeeded', which the backend rejects with 409 INVALID_COMPENSATION_STATE.
+  const INELIGIBLE_STATUSES: WorkflowRead['status'][] = [
+    'succeeded',
+    'pending',
+    'running',
+    'compensating',
+    'compensated',
+    'cancelled',
+  ];
+
+  it.each(INELIGIBLE_STATUSES)('hides Compensate Workflow for %s', (status) => {
+    render(
+      <ExecutionPanel
+        workflow={makeWorkflow({ status })}
+        onExecute={vi.fn()}
+        onCompensate={vi.fn()}
+        executing={false}
+        compensating={false}
+      />
+    );
+    expect(screen.queryByRole('button', { name: /Compensate Workflow/ })).not.toBeInTheDocument();
+  });
+
+  it('cannot trigger the compensation API from the UI for a succeeded workflow', () => {
+    const onCompensate = vi.fn();
+    render(
+      <ExecutionPanel
+        workflow={makeWorkflow({ status: 'succeeded' })}
+        onExecute={vi.fn()}
+        onCompensate={onCompensate}
+        executing={false}
+        compensating={false}
+      />
+    );
+
+    // No control exists to invoke it, so onCompensate (which calls the
+    // POST .../compensate service) can never be called by user interaction.
+    expect(screen.queryByRole('button', { name: /Compensate Workflow/ })).not.toBeInTheDocument();
+    expect(onCompensate).not.toHaveBeenCalled();
   });
 
   it('disables Execute while a request is already in progress, preventing duplicate submission', () => {

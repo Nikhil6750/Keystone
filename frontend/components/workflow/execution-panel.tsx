@@ -5,9 +5,9 @@ import { Clock, Play, Undo2 } from 'lucide-react';
 import type { WorkflowRead, WorkflowStepRead } from '@/types/backend';
 import {
   attemptStatusLabel,
+  canCompensateWorkflow,
   compensationAttemptStatusLabel,
   formatTimestamp,
-  isWorkflowCompensable,
   isWorkflowExecutable,
   stepStatusLabel,
   stepStatusTone,
@@ -115,7 +115,7 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
   const sortedSteps = [...workflow.steps].sort((a, b) => a.position - b.position);
 
   const canExecute = isWorkflowExecutable(workflow.status);
-  const canCompensate = isWorkflowCompensable(workflow.status);
+  const canCompensate = canCompensateWorkflow(workflow.status);
 
   return (
     <div className="space-y-4">

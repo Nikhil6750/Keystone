@@ -118,9 +118,16 @@ export function circuitBreakerStateTone(state: CircuitBreakerState): SemanticTon
   return CIRCUIT_BREAKER_STATE_TONES[state];
 }
 
-/** Only these workflow statuses may be compensated (see docs/api-contract.md). */
-export function isWorkflowCompensable(status: WorkflowStatus): boolean {
-  return status === 'failed' || status === 'succeeded';
+/**
+ * Only a `FAILED` workflow may be manually compensated — the backend rejects
+ * every other status, including `succeeded`, with `409 INVALID_COMPENSATION_STATE`
+ * (see `backend/app/engine/compensation.py`'s `compensate_workflow`, which checks
+ * `status is not WorkflowStatus.FAILED`, and `docs/api-contract.md`). This is the
+ * single place that decides compensation eligibility in the frontend — no other
+ * component or page duplicates this condition.
+ */
+export function canCompensateWorkflow(status: WorkflowStatus): boolean {
+  return status === 'failed';
 }
 
 /** Only a `PENDING` workflow may begin execution. */

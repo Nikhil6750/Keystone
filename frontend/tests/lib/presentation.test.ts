@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  canCompensateWorkflow,
   compensationAttemptStatusLabel,
-  isWorkflowCompensable,
   isWorkflowExecutable,
   workflowStatusLabel,
 } from '@/lib/presentation';
@@ -29,14 +29,14 @@ describe('workflowStatusLabel', () => {
     expect(ALL_STATUSES).not.toContain('Completed');
   });
 
-  it('marks only failed/succeeded as compensable', () => {
-    expect(isWorkflowCompensable('failed')).toBe(true);
-    expect(isWorkflowCompensable('succeeded')).toBe(true);
-    expect(isWorkflowCompensable('pending')).toBe(false);
-    expect(isWorkflowCompensable('running')).toBe(false);
-    expect(isWorkflowCompensable('compensating')).toBe(false);
-    expect(isWorkflowCompensable('compensated')).toBe(false);
-    expect(isWorkflowCompensable('cancelled')).toBe(false);
+  it('marks only failed as compensable — the backend rejects every other status, including succeeded, with 409 INVALID_COMPENSATION_STATE', () => {
+    expect(canCompensateWorkflow('failed')).toBe(true);
+    expect(canCompensateWorkflow('succeeded')).toBe(false);
+    expect(canCompensateWorkflow('pending')).toBe(false);
+    expect(canCompensateWorkflow('running')).toBe(false);
+    expect(canCompensateWorkflow('compensating')).toBe(false);
+    expect(canCompensateWorkflow('compensated')).toBe(false);
+    expect(canCompensateWorkflow('cancelled')).toBe(false);
   });
 
   it('marks only pending as executable', () => {

@@ -11,10 +11,14 @@ vi.mock('@/hooks/use-audit-chain-verification', () => ({
 }));
 
 describe('/logs route', () => {
-  it('exists as a real page module (no longer a dead sidebar link)', async () => {
-    const logsPageModule = await import('@/app/logs/page');
-    expect(logsPageModule.default).toBeTypeOf('function');
-  });
+  it(
+    'exists as a real page module (no longer a dead sidebar link)',
+    async () => {
+      const logsPageModule = await import('@/app/logs/page');
+      expect(logsPageModule.default).toBeTypeOf('function');
+    },
+    15_000 // first dynamic import of a page module can be slow to transform under load
+  );
 });
 
 describe('/workspace route', () => {

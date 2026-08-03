@@ -45,15 +45,47 @@ Implemented:
 No real agent executors are registered — `POST .../execute` returns `503` for
 any workflow with at least one step until Phase 3.
 
-## Phase 3: Agent adapters and resilience — `PLANNED`
+## Phase 3: Agent adapters and resilience — `COMPLETE`
 
-- Base agent adapter contract
-- Claude Code adapter
-- Codex adapter
-- Gemini adapter
-- Local mock adapter
-- Retry policies
-- Circuit breaker
+Implemented:
+
+- Safe subprocess execution boundary (`backend/app/adapters/process_runner.py`):
+  `shell=False`, list arguments, isolated temp working directory, restricted
+  environment, timeout and output-size enforcement, sanitized/bounded stderr
+- `CLIProfile` and its validating factory `create_cli_profile`
+  (`backend/app/adapters/types.py`); typed adapter exceptions carrying a stable
+  error code and retryability (`backend/app/adapters/exceptions.py`)
+- Shared deterministic prompt builder (`backend/app/adapters/prompt_builder.py`)
+  and the shared `LocalCLIAdapter` (`backend/app/adapters/local_cli.py`)
+  subclassed by `ClaudeCodeAdapter`, `CodexAdapter`, `GeminiAdapter` — each using
+  the operator's own local, already-authenticated CLI session; no paid HTTP
+  APIs, no stored credentials
+- `DemoAgentAdapter` (`backend/app/adapters/demo.py`): no subprocess, no
+  network, disabled by default, clearly self-labeled
+- Settings-driven registration (`backend/app/adapters/factory.py`), composed
+  once during FastAPI lifespan; never launches a process at startup, never
+  fails startup because an optional agent is disabled or unavailable
+- Agent-availability service and API: `GET /api/v1/agents`
+  (`backend/app/services/agent_availability.py`,
+  `backend/app/api/routes/agents.py`)
+- Bounded exponential-backoff retry (`backend/app/resilience/retry.py`) and a
+  thread-safe, in-memory, per-agent-type circuit breaker with
+  CLOSED/OPEN/HALF_OPEN states (`backend/app/resilience/circuit_breaker.py`),
+  both integrated into `WorkflowEngine` additively (Phase 2 behavior for
+  non-retryable failures is unchanged)
+- Circuit-breaker status API: `GET /api/v1/resilience/circuit-breakers`
+  (`backend/app/api/routes/resilience.py`)
+- `CIRCUIT_BREAKER_OPEN` → `503` added to the error envelope
+- Comprehensive tests (process runner, CLI profile validation, adapters, demo
+  adapter, availability, retry policy, circuit breaker, engine retry/circuit
+  integration, API) — all using fakes; no automated test launches a real
+  provider process
+- Manually verified: local `claude` CLI detected (v2.1.154; `-p`/
+  `--output-format json` confirmed via `--help`); `codex`/`gemini` not
+  installed in this environment, left disabled by default; a demo workflow
+  execution (`agent_type=demo`) succeeded end-to-end via the live API; retry
+  and circuit-breaker behavior verified end-to-end via the live API using a
+  harmless, deterministic local stand-in command (no real provider contacted)
 
 ## Phase 4: Compensation and audit — `PLANNED`
 

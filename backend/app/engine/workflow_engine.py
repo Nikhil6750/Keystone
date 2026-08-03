@@ -1,4 +1,4 @@
-"""Synchronous, sequential workflow execution engine."""
+"""Synchronous, sequential workflow execution engine with retry and circuit-breaker support."""
 
 import json
 import logging
@@ -14,9 +14,21 @@ from app.models.enums import AttemptStatus, StepStatus, WorkflowStatus
 from app.models.step_attempt import StepAttempt
 from app.models.workflow import Workflow
 from app.models.workflow_step import WorkflowStep
+from app.resilience.circuit_breaker import (
+    CircuitBreakerOpenError,
+    CircuitBreakerRegistry,
+    CircuitState,
+)
+from app.resilience.retry import RetryPolicy
+from app.resilience.sleeper import RealSleeper, Sleeper
 from app.services import workflow_service
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_FAILURE_THRESHOLD = 3
+_DEFAULT_RECOVERY_TIMEOUT_SECONDS = 30.0
+_DEFAULT_RETRY_BASE_DELAY_SECONDS = 0.5
+_DEFAULT_RETRY_MAX_DELAY_SECONDS = 5.0
 
 
 def _ensure_json_compatible(output: Any) -> dict[str, Any]:
@@ -34,20 +46,45 @@ def _ensure_json_compatible(output: Any) -> dict[str, Any]:
 
 
 class WorkflowEngine:
-    """Executes a workflow's steps sequentially against an executor registry."""
+    """Executes a workflow's steps sequentially against an executor registry.
 
-    def __init__(self, db: Session, registry: ExecutorRegistry) -> None:
+    Retries a step whose failure is marked `retryable` (see `StepExecutionError`)
+    while it has attempts remaining and its circuit breaker permits another
+    call; otherwise it fails the step and workflow immediately, exactly as in
+    Phase 2. `circuit_breakers` and `retry_policy` default to conservative
+    built-in settings so the Phase 2 two-argument constructor call keeps working.
+    """
+
+    def __init__(
+        self,
+        db: Session,
+        registry: ExecutorRegistry,
+        *,
+        circuit_breakers: CircuitBreakerRegistry | None = None,
+        retry_policy: RetryPolicy | None = None,
+        sleeper: Sleeper | None = None,
+    ) -> None:
         self._db = db
         self._registry = registry
+        self._circuit_breakers = circuit_breakers or CircuitBreakerRegistry(
+            failure_threshold=_DEFAULT_FAILURE_THRESHOLD,
+            recovery_timeout_seconds=_DEFAULT_RECOVERY_TIMEOUT_SECONDS,
+        )
+        self._retry_policy = retry_policy or RetryPolicy(
+            base_delay_seconds=_DEFAULT_RETRY_BASE_DELAY_SECONDS,
+            max_delay_seconds=_DEFAULT_RETRY_MAX_DELAY_SECONDS,
+        )
+        self._sleeper = sleeper or RealSleeper()
 
     def execute_workflow(self, workflow_id: str) -> Workflow:
         """Run a `PENDING` workflow's steps to completion (or first failure).
 
-        Raises `WorkflowNotFoundError` if the workflow does not exist, and
-        `InvalidWorkflowStateError` if it is not `PENDING`. Raises
+        Raises `WorkflowNotFoundError` if the workflow does not exist,
+        `InvalidWorkflowStateError` if it is not `PENDING`,
         `ExecutorNotRegisteredError` if a step's agent type has no registered
-        executor. Returns the persisted workflow (SUCCEEDED or FAILED) for any
-        other step failure.
+        executor, and `CircuitBreakerOpenError` if a step's circuit is open.
+        Returns the persisted workflow (SUCCEEDED or FAILED) for any other
+        step failure.
         """
         workflow = workflow_service.get_workflow(self._db, workflow_id)
         if workflow is None:
@@ -74,6 +111,12 @@ class WorkflowEngine:
                     "workflow_execution_failed workflow_id=%s reason=%s", workflow.id, exc
                 )
                 raise
+            except CircuitBreakerOpenError as exc:
+                self._fail_workflow(workflow.id, error_message=str(exc))
+                logger.warning(
+                    "workflow_execution_failed workflow_id=%s reason=%s", workflow.id, exc
+                )
+                raise
             except StepExecutionError as exc:
                 self._fail_workflow(workflow.id, error_message=str(exc))
                 logger.warning(
@@ -94,30 +137,13 @@ class WorkflowEngine:
     def _execute_step(
         self, workflow: Workflow, step: WorkflowStep, context: ExecutionContext
     ) -> ExecutionContext:
+        # Resolved once: the registry does not change mid-step, and a missing
+        # executor is neither retryable nor circuit-related (Phase 2 behavior).
         workflow_service.transition_step(self._db, step.id, StepStatus.RUNNING)
-        attempt = workflow_service.create_step_attempt(self._db, step.id)
-
-        logger.info(
-            "step_execution_started workflow_id=%s step_id=%s agent_type=%s attempt_number=%s",
-            workflow.id,
-            step.id,
-            step.agent_type,
-            attempt.attempt_number,
-        )
-
         try:
             executor = self._registry.get(step.agent_type)
-            request = StepExecutionRequest(
-                workflow_id=workflow.id,
-                step_id=step.id,
-                step_name=step.name,
-                agent_type=step.agent_type,
-                step_input=dict(step.input_payload),
-                workflow_input=context.workflow_input,
-                previous_step_outputs=context.previous_step_outputs,
-            )
-            output = _ensure_json_compatible(executor.execute(request))
         except ExecutorNotRegisteredError as exc:
+            attempt = workflow_service.create_step_attempt(self._db, step.id)
             logger.warning(
                 "executor_not_registered workflow_id=%s step_id=%s agent_type=%s",
                 workflow.id,
@@ -128,43 +154,109 @@ class WorkflowEngine:
                 attempt, step, error_type="AGENT_EXECUTOR_NOT_REGISTERED", error_message=str(exc)
             )
             raise
-        except StepExecutionError as exc:
-            logger.warning(
-                "step_execution_failed workflow_id=%s step_id=%s error_type=%s",
+
+        breaker = self._circuit_breakers.get_or_create(step.agent_type)
+        max_attempts = step.max_attempts
+        attempt_number = 0
+
+        while True:
+            attempt_number += 1
+            attempt = workflow_service.create_step_attempt(self._db, step.id)
+            logger.info(
+                "step_execution_started workflow_id=%s step_id=%s agent_type=%s "
+                "attempt_number=%s max_attempts=%s",
                 workflow.id,
                 step.id,
-                exc.error_type,
+                step.agent_type,
+                attempt_number,
+                max_attempts,
             )
-            self._fail_step(attempt, step, error_type=exc.error_type, error_message=str(exc))
-            raise
-        except Exception:
-            logger.exception(
-                "step_execution_failed workflow_id=%s step_id=%s unexpected_error=true",
+
+            try:
+                breaker.before_call()
+            except CircuitBreakerOpenError as exc:
+                self._fail_step(
+                    attempt, step, error_type="CIRCUIT_BREAKER_OPEN", error_message=str(exc)
+                )
+                raise
+
+            try:
+                request = StepExecutionRequest(
+                    workflow_id=workflow.id,
+                    step_id=step.id,
+                    step_name=step.name,
+                    agent_type=step.agent_type,
+                    step_input=dict(step.input_payload),
+                    workflow_input=context.workflow_input,
+                    previous_step_outputs=context.previous_step_outputs,
+                )
+                output = _ensure_json_compatible(executor.execute(request))
+            except StepExecutionError as exc:
+                if exc.retryable:
+                    breaker.record_failure()
+                circuit_open_now = breaker.snapshot().state is CircuitState.OPEN
+                can_retry = exc.retryable and attempt_number < max_attempts and not circuit_open_now
+                logger.warning(
+                    "step_execution_failed workflow_id=%s step_id=%s error_type=%s "
+                    "retryable=%s attempt_number=%s",
+                    workflow.id,
+                    step.id,
+                    exc.error_type,
+                    exc.retryable,
+                    attempt_number,
+                )
+                if can_retry:
+                    workflow_service.complete_step_attempt(
+                        self._db,
+                        attempt.id,
+                        status=AttemptStatus.FAILED,
+                        error_type=exc.error_type,
+                        error_message=str(exc),
+                    )
+                    workflow_service.transition_step(self._db, step.id, StepStatus.RETRYING)
+                    delay = self._retry_policy.compute_delay(attempt_number)
+                    logger.info(
+                        "agent_retry_scheduled workflow_id=%s step_id=%s attempt_number=%s "
+                        "delay_seconds=%.3f",
+                        workflow.id,
+                        step.id,
+                        attempt_number,
+                        delay,
+                    )
+                    self._sleeper.sleep(delay)
+                    workflow_service.transition_step(self._db, step.id, StepStatus.RUNNING)
+                    continue
+                self._fail_step(attempt, step, error_type=exc.error_type, error_message=str(exc))
+                raise
+            except Exception:
+                logger.exception(
+                    "step_execution_failed workflow_id=%s step_id=%s unexpected_error=true",
+                    workflow.id,
+                    step.id,
+                )
+                self._fail_step(
+                    attempt,
+                    step,
+                    error_type="UNEXPECTED_ERROR",
+                    error_message="an unexpected error occurred during step execution",
+                )
+                raise
+
+            breaker.record_success()
+            workflow_service.complete_step_attempt(
+                self._db, attempt.id, status=AttemptStatus.SUCCEEDED, output_payload=output
+            )
+            updated_step = workflow_service.transition_step(self._db, step.id, StepStatus.SUCCEEDED)
+            updated_step.output_payload = output
+            self._db.commit()
+
+            logger.info(
+                "step_execution_succeeded workflow_id=%s step_id=%s attempt_number=%s",
                 workflow.id,
                 step.id,
+                attempt_number,
             )
-            self._fail_step(
-                attempt,
-                step,
-                error_type="UNEXPECTED_ERROR",
-                error_message="an unexpected error occurred during step execution",
-            )
-            raise
-
-        workflow_service.complete_step_attempt(
-            self._db, attempt.id, status=AttemptStatus.SUCCEEDED, output_payload=output
-        )
-        updated_step = workflow_service.transition_step(self._db, step.id, StepStatus.SUCCEEDED)
-        updated_step.output_payload = output
-        self._db.commit()
-
-        logger.info(
-            "step_execution_succeeded workflow_id=%s step_id=%s attempt_number=%s",
-            workflow.id,
-            step.id,
-            attempt.attempt_number,
-        )
-        return context.with_step_output(step.id, output)
+            return context.with_step_output(step.id, output)
 
     def _fail_step(
         self, attempt: StepAttempt, step: WorkflowStep, *, error_type: str, error_message: str

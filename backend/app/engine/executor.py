@@ -20,13 +20,23 @@ class StepExecutionRequest:
 class StepExecutionError(Exception):
     """Raised by an executor for an expected, handleable step failure.
 
-    The engine catches this, persists the step/attempt/workflow as FAILED, and
-    stops processing later steps without retrying.
+    The engine catches this and persists the step/attempt/workflow as FAILED.
+    When `retryable` is `True` and the step has attempts remaining and its
+    circuit breaker permits another call, the engine retries instead of
+    failing immediately; `retryable=False` (the default) preserves the
+    original Phase 2 behavior of stopping immediately without retrying.
     """
 
-    def __init__(self, message: str, *, error_type: str = "STEP_EXECUTION_FAILED") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_type: str = "STEP_EXECUTION_FAILED",
+        retryable: bool = False,
+    ) -> None:
         super().__init__(message)
         self.error_type = error_type
+        self.retryable = retryable
 
 
 class AgentExecutor(Protocol):

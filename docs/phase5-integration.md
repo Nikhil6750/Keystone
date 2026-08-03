@@ -106,11 +106,14 @@ the backend, which has none.
 `components/workflow/compensate-dialog.tsx` requires an explicit confirmation
 ("Keystone will run configured compensation handlers ... in reverse order ... best-effort
 and may not reverse every external side effect.") before calling
-`POST .../compensate`. The button only ever appears for a `failed` or `succeeded`
-workflow (`lib/presentation.ts`'s `isWorkflowCompensable`), and disappears once the
-workflow is `compensating`/`compensated`/`cancelled`/`pending`/`running` — it cannot be
-invoked twice from the UI, and the backend itself would reject a second call with
-`409 COMPENSATION_ALREADY_COMPLETED` regardless.
+`POST .../compensate`. The button only ever appears for a `failed` workflow
+(`lib/presentation.ts`'s `canCompensateWorkflow`) — a `succeeded` workflow can never be
+compensated, matching the backend's `compensate_workflow`, which accepts only `FAILED`
+and rejects every other status, `succeeded` included, with `409
+INVALID_COMPENSATION_STATE`. The button disappears once the workflow is
+`compensating`/`compensated`/`cancelled`/`pending`/`running` — it cannot be invoked
+twice from the UI, and the backend itself would reject a second call with `409
+COMPENSATION_ALREADY_COMPLETED` regardless.
 
 ## Audit and provenance experience
 

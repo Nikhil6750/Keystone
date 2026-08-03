@@ -205,7 +205,10 @@ Compensates a workflow's already-successful steps in **descending position order
 (reverse of execution order), running each step's configured `compensation_handler`.
 Synchronous, like `.../execute` — the request blocks until compensation finishes.
 
-Only a `FAILED` or `SUCCEEDED` workflow may be compensated, and only once.
+Only a `FAILED` workflow may be compensated, and only once. A `SUCCEEDED` workflow
+can never be compensated — this is a workflow-level status requirement, distinct from
+step-level eligibility: a step is compensated only if it individually `SUCCEEDED`
+*and* has a configured `compensation_handler` (see `compensation_summary` below).
 
 **Response `200 OK`**: the updated `WorkflowRead` — `status: "compensated"` on full
 success, or `status: "failed"` if a step's compensation handler raised an *expected*,
@@ -218,8 +221,9 @@ attempted. A step with no `compensation_handler` configured is skipped and liste
 **Response `404 Not Found`**: `WORKFLOW_NOT_FOUND`.
 
 **Response `409 Conflict`**: `INVALID_COMPENSATION_STATE` — the workflow is not
-`FAILED`/`SUCCEEDED` (e.g. still `PENDING`/`RUNNING`/`COMPENSATING`); or
-`COMPENSATION_ALREADY_COMPLETED` — the workflow is already `COMPENSATED`.
+`FAILED` (e.g. still `PENDING`/`RUNNING`/`SUCCEEDED`/`COMPENSATING`/`CANCELLED`); or
+`COMPENSATION_ALREADY_COMPLETED` — the workflow is already `COMPENSATED`. Neither a
+`COMPENSATING` nor a `COMPENSATED` workflow can begin another compensation run.
 
 **Response `503 Service Unavailable`**: `COMPENSATION_HANDLER_NOT_REGISTERED` — an
 eligible step's `compensation_handler` name has no registered handler; the workflow

@@ -162,7 +162,7 @@ order, with each event's actor, correlated step/attempt IDs, timestamp, and (beh
 | `npm ci` fails with `EBADPLATFORM` | Should not happen after this Phase 5 fix — if it recurs, check `frontend/package.json` for a re-added platform-specific `@next/swc-*` dependency |
 | Agent shows `enabled: true` but `available: false` | The configured executable isn't on `PATH` on the machine running the backend |
 | Execute returns `503 AGENT_EXECUTOR_NOT_REGISTERED` | The step's `agent_type` isn't enabled/registered in the running backend — check `backend/.env` |
-| Compensate returns `409 INVALID_COMPENSATION_STATE` | The workflow isn't currently `failed` or `succeeded` |
+| Compensate returns `409 INVALID_COMPENSATION_STATE` | The workflow isn't currently `failed` — this includes `succeeded`, which can never be manually compensated |
 | Compensate returns `503 COMPENSATION_HANDLER_NOT_REGISTERED` | An eligible step's `compensation_handler` name has no registered handler (only `demo.undo` exists in this prototype, and only when demo mode is enabled) |
 
 ## Known prototype limitations

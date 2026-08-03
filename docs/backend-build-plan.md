@@ -16,14 +16,34 @@ Implemented:
 - Explicit database initialization, wired into the existing FastAPI lifespan
 - Unit tests covering the database layer, schemas, state machine, and service
 
-## Phase 2: Workflow API and execution engine — `PLANNED`
+## Phase 2: Workflow API and execution engine — `COMPLETE`
 
-- Workflow creation API
-- Workflow status API
-- Workflow listing API
-- Step execution sequencing
-- Execution context
-- Workflow result aggregation
+Implemented:
+
+- Workflow REST API: `POST /api/v1/workflows`, `GET /api/v1/workflows/{id}`,
+  `GET /api/v1/workflows`, `POST /api/v1/workflows/{id}/execute`
+  (`backend/app/api/routes/workflows.py`)
+- `{"error": {"code", "message", "details"}}` error envelope, mapping domain
+  exceptions and FastAPI validation errors to `404`/`409`/`422`/`503`/`500`
+  (`backend/app/api/errors.py`, `backend/app/schemas/errors.py`)
+- Synchronous, sequential `WorkflowEngine` (`backend/app/engine/workflow_engine.py`):
+  resolves executors, transitions steps/workflow through the existing state
+  machine, persists attempt history, aggregates step outputs on success, and
+  persists a safe failure state (without retry) on an unregistered executor or
+  an expected step failure
+- `AgentExecutor` protocol and `StepExecutionRequest`/`StepExecutionError`
+  (`backend/app/engine/executor.py`)
+- In-process `ExecutorRegistry`, owned per-application via FastAPI lifespan
+  state — not a module-level singleton (`backend/app/engine/registry.py`)
+- Immutable `ExecutionContext` threading step outputs by stable step ID
+  (`backend/app/engine/context.py`)
+- `workflow_service.set_workflow_result` for persisting aggregated
+  output/error without bypassing the state machine
+- Comprehensive tests: API routes, registry, execution context, engine
+  success/failure paths, and transaction-boundary behavior
+
+No real agent executors are registered — `POST .../execute` returns `503` for
+any workflow with at least one step until Phase 3.
 
 ## Phase 3: Agent adapters and resilience — `PLANNED`
 

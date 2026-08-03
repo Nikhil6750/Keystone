@@ -1,6 +1,6 @@
 export const APP_CONFIG = {
   name: 'Keystone AI',
-  description: 'Production AI SaaS Platform and Analytics Dashboard',
+  description: 'Adaptive Multi-Agent AI Orchestration Platform',
   apiBaseUrl: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
   githubUrl: 'https://github.com/Nikhil6750/Keystone',
   defaultTheme: 'dark',
@@ -8,7 +8,9 @@ export const APP_CONFIG = {
 
 export const ROUTES = {
   home: '/',
-  dashboard: '/dashboard',
-  analytics: '/analytics',
+  chat: '/chat',
+  workflows: '/workflows',
+  agents: '/agents',
+  logs: '/logs',
   settings: '/settings',
 } as const;

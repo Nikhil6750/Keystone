@@ -1,31 +1,42 @@
 'use client';
 
 import * as React from 'react';
-import Link from 'next/link';
+import { motion, AnimatePresence } from 'framer-motion';
 import { AppLayout } from '@/components/common';
-import {
-  GitFork,
-  Search,
-  ChevronDown,
-  RefreshCw,
-  Plus,
-  Play,
-  ShieldCheck,
-  History,
-} from 'lucide-react';
-
-const WORKFLOWS_PLACEHOLDER: Array<{
-  id: string;
-  name: string;
-  status: string;
-  currentStage: string;
-  createdBy: string;
-  duration: string;
-  lastUpdated: string;
-}> = [];
+import { WorkflowItem } from '@/types';
+import { GitFork, Search, RefreshCw, Plus, Play, ShieldCheck, History, X } from 'lucide-react';
 
 export default function WorkflowsPage() {
+  const [workflows, setWorkflows] = React.useState<WorkflowItem[]>([]);
   const [searchTerm, setSearchTerm] = React.useState('');
+  const [statusFilter, setStatusFilter] = React.useState('All');
+  const [isModalOpen, setIsModalOpen] = React.useState(false);
+  const [newWorkflowName, setNewWorkflowName] = React.useState('');
+
+  const handleCreateWorkflow = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newWorkflowName.trim()) return;
+
+    const newWorkflow: WorkflowItem = {
+      id: `wf_${Math.random().toString(36).substring(2, 8)}`,
+      name: newWorkflowName.trim(),
+      status: 'Waiting',
+      currentStage: 'Planner',
+      createdBy: 'KS',
+      duration: '0s',
+      lastUpdated: 'Just now',
+    };
+
+    setWorkflows((prev) => [newWorkflow, ...prev]);
+    setNewWorkflowName('');
+    setIsModalOpen(false);
+  };
+
+  const filteredWorkflows = workflows.filter((wf) => {
+    const matchesSearch = wf.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesStatus = statusFilter === 'All' || wf.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
 
   return (
     <AppLayout showSidebar={true}>
@@ -44,13 +55,14 @@ export default function WorkflowsPage() {
             </p>
           </div>
 
-          <Link
-            href="/chat"
+          <button
+            type="button"
+            onClick={() => setIsModalOpen(true)}
             className="inline-flex shrink-0 items-center justify-center gap-1.5 self-start rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white shadow-sm transition-colors hover:bg-blue-500 sm:self-auto"
           >
             <Plus className="h-4 w-4" />
             <span>New Workflow</span>
-          </Link>
+          </button>
         </div>
 
         {/* Filter Controls Toolbar */}
@@ -72,27 +84,30 @@ export default function WorkflowsPage() {
             {/* Status Filter */}
             <div className="flex min-w-[120px] cursor-pointer items-center justify-between gap-2 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-xs text-zinc-300 hover:border-white/20">
               <span className="text-zinc-500">Status</span>
-              <span className="font-medium text-white">All</span>
-              <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />
-            </div>
-
-            {/* Agent Filter */}
-            <div className="flex min-w-[120px] cursor-pointer items-center justify-between gap-2 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-xs text-zinc-300 hover:border-white/20">
-              <span className="text-zinc-500">Agent</span>
-              <span className="font-medium text-white">All</span>
-              <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />
-            </div>
-
-            {/* Date Range Filter */}
-            <div className="flex min-w-[140px] cursor-pointer items-center justify-between gap-2 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-xs text-zinc-300 hover:border-white/20">
-              <span className="text-zinc-500">Date Range</span>
-              <span className="font-medium text-white">All time</span>
-              <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="cursor-pointer bg-transparent font-medium text-white focus:outline-none"
+              >
+                <option value="All" className="bg-[#0B1120] text-white">
+                  All
+                </option>
+                <option value="Waiting" className="bg-[#0B1120] text-white">
+                  Waiting
+                </option>
+                <option value="Running" className="bg-[#0B1120] text-white">
+                  Running
+                </option>
+                <option value="Completed" className="bg-[#0B1120] text-white">
+                  Completed
+                </option>
+              </select>
             </div>
 
             {/* Refresh Button */}
             <button
               type="button"
+              onClick={() => setSearchTerm('')}
               className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-white/[0.08] hover:text-white"
             >
               <RefreshCw className="h-3.5 w-3.5 text-zinc-400" />
@@ -114,8 +129,8 @@ export default function WorkflowsPage() {
             <div className="text-right">Actions</div>
           </div>
 
-          {/* Table Body Empty State */}
-          {WORKFLOWS_PLACEHOLDER.length === 0 && (
+          {/* Table Body Rows / Empty State */}
+          {filteredWorkflows.length === 0 ? (
             <div className="my-auto flex flex-col items-center justify-center space-y-4 p-12 text-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-blue-500/30 bg-blue-950/40 text-blue-400 shadow-sm">
                 <GitFork className="h-6 w-6" />
@@ -123,18 +138,103 @@ export default function WorkflowsPage() {
               <div className="space-y-1">
                 <h3 className="text-base font-semibold text-white">No workflows yet</h3>
                 <p className="max-w-sm text-xs text-zinc-400">
-                  Create your first workflow from the chat workspace to get started.
+                  Create your first workflow from the chat workspace or click below to get started.
                 </p>
               </div>
-              <Link
-                href="/chat"
+              <button
+                type="button"
+                onClick={() => setIsModalOpen(true)}
                 className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white shadow-sm transition-colors hover:bg-blue-500"
               >
                 Create New Workflow
-              </Link>
+              </button>
+            </div>
+          ) : (
+            <div className="divide-y divide-white/[0.04] text-xs">
+              {filteredWorkflows.map((wf) => (
+                <div
+                  key={wf.id}
+                  className="grid grid-cols-7 items-center gap-4 px-6 py-3.5 text-zinc-300 hover:bg-white/[0.02]"
+                >
+                  <div className="font-semibold text-white">{wf.name}</div>
+                  <div>
+                    <span className="inline-flex items-center gap-1 rounded-full border border-blue-500/30 bg-blue-950/40 px-2 py-0.5 text-[10px] font-medium text-blue-400">
+                      {wf.status}
+                    </span>
+                  </div>
+                  <div>{wf.currentStage}</div>
+                  <div>{wf.createdBy}</div>
+                  <div>{wf.duration}</div>
+                  <div className="text-zinc-500">{wf.lastUpdated}</div>
+                  <div className="text-right">
+                    <button
+                      type="button"
+                      onClick={() => setWorkflows((prev) => prev.filter((w) => w.id !== wf.id))}
+                      className="text-xs text-rose-400 hover:underline"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
+
+        {/* Create Workflow Modal */}
+        <AnimatePresence>
+          {isModalOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="w-full max-w-md space-y-4 rounded-xl border border-white/[0.08] bg-[#0B1120] p-6 shadow-2xl"
+              >
+                <div className="flex items-center justify-between border-b border-white/[0.08] pb-3">
+                  <h3 className="text-sm font-bold text-white">Create New Workflow</h3>
+                  <button
+                    type="button"
+                    onClick={() => setIsModalOpen(false)}
+                    className="text-zinc-400 hover:text-white"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleCreateWorkflow} className="space-y-4 text-xs">
+                  <div className="space-y-1.5">
+                    <label className="block font-medium text-zinc-400">Workflow Name</label>
+                    <input
+                      type="text"
+                      value={newWorkflowName}
+                      onChange={(e) => setNewWorkflowName(e.target.value)}
+                      placeholder="e.g. FastAPI Microservice Pipeline"
+                      className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-white placeholder:text-zinc-500 focus:border-white/20 focus:outline-none"
+                      required
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsModalOpen(false)}
+                      className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-4 py-2 text-zinc-300 hover:bg-white/[0.08]"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white shadow-sm hover:bg-blue-500"
+                    >
+                      Create Workflow
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
 
         {/* Bottom Feature Cards (4 Columns) */}
         <div className="grid gap-4 pt-2 sm:grid-cols-2 lg:grid-cols-4">

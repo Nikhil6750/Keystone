@@ -1,7 +1,10 @@
 'use client';
 
 import * as React from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { AppLayout } from '@/components/common';
+import { INITIAL_SETTINGS } from '@/lib/mock';
+import { UserSettings } from '@/types';
 import {
   Home,
   Sun,
@@ -16,6 +19,8 @@ import {
   Copy,
   Upload,
   Trash2,
+  Check,
+  X,
 } from 'lucide-react';
 
 const SETTINGS_NAV = [
@@ -42,9 +47,48 @@ const SETTINGS_NAV = [
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = React.useState('general');
-  const [autoSave, setAutoSave] = React.useState(true);
-  const [confirmDestructive, setConfirmDestructive] = React.useState(true);
-  const [enableTelemetry, setEnableTelemetry] = React.useState(false);
+  const [settings, setSettings] = React.useState<UserSettings>(INITIAL_SETTINGS);
+  const [workspaceName, setWorkspaceName] = React.useState('Keystone');
+  const [displayName, setDisplayName] = React.useState('KS');
+  const [email, setEmail] = React.useState('ks@example.com');
+  const [toastMessage, setToastMessage] = React.useState<string | null>(null);
+  const [dangerModal, setDangerModal] = React.useState<string | null>(null);
+
+  // Load from localStorage on mount
+  React.useEffect(() => {
+    try {
+      const saved = localStorage.getItem('keystone_settings');
+      if (saved) {
+        setSettings(JSON.parse(saved));
+      }
+    } catch {
+      // fallback to initial
+    }
+  }, []);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  const handleSaveChanges = () => {
+    try {
+      localStorage.setItem('keystone_settings', JSON.stringify(settings));
+    } catch {
+      // ignore
+    }
+    showToast('Settings saved successfully.');
+  };
+
+  const handleClearHistory = () => {
+    setDangerModal(null);
+    showToast('Workflow history cleared.');
+  };
+
+  const handleDeleteWorkspace = () => {
+    setDangerModal(null);
+    showToast('Workspace deletion requested.');
+  };
 
   return (
     <AppLayout showSidebar={true}>
@@ -92,13 +136,14 @@ export default function SettingsPage() {
             {/* Top General Header & Save Changes Button */}
             <div className="flex items-center justify-between border-b border-white/[0.08] pb-4">
               <div>
-                <h2 className="text-lg font-bold text-white">General</h2>
+                <h2 className="text-lg font-bold text-white capitalize">{activeTab}</h2>
                 <p className="text-xs text-zinc-400">
                   Manage your workspace settings and profile information.
                 </p>
               </div>
               <button
                 type="button"
+                onClick={handleSaveChanges}
                 className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white shadow-sm transition-colors hover:bg-blue-500"
               >
                 Save Changes
@@ -117,7 +162,8 @@ export default function SettingsPage() {
                   <label className="block font-medium text-zinc-400">Workspace Name</label>
                   <input
                     type="text"
-                    defaultValue="Keystone"
+                    value={workspaceName}
+                    onChange={(e) => setWorkspaceName(e.target.value)}
                     className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-white placeholder:text-zinc-500 focus:border-white/20 focus:outline-none"
                   />
                 </div>
@@ -128,6 +174,7 @@ export default function SettingsPage() {
                     <span className="w-full font-mono text-xs text-zinc-400">ks_7f3a2c1e8b9d</span>
                     <button
                       type="button"
+                      onClick={() => showToast('Workspace ID copied to clipboard.')}
                       className="text-zinc-400 transition-colors hover:text-white"
                       title="Copy ID"
                     >
@@ -150,7 +197,8 @@ export default function SettingsPage() {
                   <label className="block font-medium text-zinc-400">Display Name</label>
                   <input
                     type="text"
-                    defaultValue="KS"
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
                     className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-white placeholder:text-zinc-500 focus:border-white/20 focus:outline-none"
                   />
                 </div>
@@ -159,17 +207,19 @@ export default function SettingsPage() {
                   <label className="block font-medium text-zinc-400">Email</label>
                   <input
                     type="email"
-                    defaultValue="ks@example.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
                     className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-white placeholder:text-zinc-500 focus:border-white/20 focus:outline-none"
                   />
                 </div>
 
                 <div className="flex items-center gap-4 pt-2 sm:col-span-2">
                   <div className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-zinc-800 text-xs font-bold text-white">
-                    KS
+                    {displayName || 'KS'}
                   </div>
                   <button
                     type="button"
+                    onClick={() => showToast('Avatar update modal opened.')}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-white/[0.08] hover:text-white"
                   >
                     <Upload className="h-3.5 w-3.5" />
@@ -192,7 +242,7 @@ export default function SettingsPage() {
                 <div className="space-y-1.5">
                   <label className="block font-medium text-zinc-400">Language</label>
                   <div className="flex cursor-pointer items-center justify-between rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-white hover:border-white/20">
-                    <span>English (US)</span>
+                    <span>{settings.language}</span>
                     <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />
                   </div>
                 </div>
@@ -200,7 +250,7 @@ export default function SettingsPage() {
                 <div className="space-y-1.5">
                   <label className="block font-medium text-zinc-400">Time Zone</label>
                   <div className="flex cursor-pointer items-center justify-between rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-white hover:border-white/20">
-                    <span>(GMT+5:30) Asia/Kolkata</span>
+                    <span>{settings.timeZone}</span>
                     <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />
                   </div>
                 </div>
@@ -208,7 +258,7 @@ export default function SettingsPage() {
                 <div className="space-y-1.5">
                   <label className="block font-medium text-zinc-400">Date Format</label>
                   <div className="flex cursor-pointer items-center justify-between rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-white hover:border-white/20">
-                    <span>May 24, 2025</span>
+                    <span>{settings.dateFormat}</span>
                     <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />
                   </div>
                 </div>
@@ -235,15 +285,15 @@ export default function SettingsPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => setAutoSave((prev) => !prev)}
+                    onClick={() => setSettings((prev) => ({ ...prev, autoSave: !prev.autoSave }))}
                     className={`relative h-5 w-9 rounded-full p-0.5 transition-colors ${
-                      autoSave ? 'bg-blue-600' : 'bg-zinc-700'
+                      settings.autoSave ? 'bg-blue-600' : 'bg-zinc-700'
                     }`}
                     aria-label="Toggle auto save"
                   >
                     <span
                       className={`block h-4 w-4 rounded-full bg-white transition-transform ${
-                        autoSave ? 'translate-x-4' : 'translate-x-0'
+                        settings.autoSave ? 'translate-x-4' : 'translate-x-0'
                       }`}
                     />
                   </button>
@@ -261,15 +311,20 @@ export default function SettingsPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => setConfirmDestructive((prev) => !prev)}
+                    onClick={() =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        confirmDestructive: !prev.confirmDestructive,
+                      }))
+                    }
                     className={`relative h-5 w-9 rounded-full p-0.5 transition-colors ${
-                      confirmDestructive ? 'bg-blue-600' : 'bg-zinc-700'
+                      settings.confirmDestructive ? 'bg-blue-600' : 'bg-zinc-700'
                     }`}
                     aria-label="Toggle confirm destructive"
                   >
                     <span
                       className={`block h-4 w-4 rounded-full bg-white transition-transform ${
-                        confirmDestructive ? 'translate-x-4' : 'translate-x-0'
+                        settings.confirmDestructive ? 'translate-x-4' : 'translate-x-0'
                       }`}
                     />
                   </button>
@@ -285,15 +340,20 @@ export default function SettingsPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => setEnableTelemetry((prev) => !prev)}
+                    onClick={() =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        enableTelemetry: !prev.enableTelemetry,
+                      }))
+                    }
                     className={`relative h-5 w-9 rounded-full p-0.5 transition-colors ${
-                      enableTelemetry ? 'bg-blue-600' : 'bg-zinc-700'
+                      settings.enableTelemetry ? 'bg-blue-600' : 'bg-zinc-700'
                     }`}
                     aria-label="Toggle enable telemetry"
                   >
                     <span
                       className={`block h-4 w-4 rounded-full bg-white transition-transform ${
-                        enableTelemetry ? 'translate-x-4' : 'translate-x-0'
+                        settings.enableTelemetry ? 'translate-x-4' : 'translate-x-0'
                       }`}
                     />
                   </button>
@@ -323,6 +383,7 @@ export default function SettingsPage() {
                   </div>
                   <button
                     type="button"
+                    onClick={() => setDangerModal('history')}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-rose-800/40 bg-rose-950/40 px-3 py-1.5 text-xs font-medium text-rose-300 transition-colors hover:bg-rose-900/40"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -340,6 +401,7 @@ export default function SettingsPage() {
                   </div>
                   <button
                     type="button"
+                    onClick={() => setDangerModal('workspace')}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-rose-800/40 bg-rose-950/40 px-3 py-1.5 text-xs font-medium text-rose-300 transition-colors hover:bg-rose-900/40"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -350,6 +412,69 @@ export default function SettingsPage() {
             </div>
           </div>
         </div>
+
+        {/* Toast Notification */}
+        <AnimatePresence>
+          {toastMessage && (
+            <motion.div
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 20, opacity: 0 }}
+              className="fixed right-6 bottom-6 z-50 flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-950/90 px-4 py-3 text-xs font-semibold text-emerald-300 shadow-2xl backdrop-blur-md"
+            >
+              <Check className="h-4 w-4 text-emerald-400" />
+              <span>{toastMessage}</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Danger Modal Confirmation */}
+        <AnimatePresence>
+          {dangerModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="w-full max-w-md space-y-4 rounded-xl border border-rose-900/40 bg-[#0B1120] p-6 shadow-2xl"
+              >
+                <div className="flex items-center justify-between border-b border-rose-900/40 pb-3">
+                  <h3 className="text-sm font-bold text-rose-400">
+                    Confirm {dangerModal === 'history' ? 'Clear History' : 'Delete Workspace'}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setDangerModal(null)}
+                    className="text-zinc-400 hover:text-white"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <p className="text-xs text-zinc-300">
+                  Are you sure you want to proceed? This action cannot be undone.
+                </p>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setDangerModal(null)}
+                    className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-4 py-2 text-xs text-zinc-300 hover:bg-white/[0.08]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={dangerModal === 'history' ? handleClearHistory : handleDeleteWorkspace}
+                    className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-medium text-white shadow-sm hover:bg-rose-500"
+                  >
+                    Confirm Action
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
       </main>
     </AppLayout>
   );

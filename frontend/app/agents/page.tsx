@@ -1,11 +1,13 @@
 'use client';
 
 import * as React from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { AppLayout } from '@/components/common';
+import { INITIAL_AGENTS } from '@/lib/mock';
+import { AgentModel } from '@/types';
 import {
   Bot,
   Search,
-  ChevronDown,
   RefreshCw,
   Plus,
   Package,
@@ -14,78 +16,84 @@ import {
   ShieldCheck,
   FileText,
   ArrowRight,
+  X,
 } from 'lucide-react';
 
-const SYSTEM_AGENTS = [
-  {
-    name: 'Planner',
-    badge: 'Waiting',
-    dotBg: 'bg-blue-500',
-    description: 'Understand goal and create execution plan',
-    icon: Package,
-    iconBg: 'bg-blue-600/20 text-blue-400',
-    type: 'System Agent',
-    capabilities: 'Planning, Reasoning, Task Decomposition',
-    tools: 'Memory, File Read, Web Search',
-    version: '1.0.0',
-    lastSeen: '-',
-  },
-  {
-    name: 'Research',
-    badge: 'Waiting',
-    dotBg: 'bg-emerald-500',
-    description: 'Gather context and relevant information',
-    icon: BookOpen,
-    iconBg: 'bg-emerald-600/20 text-emerald-400',
-    type: 'System Agent',
-    capabilities: 'Information Retrieval, Analysis, Summarization',
-    tools: 'Web Search, File Read, APIs',
-    version: '1.0.0',
-    lastSeen: '-',
-  },
-  {
-    name: 'Executor',
-    badge: 'Waiting',
-    dotBg: 'bg-purple-500',
-    description: 'Execute tasks and build requested solution',
-    icon: Terminal,
-    iconBg: 'bg-purple-600/20 text-purple-400',
-    type: 'System Agent',
-    capabilities: 'Code Execution, API Calls, Task Execution',
-    tools: 'Code Runner, APIs, File Write',
-    version: '1.0.0',
-    lastSeen: '-',
-  },
-  {
-    name: 'Validator',
-    badge: 'Waiting',
-    dotBg: 'bg-amber-500',
-    description: 'Validate results and ensure quality standards',
-    icon: ShieldCheck,
-    iconBg: 'bg-amber-600/20 text-amber-400',
-    type: 'System Agent',
-    capabilities: 'Validation, Testing, Quality Assurance',
-    tools: 'Test Runner, Lint, Analyzer',
-    version: '1.0.0',
-    lastSeen: '-',
-  },
-  {
-    name: 'Reporter',
-    badge: 'Waiting',
-    dotBg: 'bg-cyan-500',
-    description: 'Generate summary and final report',
-    icon: FileText,
-    iconBg: 'bg-cyan-600/20 text-cyan-400',
-    type: 'System Agent',
-    capabilities: 'Reporting, Documentation, Visualization',
-    tools: 'File Write, Templates',
-    version: '1.0.0',
-    lastSeen: '-',
-  },
-];
-
 export default function AgentsPage() {
+  const [agents, setAgents] = React.useState<AgentModel[]>(INITIAL_AGENTS);
   const [searchTerm, setSearchTerm] = React.useState('');
+  const [statusFilter, setStatusFilter] = React.useState('All');
+  const [selectedAgent, setSelectedAgent] = React.useState<AgentModel | null>(null);
+  const [isRegisterOpen, setIsRegisterOpen] = React.useState(false);
+  const [newAgentName, setNewAgentName] = React.useState('');
+  const [newAgentDesc, setNewAgentDesc] = React.useState('');
+  const [newAgentTools, setNewAgentTools] = React.useState('');
+
+  const handleRegisterAgent = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAgentName.trim()) return;
+
+    const newAgent: AgentModel = {
+      id: `agent-${Date.now()}`,
+      name: newAgentName.trim(),
+      badge: 'Waiting',
+      dotBg: 'bg-blue-500',
+      description: newAgentDesc.trim() || 'Custom AI Agent',
+      type: 'Custom Agent',
+      capabilities: 'Custom Automated Execution',
+      tools: newAgentTools.trim() || 'Custom Tools',
+      version: '1.0.0',
+      lastSeen: 'Just now',
+    };
+
+    setAgents((prev) => [...prev, newAgent]);
+    setNewAgentName('');
+    setNewAgentDesc('');
+    setNewAgentTools('');
+    setIsRegisterOpen(false);
+  };
+
+  const filteredAgents = agents.filter((agent) => {
+    const matchesSearch =
+      agent.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      agent.capabilities.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesStatus = statusFilter === 'All' || agent.badge === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
+
+  const getAgentIcon = (name: string) => {
+    switch (name) {
+      case 'Planner':
+        return Package;
+      case 'Research':
+        return BookOpen;
+      case 'Executor':
+        return Terminal;
+      case 'Validator':
+        return ShieldCheck;
+      case 'Reporter':
+        return FileText;
+      default:
+        return Bot;
+    }
+  };
+
+  const getAgentIconBg = (name: string) => {
+    switch (name) {
+      case 'Planner':
+        return 'bg-blue-600/20 text-blue-400';
+      case 'Research':
+        return 'bg-emerald-600/20 text-emerald-400';
+      case 'Executor':
+        return 'bg-purple-600/20 text-purple-400';
+      case 'Validator':
+        return 'bg-amber-600/20 text-amber-400';
+      case 'Reporter':
+        return 'bg-cyan-600/20 text-cyan-400';
+      default:
+        return 'bg-blue-600/20 text-blue-400';
+    }
+  };
 
   return (
     <AppLayout showSidebar={true}>
@@ -103,6 +111,7 @@ export default function AgentsPage() {
 
           <button
             type="button"
+            onClick={() => setIsRegisterOpen(true)}
             className="inline-flex shrink-0 items-center justify-center gap-1.5 self-start rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white shadow-sm transition-colors hover:bg-blue-500 sm:self-auto"
           >
             <Plus className="h-4 w-4" />
@@ -129,27 +138,27 @@ export default function AgentsPage() {
             {/* Status Filter */}
             <div className="flex min-w-[120px] cursor-pointer items-center justify-between gap-2 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-xs text-zinc-300 hover:border-white/20">
               <span className="text-zinc-500">Status</span>
-              <span className="font-medium text-white">All</span>
-              <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />
-            </div>
-
-            {/* Capability Filter */}
-            <div className="flex min-w-[140px] cursor-pointer items-center justify-between gap-2 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-xs text-zinc-300 hover:border-white/20">
-              <span className="text-zinc-500">Capability</span>
-              <span className="font-medium text-white">All</span>
-              <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />
-            </div>
-
-            {/* Type Filter */}
-            <div className="flex min-w-[120px] cursor-pointer items-center justify-between gap-2 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-xs text-zinc-300 hover:border-white/20">
-              <span className="text-zinc-500">Type</span>
-              <span className="font-medium text-white">All</span>
-              <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="cursor-pointer bg-transparent font-medium text-white focus:outline-none"
+              >
+                <option value="All" className="bg-[#0B1120] text-white">
+                  All
+                </option>
+                <option value="Waiting" className="bg-[#0B1120] text-white">
+                  Waiting
+                </option>
+                <option value="Active" className="bg-[#0B1120] text-white">
+                  Active
+                </option>
+              </select>
             </div>
 
             {/* Refresh Button */}
             <button
               type="button"
+              onClick={() => setSearchTerm('')}
               className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-white/[0.08] hover:text-white"
             >
               <RefreshCw className="h-3.5 w-3.5 text-zinc-400" />
@@ -158,13 +167,14 @@ export default function AgentsPage() {
           </div>
         </div>
 
-        {/* 5 System Agent Cards (Horizontal 5-Column Grid) */}
+        {/* System Agent Cards Grid */}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-          {SYSTEM_AGENTS.map((agent) => {
-            const IconComponent = agent.icon;
+          {filteredAgents.map((agent) => {
+            const IconComponent = getAgentIcon(agent.name);
+            const iconBg = getAgentIconBg(agent.name);
             return (
               <div
-                key={agent.name}
+                key={agent.id}
                 className="flex flex-col justify-between space-y-4 rounded-xl border border-white/[0.08] bg-white/[0.04] p-4 backdrop-blur-md"
               >
                 <div className="space-y-3">
@@ -172,7 +182,7 @@ export default function AgentsPage() {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
                       <div
-                        className={`flex h-8 w-8 items-center justify-center rounded-lg ${agent.iconBg}`}
+                        className={`flex h-8 w-8 items-center justify-center rounded-lg ${iconBg}`}
                       >
                         <IconComponent className="h-4 w-4" />
                       </div>
@@ -218,6 +228,7 @@ export default function AgentsPage() {
                 {/* View Details Action Button */}
                 <button
                   type="button"
+                  onClick={() => setSelectedAgent(agent)}
                   className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] py-2 text-xs font-medium text-zinc-300 transition-colors hover:bg-white/[0.08] hover:text-white"
                 >
                   View Details
@@ -240,12 +251,150 @@ export default function AgentsPage() {
           </div>
           <button
             type="button"
+            onClick={() => setIsRegisterOpen(true)}
             className="inline-flex items-center gap-1.5 pt-1 text-xs font-semibold text-blue-400 transition-colors hover:text-blue-300"
           >
             <span>Register your first agent</span>
             <ArrowRight className="h-3.5 w-3.5" />
           </button>
         </div>
+
+        {/* View Details Drawer / Modal */}
+        <AnimatePresence>
+          {selectedAgent && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="w-full max-w-md space-y-4 rounded-xl border border-white/[0.08] bg-[#0B1120] p-6 shadow-2xl"
+              >
+                <div className="flex items-center justify-between border-b border-white/[0.08] pb-3">
+                  <h3 className="text-sm font-bold text-white">
+                    Agent Details: {selectedAgent.name}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedAgent(null)}
+                    className="text-zinc-400 hover:text-white"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="space-y-3 text-xs text-zinc-300">
+                  <div>
+                    <span className="block text-zinc-500">Description</span>
+                    <p className="mt-0.5 text-white">{selectedAgent.description}</p>
+                  </div>
+                  <div>
+                    <span className="block text-zinc-500">Type</span>
+                    <p className="mt-0.5 text-white">{selectedAgent.type}</p>
+                  </div>
+                  <div>
+                    <span className="block text-zinc-500">Capabilities</span>
+                    <p className="mt-0.5 text-white">{selectedAgent.capabilities}</p>
+                  </div>
+                  <div>
+                    <span className="block text-zinc-500">Tools</span>
+                    <p className="mt-0.5 text-white">{selectedAgent.tools}</p>
+                  </div>
+                  <div>
+                    <span className="block text-zinc-500">Status</span>
+                    <p className="mt-0.5 text-white">{selectedAgent.badge}</p>
+                  </div>
+                </div>
+
+                <div className="flex justify-end border-t border-white/[0.08] pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedAgent(null)}
+                    className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white hover:bg-blue-500"
+                  >
+                    Close
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Register Agent Modal */}
+        <AnimatePresence>
+          {isRegisterOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="w-full max-w-md space-y-4 rounded-xl border border-white/[0.08] bg-[#0B1120] p-6 shadow-2xl"
+              >
+                <div className="flex items-center justify-between border-b border-white/[0.08] pb-3">
+                  <h3 className="text-sm font-bold text-white">Register New Agent</h3>
+                  <button
+                    type="button"
+                    onClick={() => setIsRegisterOpen(false)}
+                    className="text-zinc-400 hover:text-white"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleRegisterAgent} className="space-y-3 text-xs">
+                  <div className="space-y-1">
+                    <label className="block font-medium text-zinc-400">Agent Name</label>
+                    <input
+                      type="text"
+                      value={newAgentName}
+                      onChange={(e) => setNewAgentName(e.target.value)}
+                      placeholder="e.g. Security Analyzer Agent"
+                      className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-white placeholder:text-zinc-500 focus:border-white/20 focus:outline-none"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block font-medium text-zinc-400">Description</label>
+                    <input
+                      type="text"
+                      value={newAgentDesc}
+                      onChange={(e) => setNewAgentDesc(e.target.value)}
+                      placeholder="e.g. Scans outputs for security vulnerabilities"
+                      className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-white placeholder:text-zinc-500 focus:border-white/20 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block font-medium text-zinc-400">Tools</label>
+                    <input
+                      type="text"
+                      value={newAgentTools}
+                      onChange={(e) => setNewAgentTools(e.target.value)}
+                      placeholder="e.g. Snyk, SonarQube, Linter"
+                      className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-white placeholder:text-zinc-500 focus:border-white/20 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setIsRegisterOpen(false)}
+                      className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-4 py-2 text-zinc-300 hover:bg-white/[0.08]"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white shadow-sm hover:bg-blue-500"
+                    >
+                      Register Agent
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
       </main>
     </AppLayout>
   );

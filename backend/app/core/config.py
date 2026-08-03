@@ -114,6 +114,11 @@ class Settings(BaseSettings):
     # --- Demo ---
     demo_enabled: bool = Field(default=False, validation_alias="KEYSTONE_DEMO_ENABLED")
 
+    # --- Compensation ---
+    auto_compensate_on_failure: bool = Field(
+        default=False, validation_alias="KEYSTONE_AUTO_COMPENSATE_ON_FAILURE"
+    )
+
     @property
     def cors_origin_list(self) -> list[str]:
         """CORS origins as a list, parsed from the comma-separated setting."""

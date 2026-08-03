@@ -1,4 +1,5 @@
-"""Synchronous, sequential workflow execution engine with retry and circuit-breaker support."""
+"""Synchronous, sequential workflow execution engine with retry, circuit-breaker,
+and optional automatic compensation support."""
 
 import json
 import logging
@@ -6,6 +7,11 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.audit import service as audit_service
+from app.audit.hashing import compute_digest
+from app.audit.types import ActorType, AuditEventType
+from app.engine.compensation import CompensationService
+from app.engine.compensation_registry import CompensationRegistry
 from app.engine.context import ExecutionContext
 from app.engine.exceptions import InvalidWorkflowStateError, WorkflowNotFoundError
 from app.engine.executor import StepExecutionError, StepExecutionRequest
@@ -30,6 +36,8 @@ _DEFAULT_RECOVERY_TIMEOUT_SECONDS = 30.0
 _DEFAULT_RETRY_BASE_DELAY_SECONDS = 0.5
 _DEFAULT_RETRY_MAX_DELAY_SECONDS = 5.0
 
+_SYSTEM_ACTOR = "workflow_engine"
+
 
 def _ensure_json_compatible(output: Any) -> dict[str, Any]:
     if not isinstance(output, dict):
@@ -52,7 +60,15 @@ class WorkflowEngine:
     while it has attempts remaining and its circuit breaker permits another
     call; otherwise it fails the step and workflow immediately, exactly as in
     Phase 2. `circuit_breakers` and `retry_policy` default to conservative
-    built-in settings so the Phase 2 two-argument constructor call keeps working.
+    built-in settings so the Phase 2 two-argument constructor call keeps
+    working. Every execution milestone is recorded in the workflow's audit
+    chain (see `app.audit`). When `auto_compensate_on_failure` is `True` and a
+    `compensation_registry` is provided, a workflow that reaches `FAILED`
+    (other than from an unexpected internal error) is automatically
+    compensated through the same `CompensationService` manual compensation
+    uses — best-effort: a failure during automatic compensation is logged,
+    not re-raised, since `CompensationService` already persists that failure
+    durably before any exception would propagate here.
     """
 
     def __init__(
@@ -63,6 +79,8 @@ class WorkflowEngine:
         circuit_breakers: CircuitBreakerRegistry | None = None,
         retry_policy: RetryPolicy | None = None,
         sleeper: Sleeper | None = None,
+        compensation_registry: CompensationRegistry | None = None,
+        auto_compensate_on_failure: bool = False,
     ) -> None:
         self._db = db
         self._registry = registry
@@ -75,6 +93,12 @@ class WorkflowEngine:
             max_delay_seconds=_DEFAULT_RETRY_MAX_DELAY_SECONDS,
         )
         self._sleeper = sleeper or RealSleeper()
+        self._auto_compensate_on_failure = auto_compensate_on_failure
+        self._compensation_service = (
+            CompensationService(db, compensation_registry)
+            if compensation_registry is not None
+            else None
+        )
 
     def execute_workflow(self, workflow_id: str) -> Workflow:
         """Run a `PENDING` workflow's steps to completion (or first failure).
@@ -96,6 +120,14 @@ class WorkflowEngine:
         workflow = workflow_service.transition_workflow(
             self._db, workflow_id, WorkflowStatus.RUNNING
         )
+        audit_service.append_event(
+            self._db,
+            workflow_id=workflow_id,
+            event_type=AuditEventType.WORKFLOW_EXECUTION_STARTED,
+            actor_type=ActorType.SYSTEM,
+            actor_id=_SYSTEM_ACTOR,
+            payload={"step_count": len(workflow.steps)},
+        )
 
         context = ExecutionContext(
             workflow_id=workflow.id, workflow_input=dict(workflow.input_payload)
@@ -110,18 +142,21 @@ class WorkflowEngine:
                 logger.warning(
                     "workflow_execution_failed workflow_id=%s reason=%s", workflow.id, exc
                 )
+                self._maybe_auto_compensate(workflow.id)
                 raise
             except CircuitBreakerOpenError as exc:
                 self._fail_workflow(workflow.id, error_message=str(exc))
                 logger.warning(
                     "workflow_execution_failed workflow_id=%s reason=%s", workflow.id, exc
                 )
+                self._maybe_auto_compensate(workflow.id)
                 raise
             except StepExecutionError as exc:
                 self._fail_workflow(workflow.id, error_message=str(exc))
                 logger.warning(
                     "workflow_execution_failed workflow_id=%s reason=%s", workflow.id, exc
                 )
+                self._maybe_auto_compensate(workflow.id)
                 return self._reload(workflow.id)
             except Exception:
                 self._fail_workflow(
@@ -140,6 +175,15 @@ class WorkflowEngine:
         # Resolved once: the registry does not change mid-step, and a missing
         # executor is neither retryable nor circuit-related (Phase 2 behavior).
         workflow_service.transition_step(self._db, step.id, StepStatus.RUNNING)
+        audit_service.append_event(
+            self._db,
+            workflow_id=workflow.id,
+            step_id=step.id,
+            event_type=AuditEventType.STEP_EXECUTION_STARTED,
+            actor_type=ActorType.SYSTEM,
+            actor_id=_SYSTEM_ACTOR,
+            payload={"agent_type": step.agent_type, "position": step.position},
+        )
         try:
             executor = self._registry.get(step.agent_type)
         except ExecutorNotRegisteredError as exc:
@@ -152,6 +196,16 @@ class WorkflowEngine:
             )
             self._fail_step(
                 attempt, step, error_type="AGENT_EXECUTOR_NOT_REGISTERED", error_message=str(exc)
+            )
+            audit_service.append_event(
+                self._db,
+                workflow_id=workflow.id,
+                step_id=step.id,
+                execution_attempt_id=attempt.id,
+                event_type=AuditEventType.STEP_FAILED,
+                actor_type=ActorType.SYSTEM,
+                actor_id=_SYSTEM_ACTOR,
+                payload={"error_code": "AGENT_EXECUTOR_NOT_REGISTERED"},
             )
             raise
 
@@ -171,12 +225,32 @@ class WorkflowEngine:
                 attempt_number,
                 max_attempts,
             )
+            audit_service.append_event(
+                self._db,
+                workflow_id=workflow.id,
+                step_id=step.id,
+                execution_attempt_id=attempt.id,
+                event_type=AuditEventType.EXECUTION_ATTEMPT_STARTED,
+                actor_type=ActorType.SYSTEM,
+                actor_id=_SYSTEM_ACTOR,
+                payload={"attempt_number": attempt_number, "max_attempts": max_attempts},
+            )
 
             try:
                 breaker.before_call()
             except CircuitBreakerOpenError as exc:
                 self._fail_step(
                     attempt, step, error_type="CIRCUIT_BREAKER_OPEN", error_message=str(exc)
+                )
+                audit_service.append_event(
+                    self._db,
+                    workflow_id=workflow.id,
+                    step_id=step.id,
+                    execution_attempt_id=attempt.id,
+                    event_type=AuditEventType.CIRCUIT_BREAKER_REJECTED,
+                    actor_type=ActorType.SYSTEM,
+                    actor_id=_SYSTEM_ACTOR,
+                    payload={"agent_type": step.agent_type, "circuit_state": "open"},
                 )
                 raise
 
@@ -213,6 +287,16 @@ class WorkflowEngine:
                         error_type=exc.error_type,
                         error_message=str(exc),
                     )
+                    audit_service.append_event(
+                        self._db,
+                        workflow_id=workflow.id,
+                        step_id=step.id,
+                        execution_attempt_id=attempt.id,
+                        event_type=AuditEventType.EXECUTION_ATTEMPT_FAILED,
+                        actor_type=ActorType.SYSTEM,
+                        actor_id=_SYSTEM_ACTOR,
+                        payload={"error_code": exc.error_type, "attempt_number": attempt_number},
+                    )
                     workflow_service.transition_step(self._db, step.id, StepStatus.RETRYING)
                     delay = self._retry_policy.compute_delay(attempt_number)
                     logger.info(
@@ -223,10 +307,40 @@ class WorkflowEngine:
                         attempt_number,
                         delay,
                     )
+                    audit_service.append_event(
+                        self._db,
+                        workflow_id=workflow.id,
+                        step_id=step.id,
+                        execution_attempt_id=attempt.id,
+                        event_type=AuditEventType.STEP_RETRY_SCHEDULED,
+                        actor_type=ActorType.SYSTEM,
+                        actor_id=_SYSTEM_ACTOR,
+                        payload={"attempt_number": attempt_number, "delay_seconds": delay},
+                    )
                     self._sleeper.sleep(delay)
                     workflow_service.transition_step(self._db, step.id, StepStatus.RUNNING)
                     continue
                 self._fail_step(attempt, step, error_type=exc.error_type, error_message=str(exc))
+                audit_service.append_event(
+                    self._db,
+                    workflow_id=workflow.id,
+                    step_id=step.id,
+                    execution_attempt_id=attempt.id,
+                    event_type=AuditEventType.EXECUTION_ATTEMPT_FAILED,
+                    actor_type=ActorType.SYSTEM,
+                    actor_id=_SYSTEM_ACTOR,
+                    payload={"error_code": exc.error_type, "attempt_number": attempt_number},
+                )
+                audit_service.append_event(
+                    self._db,
+                    workflow_id=workflow.id,
+                    step_id=step.id,
+                    execution_attempt_id=attempt.id,
+                    event_type=AuditEventType.STEP_FAILED,
+                    actor_type=ActorType.SYSTEM,
+                    actor_id=_SYSTEM_ACTOR,
+                    payload={"error_code": exc.error_type},
+                )
                 raise
             except Exception:
                 logger.exception(
@@ -240,15 +354,45 @@ class WorkflowEngine:
                     error_type="UNEXPECTED_ERROR",
                     error_message="an unexpected error occurred during step execution",
                 )
+                audit_service.append_event(
+                    self._db,
+                    workflow_id=workflow.id,
+                    step_id=step.id,
+                    execution_attempt_id=attempt.id,
+                    event_type=AuditEventType.STEP_FAILED,
+                    actor_type=ActorType.SYSTEM,
+                    actor_id=_SYSTEM_ACTOR,
+                    payload={"error_code": "UNEXPECTED_ERROR"},
+                )
                 raise
 
             breaker.record_success()
             workflow_service.complete_step_attempt(
                 self._db, attempt.id, status=AttemptStatus.SUCCEEDED, output_payload=output
             )
+            audit_service.append_event(
+                self._db,
+                workflow_id=workflow.id,
+                step_id=step.id,
+                execution_attempt_id=attempt.id,
+                event_type=AuditEventType.EXECUTION_ATTEMPT_SUCCEEDED,
+                actor_type=ActorType.AGENT,
+                actor_id=step.agent_type,
+                payload={"attempt_number": attempt_number, "output_digest": compute_digest(output)},
+            )
             updated_step = workflow_service.transition_step(self._db, step.id, StepStatus.SUCCEEDED)
             updated_step.output_payload = output
             self._db.commit()
+            audit_service.append_event(
+                self._db,
+                workflow_id=workflow.id,
+                step_id=step.id,
+                execution_attempt_id=attempt.id,
+                event_type=AuditEventType.STEP_SUCCEEDED,
+                actor_type=ActorType.AGENT,
+                actor_id=step.agent_type,
+                payload={"position": step.position, "output_digest": compute_digest(output)},
+            )
 
             logger.info(
                 "step_execution_succeeded workflow_id=%s step_id=%s attempt_number=%s",
@@ -272,9 +416,18 @@ class WorkflowEngine:
 
     def _fail_workflow(self, workflow_id: str, *, error_message: str) -> Workflow:
         workflow_service.transition_workflow(self._db, workflow_id, WorkflowStatus.FAILED)
-        return workflow_service.set_workflow_result(
+        workflow = workflow_service.set_workflow_result(
             self._db, workflow_id, error_message=error_message
         )
+        audit_service.append_event(
+            self._db,
+            workflow_id=workflow_id,
+            event_type=AuditEventType.WORKFLOW_FAILED,
+            actor_type=ActorType.SYSTEM,
+            actor_id=_SYSTEM_ACTOR,
+            payload={"error_message": error_message},
+        )
+        return workflow
 
     def _succeed_workflow(
         self, workflow: Workflow, steps: list[WorkflowStep], context: ExecutionContext
@@ -292,8 +445,32 @@ class WorkflowEngine:
         }
         workflow_service.transition_workflow(self._db, workflow.id, WorkflowStatus.SUCCEEDED)
         workflow_service.set_workflow_result(self._db, workflow.id, output_payload=aggregated)
+        audit_service.append_event(
+            self._db,
+            workflow_id=workflow.id,
+            event_type=AuditEventType.WORKFLOW_SUCCEEDED,
+            actor_type=ActorType.SYSTEM,
+            actor_id=_SYSTEM_ACTOR,
+            payload={"step_count": len(steps)},
+        )
         logger.info("workflow_execution_succeeded workflow_id=%s", workflow.id)
         return self._reload(workflow.id)
+
+    def _maybe_auto_compensate(self, workflow_id: str) -> None:
+        """Best-effort automatic compensation after a workflow fails, if enabled.
+
+        Any exception here is logged and swallowed rather than propagated: the
+        primary execution failure (already persisted) must not be masked by a
+        secondary compensation failure, which `CompensationService` itself
+        already persists durably before any exception would propagate out of
+        this call.
+        """
+        if not self._auto_compensate_on_failure or self._compensation_service is None:
+            return
+        try:
+            self._compensation_service.compensate_workflow(workflow_id)
+        except Exception:
+            logger.exception("automatic_compensation_failed workflow_id=%s", workflow_id)
 
     def _reload(self, workflow_id: str) -> Workflow:
         workflow = workflow_service.get_workflow(self._db, workflow_id)

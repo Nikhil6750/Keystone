@@ -21,6 +21,7 @@ from app.database.base import Base
 from app.models.enums import StepStatus
 
 if TYPE_CHECKING:
+    from app.models.compensation_attempt import CompensationAttempt
     from app.models.step_attempt import StepAttempt
     from app.models.workflow import Workflow
 
@@ -77,4 +78,9 @@ class WorkflowStep(Base):
         back_populates="step",
         cascade="all, delete-orphan",
         order_by="StepAttempt.attempt_number",
+    )
+    compensation_attempts: Mapped[list["CompensationAttempt"]] = relationship(
+        back_populates="step",
+        cascade="all, delete-orphan",
+        order_by="CompensationAttempt.attempt_number",
     )

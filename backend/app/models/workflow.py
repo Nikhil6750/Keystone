@@ -12,6 +12,7 @@ from app.database.base import Base
 from app.models.enums import WorkflowStatus
 
 if TYPE_CHECKING:
+    from app.models.audit_event import AuditEvent
     from app.models.workflow_step import WorkflowStep
 
 
@@ -38,6 +39,9 @@ class Workflow(Base):
     input_payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     output_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Kept separate from output_payload (rather than nesting {"execution", "compensation"}
+    # inside it) so the existing execution output_payload shape is never disturbed.
+    compensation_summary: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
     )
@@ -55,4 +59,9 @@ class Workflow(Base):
         back_populates="workflow",
         cascade="all, delete-orphan",
         order_by="WorkflowStep.position",
+    )
+    audit_events: Mapped[list["AuditEvent"]] = relationship(
+        back_populates="workflow",
+        cascade="all, delete-orphan",
+        order_by="AuditEvent.sequence_number",
     )

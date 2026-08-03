@@ -5,8 +5,11 @@ import logging
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_workflow_engine
+from app.api.deps import get_compensation_service, get_workflow_engine
+from app.audit import service as audit_service
+from app.audit.types import ActorType, AuditEventType
 from app.database.session import get_db
+from app.engine.compensation import CompensationService
 from app.engine.exceptions import WorkflowNotFoundError
 from app.engine.workflow_engine import WorkflowEngine
 from app.models.workflow import Workflow
@@ -23,6 +26,14 @@ def create_workflow(data: WorkflowCreate, db: Session = Depends(get_db)) -> Work
     """Validate and persist a new workflow with its ordered steps. Does not execute it."""
     workflow = workflow_service.create_workflow(db, data)
     logger.info("workflow_created workflow_id=%s step_count=%s", workflow.id, len(workflow.steps))
+    audit_service.append_event(
+        db,
+        workflow_id=workflow.id,
+        event_type=AuditEventType.WORKFLOW_CREATED,
+        actor_type=ActorType.USER,
+        actor_id="api",
+        payload={"name": workflow.name, "step_count": len(workflow.steps)},
+    )
     return workflow
 
 
@@ -57,3 +68,19 @@ def execute_workflow(
     state (409), or a missing executor registration (503).
     """
     return engine.execute_workflow(workflow_id)
+
+
+@router.post("/{workflow_id}/compensate", response_model=WorkflowRead)
+def compensate_workflow(
+    workflow_id: str,
+    service: CompensationService = Depends(get_compensation_service),  # noqa: B008
+) -> Workflow:
+    """Compensate a `FAILED` workflow's eligible successful steps, in reverse position order.
+
+    Returns the updated workflow whether compensation succeeded (`COMPENSATED`)
+    or a handler execution failed (`FAILED`, with the original failure and
+    compensation history both preserved); raises for a missing workflow
+    (404), a workflow not currently `FAILED` (409), already-`COMPENSATED`
+    (409), or a missing compensation handler registration (503).
+    """
+    return service.compensate_workflow(workflow_id)

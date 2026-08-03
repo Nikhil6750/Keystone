@@ -11,6 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.engine.exceptions import InvalidWorkflowStateError, WorkflowNotFoundError
 from app.engine.registry import ExecutorNotRegisteredError
+from app.resilience.circuit_breaker import CircuitBreakerOpenError
 from app.schemas.errors import APIError, APIErrorCode, APIErrorEnvelope
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,13 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content=_envelope(APIErrorCode.AGENT_EXECUTOR_NOT_REGISTERED, str(exc)),
+        )
+
+    @app.exception_handler(CircuitBreakerOpenError)
+    async def _circuit_breaker_open(_: Request, exc: CircuitBreakerOpenError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=_envelope(APIErrorCode.CIRCUIT_BREAKER_OPEN, str(exc)),
         )
 
     @app.exception_handler(RequestValidationError)

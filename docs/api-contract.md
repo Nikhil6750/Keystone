@@ -117,8 +117,86 @@ set — this is normal workflow execution, not an API error).
 (e.g., already running, already succeeded, already failed).
 
 **Response `503 Service Unavailable`**: `AGENT_EXECUTOR_NOT_REGISTERED` — a step's
-`agent_type` has no registered executor. **No real executors are registered until
-Phase 3**, so this is the expected response for any execution attempt today.
+`agent_type` has no registered executor (e.g., the provider is disabled or its CLI
+is not installed), or `CIRCUIT_BREAKER_OPEN` — a step's agent type has an open
+circuit breaker (see below); the adapter was never invoked for that attempt.
+
+If a step's failure is marked retryable and it has attempts remaining, execution
+retries it (bounded exponential backoff) before finally failing; retry history is
+recorded as additional `StepAttempt` rows on the same step, visible via `GET
+/api/v1/workflows/{workflow_id}`.
+
+### `GET /api/v1/agents`
+
+Reports configuration/availability/registration status for all four canonical agent
+types (`claude_code`, `codex`, `gemini`, `demo`), in that stable order.
+
+**Response `200 OK`**
+
+```json
+{
+  "items": [
+    {
+      "agent_type": "claude_code",
+      "enabled": false,
+      "available": true,
+      "registered": false,
+      "execution_mode": "local_cli",
+      "reason": "Disabled by configuration"
+    }
+  ],
+  "count": 4
+}
+```
+
+- `enabled` — whether the agent type is turned on in settings.
+- `available` — whether its configured executable can currently be resolved
+  (`shutil.which`); always `false` for a disabled agent. Does **not** mean
+  authentication was verified — only a real execution proves that.
+- `registered` — whether the adapter is registered in the current application's
+  executor registry.
+- `execution_mode` — `"local_cli"` for Claude Code/Codex/Gemini, `"demo"` for demo.
+- `reason` — a short, safe explanation. Never includes absolute executable paths,
+  CLI arguments, or any secret.
+
+No local agent CLI (`claude`, `codex`, `gemini`) is installed, authenticated, or
+started by Keystone itself — each must already be installed and authenticated
+(subscription-based login) separately by the operator.
+
+### `GET /api/v1/resilience/circuit-breakers`
+
+Returns a snapshot of every per-agent-type circuit breaker created so far (a
+breaker is created lazily, the first time that agent type is used).
+
+**Response `200 OK`**
+
+```json
+{
+  "items": [
+    {
+      "agent_type": "claude_code",
+      "state": "closed",
+      "failure_count": 0,
+      "failure_threshold": 3,
+      "recovery_timeout_seconds": 30.0,
+      "retry_after_seconds": 0.0,
+      "half_open_probe_in_flight": false
+    }
+  ],
+  "count": 1
+}
+```
+
+- `state` — one of `closed`, `open`, `half_open`.
+  - `closed`: calls are allowed; failures accumulate toward `failure_threshold`.
+  - `open`: calls are rejected immediately (no subprocess launched) until
+    `recovery_timeout_seconds` has elapsed since opening.
+  - `half_open`: exactly one probe call is allowed; success closes the circuit,
+    failure reopens it.
+- `retry_after_seconds` — never negative; `0` unless `state` is `open`.
+- Breaker state is in-memory only and does not survive an application restart
+  (restarting the process is the prototype's manual reset — there is no reset
+  endpoint in this phase).
 
 ## Error responses
 
@@ -140,6 +218,7 @@ All handled errors share one envelope:
 | 409         | `INVALID_WORKFLOW_STATE`         |
 | 422         | `INVALID_REQUEST`                |
 | 503         | `AGENT_EXECUTOR_NOT_REGISTERED`  |
+| 503         | `CIRCUIT_BREAKER_OPEN`          |
 | 500         | `INTERNAL_ERROR` (unexpected)    |
 
 `STEP_EXECUTION_FAILED` is not currently returned via this envelope: an *expected* step
@@ -151,7 +230,5 @@ Error responses never include stack traces, database URLs, or internal configura
 
 ## Planned, not yet implemented
 
-Retry, compensation, and audit endpoints will be added here as they are implemented.
-They do not exist yet. Real agent executors are not registered until Phase 3 — until
-then, `POST /api/v1/workflows/{workflow_id}/execute` always returns `503` for any
-workflow with at least one step.
+Compensation and audit endpoints will be added here as they are implemented. They do
+not exist yet. No public circuit-breaker reset endpoint exists in this phase.

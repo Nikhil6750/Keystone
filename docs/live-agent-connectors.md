@@ -13,8 +13,8 @@ under the backend operating-system user.**
 | Canonical `agent_type` | Display name | Executable | Status in this environment |
 | --- | --- | --- | --- |
 | `claude_code` | Claude Code | `claude` | Installed and authenticated — live-verified |
-| `codex` | OpenAI Codex | `codex` | Not installed here — adapter is modeled/untested |
-| `antigravity` | Google Antigravity | `agy` | Not installed here — adapter is modeled/untested |
+| `codex` | OpenAI Codex | `codex` | Installed and authenticated — live-verified with 0.146.0 |
+| `antigravity` | Google Antigravity | `agy` | Installed and authenticated — live-verified with 1.1.10 |
 | `gemini` | Gemini CLI | `gemini` | Reserved, unconfigured, out of scope for this phase |
 | `demo` | Demo Agent | — (no subprocess) | Deterministic local stand-in, no real provider |
 
@@ -93,9 +93,9 @@ one process-invocation path (`_run_process`) built on the existing Phase 3
 - **Codex** (`codex.py`): parses Codex's documented `exec --json` JSONL event stream —
   one JSON object per line, skipping malformed lines rather than failing outright —
   and extracts the final `agent_message`/`assistant_message` item's text.
-- **Google Antigravity** (`antigravity.py`): parses a JSON object result envelope,
-  checking `is_error`/`error` first, then the first present of several plausible
-  content keys (`result`, `content`, `text`, `output`, `response`, `message`).
+- **Google Antigravity** (`antigravity.py`): parses the 1.1.10 JSON result envelope,
+  whose final text is under `response` and whose remaining fields contain status,
+  conversation, timing, turn-count, and usage metadata.
 
 ## Timeout and error handling
 
@@ -149,45 +149,37 @@ authenticated.
 
 ## Real-agent smoke tests performed in this environment
 
-Only `claude` (Claude Code, v2.1.154) was genuinely installed and authenticated in the
-environment this phase was built and verified in; `codex` and `agy` were confirmed
-absent via both `Get-Command` (PowerShell) and `which` (Bash), returning nothing for
-either. Per this phase's explicit instruction, a provider that cannot run headlessly
-here is reported as a blocker — never faked as a success.
+Claude Code 2.1.154 was previously direct- and workflow-verified. It was deliberately
+not invoked again during the Codex/Antigravity completion pass because its current
+usage limit was exhausted.
 
-**Direct CLI smoke test**: `claude -p "Reply with exactly KEYSTONE_CLAUDE_CONNECTED. Do
-not read files, inspect the repository, invoke tools, execute commands, access the
-network, or modify anything." --output-format json` returned a genuine JSON envelope
-with `"result":"KEYSTONE_CLAUDE_CONNECTED"` and `"is_error":false`.
+**Codex 0.146.0**: `codex login status` reported the existing ChatGPT login. A safe
+`codex exec --json --ephemeral --sandbox read-only` prompt sent through stdin produced
+valid JSONL and the exact token `KEYSTONE_CODEX_CONNECTED`. The corresponding one-step
+Keystone workflow (`max_attempts=1`) succeeded with output exactly
+`KEYSTONE_CODEX_WORKFLOW_OK`, one persisted attempt, a valid seven-event audit chain,
+Codex provenance, and a closed zero-failure circuit breaker.
 
-**Live Keystone workflow smoke test**: with a disposable SQLite database and all three
-real providers enabled, `GET /agents` correctly showed `claude_code` installed and
-registered, `codex`/`antigravity` honestly `not_installed`/`unavailable`;
-`POST /agents/claude_code/verify` returned `connected` / `authenticated` / version
-`2.1.154 (Claude Code)`; a disposable one-step `claude_code` workflow
-(`max_attempts=1`) succeeded with output content exactly `KEYSTONE_CLAUDE_CODE_WORKFLOW_OK`,
-a valid 7-event audit chain, complete provenance, and a `closed` circuit breaker with
-zero failures. The equivalent `codex` and `antigravity` workflows both honestly
-returned `503 AGENT_EXECUTOR_NOT_REGISTERED` — never faked as a success. The
-disposable database was deleted afterward; `git status --short` confirmed no
-tracked-file changes resulted from the live tests.
+**Google Antigravity 1.1.10**: live `--help` inspection established that `--print` is a
+value flag and stdin is not the print prompt. A safe native-EXE argument-array call
+using JSON output, sandbox mode, and disabled slash expansion returned the exact token
+`KEYSTONE_ANTIGRAVITY_CONNECTED`. The corresponding one-step Keystone workflow
+(`max_attempts=1`) succeeded with output exactly `KEYSTONE_ANTIGRAVITY_WORKFLOW_OK`, one
+persisted attempt, a valid seven-event audit chain, Antigravity provenance, and a closed
+zero-failure circuit breaker.
 
-This live verification is what caught the Windows `.cmd`-shim argument-mangling bug
-described in `docs/backend-build-plan.md`'s Phase 6A.1 entry: the *first* attempt at
-this same workflow failed with Claude Code replying "No JSON context was included in
-your message," which led to switching Claude Code's (and Antigravity's) default
-`input_mode` to `stdin`. The workflow above is the result *after* that fix, re-run and
-confirmed successful.
+This live verification caught and corrected three focused defects: Codex's source
+defaults did not select its non-interactive JSONL mode; Antigravity's modeled stdin
+profile caused `--print` to consume `--output-format` as the prompt; and the verification
+response omitted supported capabilities. Both corrected CLI profiles retain
+argument-array execution, `shell=False`, hard timeouts, output caps, and safe sandbox
+flags.
 
 ## Known limitations
 
-- **Codex and Google Antigravity adapters are modeled, not live-verified.** Their JSON/
-  JSONL parsing and error classification are built from each provider's publicly
-  documented conventions (Codex's `exec --json` event stream; the shared local-CLI JSON
-  envelope convention for Antigravity), not from a captured real response, because
-  neither CLI is installed in this environment. Enabling either in a different
-  environment should be preceded by an operator's own `--help`/manual verification that
-  the configured arguments still match their installed CLI version.
+- Codex and Antigravity output parsing is live-verified against versions 0.146.0 and
+  1.1.10 respectively. Provider error-text classification remains best-effort because
+  authentication, permission, and usage-limit failures were not intentionally induced.
 - The workspace-root validator exists but is not wired into execution — no workflow can
   select a working directory yet.
 - Connection state is cached in-process only; it does not survive an application

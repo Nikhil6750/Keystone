@@ -189,6 +189,7 @@ export interface AgentConnectionVerifyRead {
   version: string | null;
   last_checked_at: string | null;
   reason: string;
+  capabilities: string[];
 }
 
 // --- Circuit breaker (backend/app/schemas/resilience.py) ---

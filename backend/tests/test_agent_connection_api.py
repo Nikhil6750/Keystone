@@ -77,6 +77,13 @@ async def test_verify_response_never_includes_credential_fields(client: AsyncCli
         assert forbidden not in body
 
 
+async def test_verify_response_includes_supported_capabilities(client: AsyncClient) -> None:
+    response = await client.post("/api/v1/agents/demo/verify")
+
+    assert response.status_code == 200
+    assert response.json()["capabilities"] == ["workflow_step_execution"]
+
+
 async def test_duplicate_concurrent_verification_returns_409(
     client: AsyncClient, agent_connection_cache: AgentConnectionCache
 ) -> None:

@@ -1,10 +1,8 @@
 """Tests for the Google Antigravity adapter's JSON parsing and error
 classification.
 
-IMPORTANT: `agy` was not installed in the environment this adapter was built
-in — these fixtures model the shared local-CLI JSON envelope convention, not
-a captured live response. See `docs/live-agent-connectors.md`'s
-known-limitations section.
+The sanitized JSON fixtures below match the result envelope live-verified
+against `agy.exe` 1.1.10.
 """
 
 import json

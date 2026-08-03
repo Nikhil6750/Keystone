@@ -229,6 +229,7 @@ describe('AgentsPage', () => {
       version: '2.1.154',
       last_checked_at: '2026-08-03T00:00:00Z',
       reason: 'ok',
+      capabilities: ['workflow_step_execution'],
     });
 
     render(<AgentsPage />);
@@ -267,6 +268,7 @@ describe('AgentsPage', () => {
       version: '2.1.154',
       last_checked_at: null,
       reason: 'ok',
+      capabilities: ['workflow_step_execution'],
     });
     await waitFor(() => expect(button).not.toBeDisabled());
   });
@@ -286,6 +288,7 @@ describe('AgentsPage', () => {
       version: null,
       last_checked_at: null,
       reason: 'ok',
+      capabilities: ['workflow_step_execution'],
     });
 
     render(<AgentsPage />);

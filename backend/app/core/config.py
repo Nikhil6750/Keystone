@@ -91,15 +91,27 @@ class Settings(BaseSettings):
     )
 
     # --- Codex ---
-    # Not verified locally (codex CLI not installed here): disabled by default
-    # with no default arguments. Explicit configuration is required to enable it.
+    # Live-verified against Codex CLI 0.146.0. Always uses non-interactive JSONL
+    # execution, an ephemeral session, and a read-only sandbox. The prompt is sent
+    # via stdin; the isolated process working directory is intentionally not a Git
+    # repository, so the non-interactive command explicitly skips that check.
     codex_enabled: bool = Field(default=False, validation_alias="KEYSTONE_CODEX_ENABLED")
     codex_executable: str = Field(default="codex", validation_alias="KEYSTONE_CODEX_EXECUTABLE")
     codex_arguments: list[str] = Field(
-        default_factory=list, validation_alias="KEYSTONE_CODEX_ARGUMENTS"
+        default_factory=lambda: [
+            "exec",
+            "--json",
+            "--ephemeral",
+            "--sandbox",
+            "read-only",
+            "--skip-git-repo-check",
+        ],
+        validation_alias="KEYSTONE_CODEX_ARGUMENTS",
     )
     codex_input_mode: str = Field(default="stdin", validation_alias="KEYSTONE_CODEX_INPUT_MODE")
-    codex_output_mode: str = Field(default="text", validation_alias="KEYSTONE_CODEX_OUTPUT_MODE")
+    codex_output_mode: str = Field(
+        default="json_lines", validation_alias="KEYSTONE_CODEX_OUTPUT_MODE"
+    )
     codex_timeout_seconds: float | None = Field(
         default=None, validation_alias="KEYSTONE_CODEX_TIMEOUT_SECONDS"
     )
@@ -119,12 +131,11 @@ class Settings(BaseSettings):
     )
 
     # --- Google Antigravity ---
-    # A separate, Gemini-*powered* local coding agent with its own executable
-    # (`agy`) — distinct from the standalone Gemini CLI above. Defaults to stdin
-    # input for the same reason as Claude Code above (a Windows npm `.cmd` shim's
-    # cmd.exe argument re-parsing corrupts multi-line CLI-argument prompts); verify
-    # `agy --help` yourself, confirm the flags below still match the installed
-    # version, and enable explicitly before use.
+    # A separate, Gemini-*powered* local coding agent with its own native executable
+    # (`agy`) — distinct from the standalone Gemini CLI above. Live verification
+    # against 1.1.10 confirmed `--print` is a value flag, so the prompt must
+    # immediately follow it as a discrete argument. Sandbox mode and slash-command
+    # expansion disabling keep this headless invocation constrained.
     antigravity_enabled: bool = Field(
         default=False, validation_alias="KEYSTONE_ANTIGRAVITY_ENABLED"
     )
@@ -132,11 +143,18 @@ class Settings(BaseSettings):
         default="agy", validation_alias="KEYSTONE_ANTIGRAVITY_EXECUTABLE"
     )
     antigravity_arguments: list[str] = Field(
-        default_factory=lambda: ["-p", "--output-format", "json"],
+        default_factory=lambda: [
+            "--output-format",
+            "json",
+            "--sandbox",
+            "--disable-slash-commands",
+            "--print",
+            "{prompt}",
+        ],
         validation_alias="KEYSTONE_ANTIGRAVITY_ARGUMENTS",
     )
     antigravity_input_mode: str = Field(
-        default="stdin", validation_alias="KEYSTONE_ANTIGRAVITY_INPUT_MODE"
+        default="prompt_argument", validation_alias="KEYSTONE_ANTIGRAVITY_INPUT_MODE"
     )
     antigravity_output_mode: str = Field(
         default="json", validation_alias="KEYSTONE_ANTIGRAVITY_OUTPUT_MODE"

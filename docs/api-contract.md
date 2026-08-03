@@ -194,7 +194,7 @@ CLI is always a fixed, harmless, backend-owned instruction; nothing from the cal
 is ever forwarded to a provider process.
 
 **Response `200 OK`**: an `AgentConnectionVerifyRead` (same shape as one `GET /agents`
-item, minus `available`/`capabilities`). Never includes a raw provider response, an
+item, minus `available`; includes the supported `capabilities`). Never includes a raw provider response, an
 email address, or any other account-identifying detail.
 
 **Response `404 Not Found`**: `AGENT_TYPE_UNKNOWN` — `agent_type` is not one of the

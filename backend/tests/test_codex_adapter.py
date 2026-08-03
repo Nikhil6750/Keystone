@@ -1,10 +1,8 @@
 """Tests for the Codex adapter's JSONL event-stream parsing and error
 classification.
 
-IMPORTANT: `codex` was not installed in the environment this adapter was
-built in — these fixtures model Codex's publicly documented `exec --json`
-event-stream conventions, not a captured live response. See
-`docs/live-agent-connectors.md`'s known-limitations section.
+The sanitized JSONL fixtures below match the event shape live-verified against
+Codex CLI 0.146.0.
 """
 
 import json

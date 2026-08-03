@@ -8,13 +8,9 @@ API key, no stored credentials, no HTTP calls, no keyring read, and no
 `--output-format json`) — never the interactive TUI — from a backend
 request.
 
-IMPORTANT: `agy` was not installed in the environment this adapter was built
-in, so this JSON parser is modeled on the flag shape and JSON envelope
-convention shared by the other local-CLI adapters (a single JSON object
-carrying the final response under one of a few common key names), not
-captured from a live run. Treat it as best-effort until it has been
-exercised against a real installation — see
-`docs/live-agent-connectors.md`'s known-limitations section. There is no
+Live-verified against `agy.exe` 1.1.10, which returns a single JSON object
+whose final text is under `response` and whose safe metadata includes status,
+conversation ID, timing, turns, and usage. There is no
 documented, safe, dedicated authentication-status command for this CLI, so
 `check_authentication` always reports `unknown`; only `verify_connection`
 (a real headless call) can positively confirm authentication.
@@ -80,8 +76,7 @@ class AntigravityAdapter(LocalCLIAdapter):
 
     @staticmethod
     def _classify_and_raise(text: str) -> None:
-        """Best-effort classification — see module docstring: not verified
-        against a real Antigravity installation in this environment."""
+        """Best-effort classification of the provider's sanitized error text."""
         if looks_like_authentication_failure(text):
             raise AgentAuthenticationError(
                 "Google Antigravity reported an authentication failure. Run "

@@ -270,17 +270,12 @@ CLI or drive an interactive login.
   `check_authentication` runs `claude auth status` and reads **only** the `loggedIn`
   boolean from its JSON output — never the email, org ID, org name, or subscription
   type it also returns.
-- `codex.py` — parses Codex's documented `exec --json` JSONL event stream (one JSON
+- `codex.py` — parses Codex's live-verified `exec --json` JSONL event stream (one JSON
   object per line; skips malformed lines rather than failing), extracting the final
-  `agent_message`/`assistant_message` item's text. **Modeled from Codex's public
-  documentation, not a captured live response** — `codex` was not installed in the
-  environment this adapter was built and tested in (see
-  `docs/live-agent-connectors.md`'s known-limitations section).
-- `antigravity.py` — `AntigravityAdapter`, parsing a JSON object result envelope
-  (checking `is_error`/`error`, then the first present of several plausible content
-  keys). **Modeled from the shared local-CLI JSON convention, not a captured live
-  response** — `agy` was not installed in the environment this adapter was built and
-  tested in.
+  `agent_message`/`assistant_message` item's text. Verified against Codex CLI 0.146.0.
+- `antigravity.py` — `AntigravityAdapter`, parsing the JSON object result envelope
+  live-verified against `agy.exe` 1.1.10 (final text under `response`, with safe status,
+  conversation, timing, turn-count, and usage metadata).
 - `demo.py` — `DemoAgentAdapter`, a deterministic, no-subprocess, no-network adapter
   for local demonstration and frontend integration. Disabled by default; registers only
   when explicitly enabled; always labels its result `metadata.execution_mode="demo"`

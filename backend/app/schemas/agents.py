@@ -56,3 +56,4 @@ class AgentConnectionVerifyRead(BaseModel):
     version: str | None
     last_checked_at: datetime | None
     reason: str
+    capabilities: list[str]

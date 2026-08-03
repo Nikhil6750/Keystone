@@ -41,6 +41,11 @@ def display_name_for(agent_type: str) -> str:
     return _DISPLAY_NAMES.get(agent_type, agent_type)
 
 
+def capabilities_for(agent_type: str) -> list[str]:
+    """Return a fresh API-safe capability list for one canonical agent type."""
+    return list(_CAPABILITIES.get(agent_type, []))
+
+
 @dataclass(frozen=True)
 class AgentAvailability:
     """A safe, API-facing availability + connection report for one canonical agent type."""
@@ -119,7 +124,7 @@ def _cli_availability(
             connection_status=ConnectionStatus.DISABLED,
             version=None,
             last_checked_at=None,
-            capabilities=_CAPABILITIES.get(agent_type, []),
+            capabilities=capabilities_for(agent_type),
         )
 
     installed = shutil.which(profile.executable) is not None
@@ -137,7 +142,7 @@ def _cli_availability(
             connection_status=ConnectionStatus.UNAVAILABLE,
             version=None,
             last_checked_at=None,
-            capabilities=_CAPABILITIES.get(agent_type, []),
+            capabilities=capabilities_for(agent_type),
         )
 
     return AgentAvailability(
@@ -153,7 +158,7 @@ def _cli_availability(
         connection_status=connection_status,
         version=version,
         last_checked_at=last_checked_at,
-        capabilities=_CAPABILITIES.get(agent_type, []),
+        capabilities=capabilities_for(agent_type),
     )
 
 
@@ -179,7 +184,7 @@ def _safe_cli_availability(
             connection_status=ConnectionStatus.DISABLED,
             version=None,
             last_checked_at=None,
-            capabilities=_CAPABILITIES.get(agent_type, []),
+            capabilities=capabilities_for(agent_type),
         )
     return _cli_availability(agent_type, profile, registry, cache)
 
@@ -200,7 +205,7 @@ def _demo_availability(settings: Settings, registry: ExecutorRegistry) -> AgentA
             connection_status=ConnectionStatus.DISABLED,
             version=None,
             last_checked_at=None,
-            capabilities=_CAPABILITIES.get(AgentType.DEMO.value, []),
+            capabilities=capabilities_for(AgentType.DEMO.value),
         )
     return AgentAvailability(
         agent_type=AgentType.DEMO.value,
@@ -217,7 +222,7 @@ def _demo_availability(settings: Settings, registry: ExecutorRegistry) -> AgentA
         ),
         version=None,
         last_checked_at=None,
-        capabilities=_CAPABILITIES.get(AgentType.DEMO.value, []),
+        capabilities=capabilities_for(AgentType.DEMO.value),
     )
 
 

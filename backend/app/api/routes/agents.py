@@ -7,7 +7,7 @@ from app.api.deps import get_agent_connection_cache, get_executor_registry
 from app.core.config import Settings, get_settings
 from app.engine.registry import ExecutorRegistry
 from app.schemas.agents import AgentAvailabilityListResponse, AgentConnectionVerifyRead
-from app.services.agent_availability import list_agent_availability
+from app.services.agent_availability import capabilities_for, list_agent_availability
 from app.services.agent_connection import verify_agent
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -42,4 +42,5 @@ def verify_agent_connection(
     if a verification for the same agent type is already running.
     """
     state = verify_agent(agent_type, settings, registry, cache)
-    return AgentConnectionVerifyRead.model_validate(state)
+    response = AgentConnectionVerifyRead.model_validate(state)
+    return response.model_copy(update={"capabilities": capabilities_for(agent_type)})

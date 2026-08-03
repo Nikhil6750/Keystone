@@ -2,16 +2,11 @@
 
 Uses whatever authenticated session the locally installed CLI already has
 (subscription-based login) — no API key, no stored credentials, no HTTP
-calls. Always invokes `codex exec --json "<prompt>"` — never the interactive
-TUI — from a backend request.
+calls. Always invokes `codex exec --json` and sends the prompt through stdin —
+never the interactive TUI — from a backend request.
 
-IMPORTANT: `codex` was not installed in the environment this adapter was
-built in, so this JSONL parser is modeled on Codex's publicly documented
-`exec --json` event-stream conventions (a stream of `{"type": ...}` event
-objects, ending in a final agent-message event), not captured from a live
-run. Treat it as best-effort until it has been exercised against a real
-installation — see `docs/live-agent-connectors.md`'s known-limitations
-section.
+Live-verified against Codex CLI 0.146.0: `exec --json` emits a JSONL event
+stream ending in an `item.completed` event whose item is an `agent_message`.
 """
 
 import json
@@ -85,8 +80,7 @@ class CodexAdapter(LocalCLIAdapter):
 
     @staticmethod
     def _classify_and_raise(text: str) -> None:
-        """Best-effort classification — see module docstring: not verified
-        against a real Codex installation in this environment."""
+        """Best-effort classification of the provider's sanitized error text."""
         if looks_like_authentication_failure(text):
             raise AgentAuthenticationError(
                 "Codex reported an authentication failure. Run `codex login` locally."
@@ -98,9 +92,7 @@ class CodexAdapter(LocalCLIAdapter):
         raise AgentOutputError(f"codex reported an error: {text.strip()[:200]}")
 
     def check_authentication(self) -> AuthenticationStatus:
-        """Runs `codex login status`. Parsing is best-effort text matching
-        (no confirmed real JSON schema for this exact command in the
-        installed-version environment this adapter was built in)."""
+        """Run `codex login status` and classify its minimal text status."""
         try:
             result = self._process_runner.run(
                 self._profile.executable,

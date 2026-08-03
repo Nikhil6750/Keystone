@@ -21,10 +21,11 @@ async def test_get_agents_returns_all_canonical_agent_types(client: AsyncClient)
     assert {item["agent_type"] for item in body["items"]} == {
         "claude_code",
         "codex",
+        "antigravity",
         "gemini",
         "demo",
     }
-    assert body["count"] == 4
+    assert body["count"] == 5
 
 
 async def test_get_agents_exposes_no_secret_fields(client: AsyncClient) -> None:
@@ -33,12 +34,23 @@ async def test_get_agents_exposes_no_secret_fields(client: AsyncClient) -> None:
     for item in body["items"]:
         assert set(item.keys()) == {
             "agent_type",
+            "display_name",
             "enabled",
             "available",
             "registered",
             "execution_mode",
             "reason",
+            "installation_status",
+            "authentication_status",
+            "connection_status",
+            "version",
+            "last_checked_at",
+            "capabilities",
         }
+        # Never a raw provider response, email, org ID, or credential.
+        assert "email" not in item
+        assert "credentials" not in item
+        assert "session_id" not in item
 
 
 async def test_get_circuit_breakers_returns_200(client: AsyncClient) -> None:

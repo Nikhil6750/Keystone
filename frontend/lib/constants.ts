@@ -28,4 +28,10 @@ export const ROUTES = {
 } as const;
 
 /** Canonical agent types the backend recognizes (see `docs/api-contract.md`). */
-export const CANONICAL_AGENT_TYPES = ['claude_code', 'codex', 'gemini', 'demo'] as const;
+export const CANONICAL_AGENT_TYPES = [
+  'claude_code',
+  'codex',
+  'antigravity',
+  'gemini',
+  'demo',
+] as const;

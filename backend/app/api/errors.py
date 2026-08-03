@@ -19,6 +19,7 @@ from app.engine.exceptions import InvalidWorkflowStateError, WorkflowNotFoundErr
 from app.engine.registry import ExecutorNotRegisteredError
 from app.resilience.circuit_breaker import CircuitBreakerOpenError
 from app.schemas.errors import APIError, APIErrorCode, APIErrorEnvelope
+from app.services.agent_connection import UnknownAgentTypeError, VerificationInProgressError
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,22 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content=_envelope(APIErrorCode.COMPENSATION_EXECUTION_FAILED, str(exc)),
+        )
+
+    @app.exception_handler(UnknownAgentTypeError)
+    async def _unknown_agent_type(_: Request, exc: UnknownAgentTypeError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=_envelope(APIErrorCode.AGENT_TYPE_UNKNOWN, str(exc)),
+        )
+
+    @app.exception_handler(VerificationInProgressError)
+    async def _verification_in_progress(
+        _: Request, exc: VerificationInProgressError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=_envelope(APIErrorCode.AGENT_VERIFICATION_IN_PROGRESS, str(exc)),
         )
 
     @app.exception_handler(RequestValidationError)

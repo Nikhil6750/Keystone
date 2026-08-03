@@ -61,8 +61,15 @@ class Settings(BaseSettings):
 
     # --- Claude Code ---
     # Verified locally: `claude --help` confirms `-p`/`--print` for non-interactive
-    # output and `--output-format json` for a single JSON result; the prompt is a
-    # trailing positional argument. Still disabled by default (opt-in).
+    # output and `--output-format json` for a single JSON result. The prompt is sent
+    # via stdin, not as a trailing CLI argument: on Windows, `claude` resolves to an
+    # npm `.CMD` batch shim, and Windows routes a `.cmd`/`.bat` target through
+    # `cmd.exe`'s own argument re-parsing, which reliably corrupts a multi-line
+    # argument (every real prompt this app builds contains embedded newlines) — the
+    # CLI silently received a mangled prompt and replied "No JSON context was
+    # included," discovered via this phase's live verification. Stdin sidesteps
+    # command-line parsing entirely and was confirmed to work reliably. Still
+    # disabled by default (opt-in).
     claude_code_enabled: bool = Field(
         default=False, validation_alias="KEYSTONE_CLAUDE_CODE_ENABLED"
     )
@@ -70,11 +77,11 @@ class Settings(BaseSettings):
         default="claude", validation_alias="KEYSTONE_CLAUDE_CODE_EXECUTABLE"
     )
     claude_code_arguments: list[str] = Field(
-        default_factory=lambda: ["-p", "--output-format", "json", "{prompt}"],
+        default_factory=lambda: ["-p", "--output-format", "json"],
         validation_alias="KEYSTONE_CLAUDE_CODE_ARGUMENTS",
     )
     claude_code_input_mode: str = Field(
-        default="prompt_argument", validation_alias="KEYSTONE_CLAUDE_CODE_INPUT_MODE"
+        default="stdin", validation_alias="KEYSTONE_CLAUDE_CODE_INPUT_MODE"
     )
     claude_code_output_mode: str = Field(
         default="json", validation_alias="KEYSTONE_CLAUDE_CODE_OUTPUT_MODE"
@@ -111,12 +118,45 @@ class Settings(BaseSettings):
         default=None, validation_alias="KEYSTONE_GEMINI_TIMEOUT_SECONDS"
     )
 
+    # --- Google Antigravity ---
+    # A separate, Gemini-*powered* local coding agent with its own executable
+    # (`agy`) — distinct from the standalone Gemini CLI above. Defaults to stdin
+    # input for the same reason as Claude Code above (a Windows npm `.cmd` shim's
+    # cmd.exe argument re-parsing corrupts multi-line CLI-argument prompts); verify
+    # `agy --help` yourself, confirm the flags below still match the installed
+    # version, and enable explicitly before use.
+    antigravity_enabled: bool = Field(
+        default=False, validation_alias="KEYSTONE_ANTIGRAVITY_ENABLED"
+    )
+    antigravity_executable: str = Field(
+        default="agy", validation_alias="KEYSTONE_ANTIGRAVITY_EXECUTABLE"
+    )
+    antigravity_arguments: list[str] = Field(
+        default_factory=lambda: ["-p", "--output-format", "json"],
+        validation_alias="KEYSTONE_ANTIGRAVITY_ARGUMENTS",
+    )
+    antigravity_input_mode: str = Field(
+        default="stdin", validation_alias="KEYSTONE_ANTIGRAVITY_INPUT_MODE"
+    )
+    antigravity_output_mode: str = Field(
+        default="json", validation_alias="KEYSTONE_ANTIGRAVITY_OUTPUT_MODE"
+    )
+    antigravity_timeout_seconds: float | None = Field(
+        default=None, validation_alias="KEYSTONE_ANTIGRAVITY_TIMEOUT_SECONDS"
+    )
+
     # --- Demo ---
     demo_enabled: bool = Field(default=False, validation_alias="KEYSTONE_DEMO_ENABLED")
 
     # --- Compensation ---
     auto_compensate_on_failure: bool = Field(
         default=False, validation_alias="KEYSTONE_AUTO_COMPENSATE_ON_FAILURE"
+    )
+
+    # --- Live agent connection verification ---
+    agent_workspace_root: str = Field(default=".", validation_alias="KEYSTONE_AGENT_WORKSPACE_ROOT")
+    agent_connection_cache_seconds: float = Field(
+        default=60.0, validation_alias="KEYSTONE_AGENT_CONNECTION_CACHE_SECONDS"
     )
 
     @property
@@ -163,6 +203,19 @@ class Settings(BaseSettings):
             input_mode=self.gemini_input_mode,
             output_mode=self.gemini_output_mode,
             timeout_seconds=self._resolve_timeout(self.gemini_timeout_seconds),
+            max_output_characters=self.agent_max_output_characters,
+        )
+
+    def antigravity_profile(self) -> CLIProfile:
+        """Build and validate the Google Antigravity CLI profile. Raises `ValueError` if invalid."""
+        return create_cli_profile(
+            agent_type="antigravity",
+            enabled=self.antigravity_enabled,
+            executable=self.antigravity_executable,
+            arguments=self.antigravity_arguments,
+            input_mode=self.antigravity_input_mode,
+            output_mode=self.antigravity_output_mode,
+            timeout_seconds=self._resolve_timeout(self.antigravity_timeout_seconds),
             max_output_characters=self.agent_max_output_characters,
         )
 

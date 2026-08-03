@@ -20,6 +20,8 @@ export type APIErrorCode =
   | 'COMPENSATION_ALREADY_COMPLETED'
   | 'AUDIT_CHAIN_INVALID'
   | 'AUDIT_EVENT_CONFLICT'
+  | 'AGENT_TYPE_UNKNOWN'
+  | 'AGENT_VERIFICATION_IN_PROGRESS'
   | 'INVALID_REQUEST'
   | 'INTERNAL_ERROR';
 
@@ -36,13 +38,7 @@ export interface APIErrorEnvelope {
 // --- Enums (backend/app/models/enums.py) ---
 
 export type WorkflowStatus =
-  | 'pending'
-  | 'running'
-  | 'succeeded'
-  | 'failed'
-  | 'compensating'
-  | 'compensated'
-  | 'cancelled';
+  'pending' | 'running' | 'succeeded' | 'failed' | 'compensating' | 'compensated' | 'cancelled';
 
 export type StepStatus =
   | 'pending'
@@ -147,20 +143,52 @@ export interface WorkflowListResponse {
   count: number;
 }
 
-// --- Agent availability (backend/app/schemas/agents.py) ---
+// --- Agent availability / connection (backend/app/schemas/agents.py,
+// backend/app/adapters/connection.py) ---
+
+export type InstallationStatus = 'installed' | 'not_installed' | 'unknown';
+
+export type AuthenticationStatus = 'authenticated' | 'unauthenticated' | 'unknown' | 'error';
+
+export type ConnectionStatus =
+  'connected' | 'unavailable' | 'verification_failed' | 'verification_required' | 'disabled';
 
 export interface AgentAvailabilityRead {
   agent_type: string;
+  display_name: string;
   enabled: boolean;
   available: boolean;
   registered: boolean;
   execution_mode: string;
   reason: string;
+  installation_status: InstallationStatus;
+  authentication_status: AuthenticationStatus;
+  connection_status: ConnectionStatus;
+  version: string | null;
+  last_checked_at: string | null;
+  capabilities: string[];
 }
 
 export interface AgentAvailabilityListResponse {
   items: AgentAvailabilityRead[];
   count: number;
+}
+
+/** Response for `POST /api/v1/agents/{agent_type}/verify`. Never includes a
+ * raw provider response, email address, or any other account-identifying
+ * detail — only this sanitized state. */
+export interface AgentConnectionVerifyRead {
+  agent_type: string;
+  display_name: string;
+  enabled: boolean;
+  installation_status: InstallationStatus;
+  authentication_status: AuthenticationStatus;
+  connection_status: ConnectionStatus;
+  registered: boolean;
+  execution_mode: string;
+  version: string | null;
+  last_checked_at: string | null;
+  reason: string;
 }
 
 // --- Circuit breaker (backend/app/schemas/resilience.py) ---

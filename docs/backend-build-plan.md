@@ -188,13 +188,101 @@ Still deferred, as intended: automatic task decomposition/agent routing (Phase 6
 evidence-grounded workflow memory and RAG (Phase 7), MCP/A2A/OpenTelemetry/isolation
 (Phase 8), and failure-injection/replay/benchmarking tooling (Phase 9).
 
+## Phase 6A.1: Live local provider connectors — `COMPLETE`
+
+Implemented:
+
+- Fifth canonical agent type `antigravity` (`backend/app/adapters/types.py`), added
+  purely additively — no rename of, or silent alias to, `gemini`. The DB column
+  backing `WorkflowStep.agent_type` is an unconstrained `String(100)`, so this required
+  no migration; a persisted `agent_type="gemini"` step still resolves strictly through
+  the `gemini` executor, never falling back to `antigravity`
+  (`backend/tests/test_agent_type_migration.py`)
+- Real, verified Claude Code JSON-envelope parsing (`backend/app/adapters/claude_code.py`)
+  and a safe `check_authentication` that reads only the `loggedIn` boolean from
+  `claude auth status` — never the email/org ID/org name/subscription type it also
+  returns
+- Modeled (not live-tested; `codex` was not installed in this environment) Codex
+  `exec --json` JSONL event-stream parsing (`backend/app/adapters/codex.py`)
+- New, modeled (not live-tested; `agy` was not installed in this environment) Google
+  Antigravity adapter (`backend/app/adapters/antigravity.py`)
+- Shared connection-state model and cache (`backend/app/adapters/connection.py`):
+  three independent statuses (`installation_status`/`authentication_status`/
+  `connection_status`) — never collapsed into one boolean — plus an in-process,
+  TTL-based `AgentConnectionCache` guarding against duplicate concurrent verifications
+- Shared keyword-based error classification (`backend/app/adapters/error_classification.py`)
+  and three new non-retryable exceptions (`AgentAuthenticationError`,
+  `AgentUsageLimitError`, `AgentPermissionError`) — the existing engine retry/
+  circuit-breaker/audit machinery required zero changes to honor them
+- New connection-verification service (`backend/app/services/agent_connection.py`,
+  `verify_agent`) and API: `POST /api/v1/agents/{agent_type}/verify` — runs one safe,
+  backend-owned headless prompt with a fresh, single-use token; never accepts a prompt
+  from the caller; `404 AGENT_TYPE_UNKNOWN` / `409 AGENT_VERIFICATION_IN_PROGRESS` added
+- `GET /api/v1/agents` extended (existing fields unchanged) with `display_name`,
+  `installation_status`, `authentication_status`, `connection_status`, `version`,
+  `last_checked_at`, `capabilities`
+- Defense-in-depth workspace-root validator (`backend/app/adapters/workspace.py`),
+  built but not yet wired into execution — no workflow can specify a working directory
+  today
+- Frontend: rewritten `/agents` page with four provider cards (Claude Code, OpenAI
+  Codex, Google Antigravity, Demo Agent — Gemini shown only as a "not configured"
+  placeholder), a "Verify Connection" button (duplicate-click prevention via a
+  synchronous in-flight guard, honest in-progress/error states, `aria-live` status),
+  the exact required credential-handling disclosure, and provider-specific local login
+  instructions (`claude auth login` / `codex login` / run `agy` and complete its
+  browser sign-in) shown only while unauthenticated — never a credential input
+- Workflow builder (`components/workflow/workflow-builder.tsx`) now disables selecting
+  any agent that isn't enabled, registered, installed, authenticated, and connected,
+  and links the user to the Agents page to verify it
+- Backend tests: 516 passing (up from the Phase 5 baseline of 454); `ruff`,
+  `ruff format --check`, and `mypy` all pass
+- Frontend tests: 64 passing (up from the Phase 5 baseline of 47); lint, typecheck,
+  and `next build` all pass
+- **A real bug this phase's live verification caught and fixed**: on Windows,
+  `shutil.which("claude")` resolves to an npm `.CMD` batch shim, and passing a
+  multi-line prompt (every prompt `PromptBuilder` builds embeds newlines) as a
+  trailing CLI argument to a `.cmd`/`.bat` target routes the process through
+  `cmd.exe`'s own argument re-parsing, which reliably corrupts it — the first real
+  Keystone workflow execution through Claude Code returned "No JSON context was
+  included in your message" instead of following the actual instruction. Fixed by
+  switching Claude Code's (and, preemptively, Antigravity's, which resolves the same
+  way) default `input_mode` from `prompt_argument` to `stdin` — matching what Codex
+  and Gemini already defaulted to — which sidesteps command-line parsing entirely.
+  Confirmed fixed by re-running the same live workflow after the change (see below).
+  Locked in by `backend/tests/test_windows_cmd_shim_argument_safety.py`.
+
+No credential, token, password, OTP, or OAuth flow is ever collected, stored, or
+proxied through the browser or the backend — every provider CLI runs already
+authenticated under the same OS user account that runs the Keystone backend. No
+task decomposition, automatic agent selection, manager-agent routing, agent
+marketplace, MCP, A2A, RAG, or parallel/long-running background execution was added —
+all out of scope for this phase (see `docs/live-agent-connectors.md`).
+
+Manually verified against a live backend with a disposable SQLite database and all
+three real providers enabled: `GET /api/v1/agents` correctly reported `claude_code` as
+installed/registered and `codex`/`antigravity` as honestly `not_installed`/
+`unavailable` (neither CLI exists in this environment, confirmed via both
+`Get-Command` and `which`); `POST /agents/claude_code/verify` returned `connected`,
+`authenticated`, version `2.1.154 (Claude Code)`; a real one-step `claude_code`
+workflow (`max_attempts=1`) succeeded end to end with output content exactly
+`KEYSTONE_CLAUDE_CODE_WORKFLOW_OK`, a valid 7-event audit chain, complete provenance,
+and a `closed` circuit breaker with zero failures; the equivalent `codex` and
+`antigravity` workflows honestly returned `503 AGENT_EXECUTOR_NOT_REGISTERED` — no
+success was faked for either. The disposable database was deleted afterward;
+`git status --short` showed no tracked-file changes from the live tests. Claude Code
+is the only provider genuinely live-verified in this environment; Codex and Google
+Antigravity's adapters are built and unit-tested against modeled fixtures only, and
+their real CLIs were never available here to verify against.
+
 ## Future roadmap
 
-- **Phase 6:** Manager task decomposition and agent routing
+- **Phase 6A.2:** Searchable agent catalog with guided install/login flows (still no
+  credential collection through the browser)
+- **Phase 6B:** Manager task decomposition and automatic agent routing
 - **Phase 7:** Agent Passports, validated workflow memory, evidence-grounded adaptive
   routing, and RAG
 - **Phase 8:** MCP, A2A, OpenTelemetry, isolation, and policy controls
 - **Phase 9:** Agent Reliability Lab, failure injection, replay, and benchmarking
 
-None of Phases 6–9 are implemented — this build plan only ever marks a phase `COMPLETE`
-once its own tests and manual verification have passed, never in advance.
+None of Phases 6A.2–9 are implemented — this build plan only ever marks a phase
+`COMPLETE` once its own tests and manual verification have passed, never in advance.

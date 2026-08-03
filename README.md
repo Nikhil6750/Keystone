@@ -19,6 +19,15 @@ intended design and current implementation status of each module.
 The prototype avoids Kubernetes, distributed databases, message brokers, and paid APIs.
 SQLite is used as the workflow-state store; Docker Compose is available for local runs.
 
+## Live agent connectors
+
+Keystone can execute workflow steps through real, locally installed coding-agent CLIs
+(Claude Code, Codex, Google Antigravity) in addition to the built-in demo agent — see
+[`docs/live-agent-connectors.md`](docs/live-agent-connectors.md). Keystone does not
+receive provider passwords, browser cookies, OAuth refresh tokens, or API keys. It
+invokes locally installed provider CLIs that are already authenticated under the
+backend operating-system user.
+
 ## Repository structure
 
 ```text

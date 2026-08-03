@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.adapters.connection import AgentConnectionCache
 from app.adapters.factory import register_agents
 from app.api.errors import register_exception_handlers
 from app.api.routes.agents import router as agents_router
@@ -65,6 +66,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "compensation_handler_registered handler_name=%s", DEMO_COMPENSATION_HANDLER_NAME
         )
     register_agents(app.state.executor_registry, settings)
+    app.state.agent_connection_cache = AgentConnectionCache(
+        cache_seconds=settings.agent_connection_cache_seconds
+    )
     yield
     logger.info("%s shutting down", settings.app_name)
 

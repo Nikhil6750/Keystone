@@ -1,7 +1,16 @@
-"""Tests for the shared local-CLI adapter behavior (Claude Code, Codex, Gemini).
+"""Tests for the shared, generic local-CLI adapter behavior.
 
-All process execution is faked via `FakeProcessRunner` — no real subprocess is
-ever launched here.
+`GeminiAdapter` remains a trivial pass-through subclass of `LocalCLIAdapter`
+(the official Gemini CLI is still a reserved, unconfigured provider — see
+`docs/live-agent-connectors.md`), so it is the adapter used here to exercise
+the *shared* prompt-building/process-invocation/generic-parsing code path.
+Claude Code, Codex, and Google Antigravity each override `_build_result` with
+their own provider-specific JSON/JSONL parsing and error classification —
+see `test_claude_code_adapter.py`, `test_codex_adapter.py`, and
+`test_antigravity_adapter.py` for those.
+
+All process execution is faked via `FakeProcessRunner` — no real subprocess
+is ever launched here.
 """
 
 import json
@@ -9,8 +18,6 @@ import json
 import pytest
 
 from app.adapters import process_runner
-from app.adapters.claude_code import ClaudeCodeAdapter
-from app.adapters.codex import CodexAdapter
 from app.adapters.exceptions import AgentOutputError, AgentProcessError
 from app.adapters.gemini import GeminiAdapter
 from app.adapters.process_runner import ProcessResult
@@ -19,29 +26,22 @@ from app.adapters.types import create_cli_profile
 from app.engine.executor import StepExecutionRequest
 from tests.support.fakes import FakeProcessRunner
 
-_ADAPTER_CLASSES_AND_TYPES = [
-    (ClaudeCodeAdapter, "claude_code"),
-    (CodexAdapter, "codex"),
-    (GeminiAdapter, "gemini"),
-]
-
 
 def _request() -> StepExecutionRequest:
     return StepExecutionRequest(
         workflow_id="wf-1",
         step_id="step-1",
         step_name="demo-step",
-        agent_type="claude_code",
+        agent_type="gemini",
         step_input={"task": "say hi"},
         workflow_input={"goal": "demo"},
         previous_step_outputs={},
     )
 
 
-@pytest.mark.parametrize(("adapter_cls", "expected_agent_type"), _ADAPTER_CLASSES_AND_TYPES)
-def test_adapter_returns_correct_agent_type(adapter_cls: type, expected_agent_type: str) -> None:
+def test_adapter_returns_correct_agent_type() -> None:
     profile = create_cli_profile(
-        agent_type=expected_agent_type,
+        agent_type="gemini",
         enabled=True,
         executable="mock",
         arguments=["-p", "{prompt}"],
@@ -51,16 +51,16 @@ def test_adapter_returns_correct_agent_type(adapter_cls: type, expected_agent_ty
         max_output_characters=1000,
     )
     runner = FakeProcessRunner(result=ProcessResult(exit_code=0, stdout="hello", stderr=""))
-    adapter = adapter_cls(profile, runner, PromptBuilder(max_prompt_characters=10000))
+    adapter = GeminiAdapter(profile, runner, PromptBuilder(max_prompt_characters=10000))
 
     result = adapter.execute(_request())
 
-    assert result["agent_type"] == expected_agent_type
+    assert result["agent_type"] == "gemini"
 
 
 def test_deterministic_prompt_is_built_and_passed_as_argument() -> None:
     profile = create_cli_profile(
-        agent_type="claude_code",
+        agent_type="gemini",
         enabled=True,
         executable="mock",
         arguments=["-p", "{prompt}"],
@@ -70,7 +70,7 @@ def test_deterministic_prompt_is_built_and_passed_as_argument() -> None:
         max_output_characters=1000,
     )
     runner = FakeProcessRunner(result=ProcessResult(exit_code=0, stdout="hello", stderr=""))
-    adapter = ClaudeCodeAdapter(profile, runner, PromptBuilder(max_prompt_characters=10000))
+    adapter = GeminiAdapter(profile, runner, PromptBuilder(max_prompt_characters=10000))
 
     adapter.execute(_request())
     adapter.execute(_request())
@@ -85,7 +85,7 @@ def test_deterministic_prompt_is_built_and_passed_as_argument() -> None:
 
 def test_text_output_is_wrapped_correctly() -> None:
     profile = create_cli_profile(
-        agent_type="claude_code",
+        agent_type="gemini",
         enabled=True,
         executable="mock",
         arguments=[],
@@ -95,7 +95,7 @@ def test_text_output_is_wrapped_correctly() -> None:
         max_output_characters=1000,
     )
     runner = FakeProcessRunner(result=ProcessResult(exit_code=0, stdout="  hi there  ", stderr=""))
-    adapter = ClaudeCodeAdapter(profile, runner, PromptBuilder(max_prompt_characters=10000))
+    adapter = GeminiAdapter(profile, runner, PromptBuilder(max_prompt_characters=10000))
 
     result = adapter.execute(_request())
 
@@ -105,7 +105,7 @@ def test_text_output_is_wrapped_correctly() -> None:
 
 def test_json_output_is_parsed_correctly() -> None:
     profile = create_cli_profile(
-        agent_type="claude_code",
+        agent_type="gemini",
         enabled=True,
         executable="mock",
         arguments=[],
@@ -117,7 +117,7 @@ def test_json_output_is_parsed_correctly() -> None:
     runner = FakeProcessRunner(
         result=ProcessResult(exit_code=0, stdout='{"result": "the answer"}', stderr="")
     )
-    adapter = ClaudeCodeAdapter(profile, runner, PromptBuilder(max_prompt_characters=10000))
+    adapter = GeminiAdapter(profile, runner, PromptBuilder(max_prompt_characters=10000))
 
     result = adapter.execute(_request())
 
@@ -126,7 +126,7 @@ def test_json_output_is_parsed_correctly() -> None:
 
 def test_json_lines_output_is_parsed_correctly() -> None:
     profile = create_cli_profile(
-        agent_type="claude_code",
+        agent_type="gemini",
         enabled=True,
         executable="mock",
         arguments=[],
@@ -137,7 +137,7 @@ def test_json_lines_output_is_parsed_correctly() -> None:
     )
     stdout = '{"event": "start"}\n{"result": "final answer"}\n'
     runner = FakeProcessRunner(result=ProcessResult(exit_code=0, stdout=stdout, stderr=""))
-    adapter = ClaudeCodeAdapter(profile, runner, PromptBuilder(max_prompt_characters=10000))
+    adapter = GeminiAdapter(profile, runner, PromptBuilder(max_prompt_characters=10000))
 
     result = adapter.execute(_request())
 
@@ -146,7 +146,7 @@ def test_json_lines_output_is_parsed_correctly() -> None:
 
 def test_empty_output_fails() -> None:
     profile = create_cli_profile(
-        agent_type="claude_code",
+        agent_type="gemini",
         enabled=True,
         executable="mock",
         arguments=[],
@@ -156,7 +156,7 @@ def test_empty_output_fails() -> None:
         max_output_characters=1000,
     )
     runner = FakeProcessRunner(result=ProcessResult(exit_code=0, stdout="   ", stderr=""))
-    adapter = ClaudeCodeAdapter(profile, runner, PromptBuilder(max_prompt_characters=10000))
+    adapter = GeminiAdapter(profile, runner, PromptBuilder(max_prompt_characters=10000))
 
     with pytest.raises(AgentOutputError):
         adapter.execute(_request())
@@ -164,7 +164,7 @@ def test_empty_output_fails() -> None:
 
 def test_malformed_json_output_raises_agent_output_error() -> None:
     profile = create_cli_profile(
-        agent_type="claude_code",
+        agent_type="gemini",
         enabled=True,
         executable="mock",
         arguments=[],
@@ -174,7 +174,7 @@ def test_malformed_json_output_raises_agent_output_error() -> None:
         max_output_characters=1000,
     )
     runner = FakeProcessRunner(result=ProcessResult(exit_code=0, stdout="{not json", stderr=""))
-    adapter = ClaudeCodeAdapter(profile, runner, PromptBuilder(max_prompt_characters=10000))
+    adapter = GeminiAdapter(profile, runner, PromptBuilder(max_prompt_characters=10000))
 
     with pytest.raises(AgentOutputError):
         adapter.execute(_request())
@@ -182,7 +182,7 @@ def test_malformed_json_output_raises_agent_output_error() -> None:
 
 def test_provider_process_failure_is_mapped_safely() -> None:
     profile = create_cli_profile(
-        agent_type="claude_code",
+        agent_type="gemini",
         enabled=True,
         executable="mock",
         arguments=[],
@@ -192,7 +192,7 @@ def test_provider_process_failure_is_mapped_safely() -> None:
         max_output_characters=1000,
     )
     runner = FakeProcessRunner(error=AgentProcessError("'mock' exited with code 1: boom"))
-    adapter = ClaudeCodeAdapter(profile, runner, PromptBuilder(max_prompt_characters=10000))
+    adapter = GeminiAdapter(profile, runner, PromptBuilder(max_prompt_characters=10000))
 
     with pytest.raises(AgentProcessError):
         adapter.execute(_request())
@@ -200,7 +200,7 @@ def test_provider_process_failure_is_mapped_safely() -> None:
 
 def test_adapter_output_is_json_compatible() -> None:
     profile = create_cli_profile(
-        agent_type="claude_code",
+        agent_type="gemini",
         enabled=True,
         executable="mock",
         arguments=[],
@@ -210,7 +210,7 @@ def test_adapter_output_is_json_compatible() -> None:
         max_output_characters=1000,
     )
     runner = FakeProcessRunner(result=ProcessResult(exit_code=0, stdout="hi", stderr=""))
-    adapter = ClaudeCodeAdapter(profile, runner, PromptBuilder(max_prompt_characters=10000))
+    adapter = GeminiAdapter(profile, runner, PromptBuilder(max_prompt_characters=10000))
 
     result = adapter.execute(_request())
 

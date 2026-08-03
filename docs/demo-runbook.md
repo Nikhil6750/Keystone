@@ -56,12 +56,15 @@ follow it end to end.
 
 ## CLI login explanation (for real provider agents, optional)
 
-Real Claude Code, Codex, and Gemini execution requires each CLI to be installed and
-**authenticated separately on the machine running the backend** — Keystone never installs
-a CLI, never automates a login, and never stores or reads a provider credential. The
-`/agents` page's `available`/`registered` flags only ever reflect whether the executable
-resolves on `PATH`; they never assert that authentication succeeded, since only an actual
-execution proves that.
+Real Claude Code, Codex, Google Antigravity, and Gemini execution requires each CLI to
+be installed and **authenticated separately on the machine running the backend, under
+the same OS user account that runs it** — Keystone never installs a CLI, never
+automates a login, and never stores or reads a provider credential. The `/agents`
+page's `available`/`registered` flags only ever reflect whether the executable resolves
+on `PATH`; use the page's **Verify Connection** button (see
+`docs/live-agent-connectors.md`) to run one safe, harmless headless check and confirm
+`connected`, since only that (or an actual workflow execution) proves authentication
+succeeded.
 
 ## Starting the servers
 
@@ -91,8 +94,8 @@ needed for local use.
 1. Open http://localhost:3000 and confirm the header's backend status badge shows the
    real result of `GET /api/v1/health` (not a hardcoded "Connected").
 2. Open **Agents** and confirm `demo` shows Enabled / Available / Registered, and the
-   other three canonical agent types (`claude_code`, `codex`, `gemini`) show their real,
-   current configuration.
+   other canonical agent types (`claude_code`, `codex`, `antigravity`, plus a
+   "not configured" Gemini placeholder) show their real, current configuration.
 3. Open **New Workflow** (`/chat`), start a draft (from the goal box or a template),
    add at least two steps, select `demo` as the agent for each, and click
    **Create Workflow**.
@@ -170,7 +173,7 @@ order, with each event's actor, correlated step/attempt IDs, timestamp, and (beh
 - Single-user, local-only — no authentication, no multi-user workspace.
 - Synchronous execution only — no background jobs, no WebSockets/SSE, no live streaming.
 - No automatic task decomposition or agent selection — the user manually builds every
-  step and picks every agent (Phase 6).
+  step and picks every agent (Phase 6B).
 - No Knowledge/RAG, vector database, or external knowledge API (Phase 7).
 - Circuit-breaker state is in-memory only and resets when the backend process restarts;
   there is no reset endpoint.

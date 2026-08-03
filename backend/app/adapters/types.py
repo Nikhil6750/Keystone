@@ -14,11 +14,21 @@ _UNSAFE_ARGUMENT_TOKENS = (";", "|", "&&", "&", "`", "$(", ">", "<")
 
 
 class AgentType(StrEnum):
-    """The four canonical agent types Keystone recognizes."""
+    """The canonical agent types Keystone recognizes.
+
+    `GEMINI` is reserved for the official standalone Gemini CLI, a distinct,
+    still-unconfigured future provider — it is never an alias for
+    `ANTIGRAVITY` (Google Antigravity, a separate, Gemini-*powered* local
+    coding agent with its own executable, `agy`). Kept as two independent
+    values deliberately: introducing `ANTIGRAVITY` never renames, removes, or
+    silently redirects `GEMINI`, so any already-persisted `agent_type="gemini"`
+    workflow step remains exactly as meaningful as before.
+    """
 
     CLAUDE_CODE = "claude_code"
     CODEX = "codex"
     GEMINI = "gemini"
+    ANTIGRAVITY = "antigravity"
     DEMO = "demo"
 
 

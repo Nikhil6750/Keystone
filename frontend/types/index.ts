@@ -1,13 +1,5 @@
 export * from './api';
+export * from './backend';
 export * from './ui';
-
-export interface UserProfile {
-  id: string;
-  email: string;
-  name: string;
-  avatarUrl?: string;
-  role: 'admin' | 'user' | 'member';
-  createdAt: string;
-}
 
 export type ComponentWithChildren<T = object> = React.FC<T & { children?: React.ReactNode }>;

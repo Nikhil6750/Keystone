@@ -2,7 +2,8 @@
 
 This document describes the intended module layout for the Keystone backend. It reflects
 the target design, not the current implementation state — see the "Implementation status"
-note under each module.
+note under each module. For the Next.js frontend's architecture and how it integrates
+with the API described here, see [`phase5-integration.md`](./phase5-integration.md).
 
 ## Overview
 
@@ -174,13 +175,22 @@ successful step undone first), exactly mirroring how a saga unwinds.
   `engine/`, not `adapters/`, since a real provider-backed compensation handler (e.g.
   "revert this file edit," "cancel this ticket") is a Phase 5+ concern.
 - `compensation.py` — `CompensationService.compensate_workflow(workflow_id)`:
-  - Requires the workflow to be `FAILED` or `SUCCEEDED` (raises
-    `InvalidCompensationStateError` otherwise) and not already `COMPENSATED` or
-    `COMPENSATING` (raises `CompensationAlreadyCompletedError` /
-    `InvalidCompensationStateError` respectively).
-  - Selects `SUCCEEDED` steps with a non-blank `compensation_handler` as eligible,
-    sorted by `position` **descending**; a `SUCCEEDED` step with no handler configured
-    is recorded (in the summary) as `not_configured`, not attempted.
+  - **Workflow eligibility** (the workflow's own status): manual compensation may
+    only begin from `FAILED`. An already-`COMPENSATED` workflow raises
+    `CompensationAlreadyCompletedError` (`409`); every other status — `PENDING`,
+    `RUNNING`, `SUCCEEDED`, `COMPENSATING`, or `CANCELLED` — raises
+    `InvalidCompensationStateError` (`409`). A `SUCCEEDED` workflow can never be
+    manually compensated: the state machine itself gives `WorkflowStatus.SUCCEEDED`
+    zero allowed outgoing transitions (see `state_machine.py`'s
+    `WORKFLOW_TRANSITIONS`), so there is no path from `SUCCEEDED` to `COMPENSATING`
+    even before this check runs.
+  - **Step eligibility** (independent of workflow status, evaluated only once the
+    workflow itself is confirmed `FAILED`): a step is eligible only if it
+    individually reached `SUCCEEDED` *and* has a non-blank `compensation_handler`
+    configured — this is what "eligible successful step" means throughout this
+    document; it is never a claim about the workflow's own status. Eligible steps
+    are sorted by `position` **descending**; a `SUCCEEDED` step with no handler
+    configured is recorded (in the summary) as `not_configured`, not attempted.
   - Transitions the workflow `FAILED → COMPENSATING`, then each eligible step
     `SUCCEEDED → COMPENSATING`, persisting one `CompensationAttempt` per step.
   - On a missing handler: persists the failed attempt and step, then **re-raises**

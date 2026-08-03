@@ -12,18 +12,27 @@ import {
   Plus,
   ChevronsUpDown,
   Sparkles,
+  BookOpen,
 } from 'lucide-react';
+import { useWorkflows } from '@/hooks/use-workflows';
+import { workflowStatusLabel, workflowStatusTone } from '@/lib/presentation';
+import { ToneBadge } from '@/components/workflow/tone-badge';
 
 const NAV_ITEMS = [
   { label: 'Chat', href: '/chat', icon: MessageSquare },
   { label: 'Workflows', href: '/workflows', icon: GitFork },
   { label: 'Agents', href: '/agents', icon: Bot },
   { label: 'Logs', href: '/logs', icon: Terminal },
+  { label: 'Knowledge', href: '/knowledge', icon: BookOpen },
   { label: 'Settings', href: '/settings', icon: Settings },
 ];
 
+const RECENT_WORKFLOWS_LIMIT = 5;
+
 export const Sidebar: React.FC = () => {
   const pathname = usePathname();
+  const { data, loading } = useWorkflows(RECENT_WORKFLOWS_LIMIT);
+  const recentWorkflows = data?.items.slice(0, RECENT_WORKFLOWS_LIMIT) ?? [];
 
   return (
     <aside className="hidden min-h-[calc(100vh-64px)] w-[280px] shrink-0 flex-col justify-between border-r border-white/[0.08] bg-[#0B1120]/80 p-4 md:flex">
@@ -77,6 +86,34 @@ export const Sidebar: React.FC = () => {
               );
             })}
           </nav>
+        </div>
+
+        {/* RECENT WORKFLOWS SECTION — real backend data, never fabricated */}
+        <div className="space-y-2">
+          <span className="text-[11px] font-bold tracking-wider text-zinc-500 uppercase">
+            Recent Workflows
+          </span>
+          {loading && <p className="text-[11px] text-zinc-500">Loading…</p>}
+          {!loading && recentWorkflows.length === 0 && (
+            <p className="text-[11px] text-zinc-500">No workflows yet.</p>
+          )}
+          {!loading && recentWorkflows.length > 0 && (
+            <ul className="space-y-1">
+              {recentWorkflows.map((workflow) => (
+                <li key={workflow.id}>
+                  <Link
+                    href="/workflows"
+                    className="flex items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-[11px] text-zinc-400 hover:bg-white/[0.04] hover:text-white"
+                  >
+                    <span className="truncate">{workflow.name}</span>
+                    <ToneBadge tone={workflowStatusTone(workflow.status)}>
+                      {workflowStatusLabel(workflow.status)}
+                    </ToneBadge>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
 

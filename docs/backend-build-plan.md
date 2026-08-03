@@ -132,12 +132,69 @@ multi-user authentication, Supabase, distributed execution, digital signatures,
 secret encryption, or cloud deployment — all out of scope for this phase (see
 `architecture.md`).
 
-## Phase 5: Integration and demonstration — `PLANNED`
+## Phase 5: Integration and demonstration — `COMPLETE`
 
-- Frontend integration
-- End-to-end workflow test
-- Failure demonstration
-- Retry demonstration
-- Circuit-breaker demonstration
-- Compensation demonstration
-- Audit verification
+Implemented:
+
+- Fixed the merged frontend's cross-platform install blocker: removed
+  `@next/swc-darwin-arm64` from direct `dependencies`; `npm ci` now succeeds on
+  Windows/Linux, with Next.js resolving its own platform SWC binary as an optional
+  dependency
+- Typed API client (`frontend/services/api-client.ts`) and one focused service module
+  per backend resource (`health`, `workflows`, `agents`, `resilience`, `audit`), all
+  implementing exactly the eleven endpoints in `api-contract.md` — no invented endpoint
+- `frontend/types/backend.ts`: TypeScript types mirroring every backend Pydantic schema
+  field-for-field, replacing the previous incorrect `ApiResponse`/`PaginatedResponse`/
+  `ApiError` wrapper assumptions
+- `frontend/lib/presentation.ts`: the single place backend enum values are mapped to
+  display labels/colors, never altering the wire value itself
+- Real workflow creation, listing, retrieval, execution, and compensation wired into
+  `/chat` (manual workflow builder) and `/workflows`
+- Dynamic execution panel (`components/workflow/execution-panel.tsx`) rendering a
+  workflow's actual `steps` (position order), attempts, compensation attempts, and audit
+  chain validity — replacing the previously fixed Planner/Research/Executor/Validator/
+  Reporter pipeline entirely
+- Real agent availability (`/agents`) and circuit-breaker display
+  (`components/resilience/circuit-breaker-list.tsx`), removing the fake "Register Agent"
+  flow
+- New `/logs` page: real audit-event timeline, audit-chain verification banner
+  (tamper-evident, not tamper-proof), and provenance, resolving the previously dead
+  sidebar link
+- `/workspace` now redirects to `/chat` instead of duplicating it
+- New `/knowledge` placeholder page, honestly marked "Coming in Phase 7"
+- Settings page rewritten to remove the fake email/workspace ID and fake danger-zone
+  actions; now shows real backend health, demo-agent/registered-agent status, and theme
+  controls
+- Frontend test suite added (Vitest + React Testing Library + jsdom): 40 tests across
+  12 files covering the API client, presentation mapping, workflow-builder validation,
+  the dynamic execution panel, agents/circuit-breaker/logs/settings/knowledge pages, and
+  the `/workspace` redirect and `/logs` route
+- Frontend CI workflow (`.github/workflows/frontend-ci.yml`): lint, typecheck, test,
+  build on every `frontend/**` change
+- Manually verified end to end against a live backend + frontend: backend health and
+  agent availability; a successful two-step demo workflow through creation → execution →
+  workflows list → logs/provenance; a failed workflow → manual compensation → provenance
+  showing both the original failure and the compensation, chain still valid; audit
+  tamper detection via a disposable database correctly flipping `audit-chain/verify` to
+  invalid with the right `first_invalid_sequence`; and network-failure handling
+  (backend stopped, then restarted) without exposing a stack trace
+
+No backend code changes were required — the existing CORS configuration already
+permitted the frontend's default origin, and no contract mismatch was found. Backend
+test count remains 454 (unchanged); `ruff`, `ruff format --check`, and `mypy` all still
+pass.
+
+Still deferred, as intended: automatic task decomposition/agent routing (Phase 6),
+evidence-grounded workflow memory and RAG (Phase 7), MCP/A2A/OpenTelemetry/isolation
+(Phase 8), and failure-injection/replay/benchmarking tooling (Phase 9).
+
+## Future roadmap
+
+- **Phase 6:** Manager task decomposition and agent routing
+- **Phase 7:** Agent Passports, validated workflow memory, evidence-grounded adaptive
+  routing, and RAG
+- **Phase 8:** MCP, A2A, OpenTelemetry, isolation, and policy controls
+- **Phase 9:** Agent Reliability Lab, failure injection, replay, and benchmarking
+
+None of Phases 6–9 are implemented — this build plan only ever marks a phase `COMPLETE`
+once its own tests and manual verification have passed, never in advance.

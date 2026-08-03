@@ -9,9 +9,13 @@
  */
 
 import type {
+  AgentAvailabilityRead,
   AttemptStatus,
+  AuthenticationStatus,
   CircuitBreakerState,
   CompensationAttemptStatus,
+  ConnectionStatus,
+  InstallationStatus,
   StepStatus,
   WorkflowStatus,
 } from '@/types/backend';
@@ -133,6 +137,103 @@ export function canCompensateWorkflow(status: WorkflowStatus): boolean {
 /** Only a `PENDING` workflow may begin execution. */
 export function isWorkflowExecutable(status: WorkflowStatus): boolean {
   return status === 'pending';
+}
+
+const INSTALLATION_STATUS_LABELS: Record<InstallationStatus, string> = {
+  installed: 'Installed',
+  not_installed: 'Not installed',
+  unknown: 'Unknown',
+};
+
+const INSTALLATION_STATUS_TONES: Record<InstallationStatus, SemanticTone> = {
+  installed: 'success',
+  not_installed: 'neutral',
+  unknown: 'neutral',
+};
+
+export function installationStatusLabel(status: InstallationStatus): string {
+  return INSTALLATION_STATUS_LABELS[status];
+}
+
+export function installationStatusTone(status: InstallationStatus): SemanticTone {
+  return INSTALLATION_STATUS_TONES[status];
+}
+
+const AUTHENTICATION_STATUS_LABELS: Record<AuthenticationStatus, string> = {
+  authenticated: 'Authenticated',
+  unauthenticated: 'Not authenticated',
+  unknown: 'Unknown',
+  error: 'Error checking',
+};
+
+const AUTHENTICATION_STATUS_TONES: Record<AuthenticationStatus, SemanticTone> = {
+  authenticated: 'success',
+  unauthenticated: 'warning',
+  unknown: 'neutral',
+  error: 'error',
+};
+
+export function authenticationStatusLabel(status: AuthenticationStatus): string {
+  return AUTHENTICATION_STATUS_LABELS[status];
+}
+
+export function authenticationStatusTone(status: AuthenticationStatus): SemanticTone {
+  return AUTHENTICATION_STATUS_TONES[status];
+}
+
+const CONNECTION_STATUS_LABELS: Record<ConnectionStatus, string> = {
+  connected: 'Connected',
+  unavailable: 'Unavailable',
+  verification_failed: 'Verification failed',
+  verification_required: 'Verification required',
+  disabled: 'Disabled',
+};
+
+const CONNECTION_STATUS_TONES: Record<ConnectionStatus, SemanticTone> = {
+  connected: 'success',
+  unavailable: 'neutral',
+  verification_failed: 'error',
+  verification_required: 'warning',
+  disabled: 'neutral',
+};
+
+export function connectionStatusLabel(status: ConnectionStatus): string {
+  return CONNECTION_STATUS_LABELS[status];
+}
+
+export function connectionStatusTone(status: ConnectionStatus): SemanticTone {
+  return CONNECTION_STATUS_TONES[status];
+}
+
+/**
+ * A workflow step must never be built against an agent that is disabled,
+ * uninstalled, unregistered, unauthenticated, or not currently connected —
+ * doing so would only fail at execution time. This is the single place that
+ * decides step-level selectability so no page duplicates the condition.
+ */
+export function canSelectAgentForStep(agent: AgentAvailabilityRead): boolean {
+  return (
+    agent.enabled &&
+    agent.registered &&
+    agent.installation_status === 'installed' &&
+    agent.authentication_status === 'authenticated' &&
+    agent.connection_status === 'connected'
+  );
+}
+
+/** Local, provider-owned login commands — never executed by Keystone, only
+ * displayed so the user can run them themselves on the machine running the
+ * backend. Keystone never launches a browser login or collects a credential. */
+const AGENT_LOCAL_LOGIN_INSTRUCTIONS: Record<string, string> = {
+  claude_code: 'Run `claude auth login` in a terminal on the machine running the Keystone backend.',
+  codex: 'Run `codex login` in a terminal on the machine running the Keystone backend.',
+  antigravity:
+    'Run `agy` on the machine running the Keystone backend and complete the official browser sign-in it opens.',
+  gemini: "Run the Gemini CLI's own login command on the machine running the Keystone backend.",
+};
+
+export function agentLocalLoginInstructions(agentType: string): string | null {
+  return AGENT_LOCAL_LOGIN_INSTRUCTIONS[agentType] ?? null;
 }
 
 export function formatTimestamp(value: string | null): string {

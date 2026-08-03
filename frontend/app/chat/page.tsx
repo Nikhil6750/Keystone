@@ -31,6 +31,24 @@ export default function ChatPage() {
   const [compensating, setCompensating] = React.useState(false);
   const [actionError, setActionError] = React.useState<string | null>(null);
 
+  // The single source of truth for "which workflow is currently displayed".
+  // Kept in a ref (in addition to `workflow` state) so in-flight
+  // execute/compensate requests can tell — *after* they resolve — whether
+  // their response still belongs to the workflow on screen. Without this, a
+  // response for a workflow the user has since navigated away from (via
+  // "Start another workflow") could land late and overwrite the newer
+  // workflow's state with stale data. Kept in sync on every render, not just
+  // via an effect, so it can never lag behind the state it mirrors.
+  const workflowIdRef = React.useRef<string | null>(workflow?.id ?? null);
+  workflowIdRef.current = workflow?.id ?? null;
+
+  // AbortControllers for the in-flight execute/compensate requests, if any.
+  // "Start another workflow" aborts these so a stale response can never be
+  // applied after the user has moved on, and so the mutation is never left
+  // silently "in flight" against a workflow that's no longer selected.
+  const executeAbortRef = React.useRef<AbortController | null>(null);
+  const compensateAbortRef = React.useRef<AbortController | null>(null);
+
   const startFromGoal = () => {
     if (!goalText.trim()) return;
     setDraft({
@@ -58,17 +76,20 @@ export default function ChatPage() {
     setMode('builder');
   };
 
-  const [errors, setErrors] = React.useState(() => validateDraft(draft));
+  // Derived directly from `draft` (never a separately-synced state) so it
+  // can never go stale — e.g. after `startFromTemplate`/`startFromGoal`
+  // replace `draft` wholesale, the "Create Workflow" button's disabled state
+  // instantly reflects the *new* draft's actual validity instead of
+  // reflecting whatever draft was current the last time something called
+  // `setErrors`.
+  const errors = React.useMemo(() => validateDraft(draft), [draft]);
 
   const handleDraftChange = (next: WorkflowDraft) => {
     setDraft(next);
-    setErrors(validateDraft(next));
   };
 
   const handleCreate = async () => {
-    const currentErrors = validateDraft(draft);
-    setErrors(currentErrors);
-    if (draftHasErrors(currentErrors)) return;
+    if (draftHasErrors(errors)) return;
 
     setCreating(true);
     setCreateError(null);
@@ -84,40 +105,89 @@ export default function ChatPage() {
   };
 
   const handleExecute = async () => {
-    if (!workflow) return;
+    // Defense in depth: never fire off an execute call unless the currently
+    // displayed workflow is actually pending (mirrors `isWorkflowExecutable`,
+    // which already disables the button — this guard protects the handler
+    // itself from ever being invoked against a non-pending workflow, e.g. a
+    // stray call after a race). Also refuses to start a second request while
+    // one is already in flight for this workflow.
+    if (!workflow || workflow.status !== 'pending' || executing) return;
+
+    // Capture the target id for *this* call up front. The request always
+    // targets this id, never whatever `workflow.id` happens to be by the
+    // time the response arrives.
+    const targetId = workflow.id;
+    const controller = new AbortController();
+    executeAbortRef.current = controller;
+
     setExecuting(true);
     setActionError(null);
     try {
-      const updated = await executeWorkflow(workflow.id);
-      setWorkflow(updated);
+      const updated = await executeWorkflow(targetId, { signal: controller.signal });
+      // Only apply the response if the displayed workflow hasn't changed
+      // since this request was sent (e.g. via "Start another workflow").
+      if (workflowIdRef.current === targetId) {
+        setWorkflow(updated);
+      }
     } catch (error) {
-      setActionError(describeError(error).body);
+      if (controller.signal.aborted) return;
+      if (workflowIdRef.current === targetId) {
+        setActionError(describeError(error).body);
+      }
     } finally {
-      setExecuting(false);
+      if (executeAbortRef.current === controller) {
+        executeAbortRef.current = null;
+        setExecuting(false);
+      }
     }
   };
 
   const handleCompensate = async () => {
     if (!workflow) return;
+
+    const targetId = workflow.id;
+    const controller = new AbortController();
+    compensateAbortRef.current = controller;
+
     setCompensating(true);
     setActionError(null);
     try {
-      const updated = await compensateWorkflow(workflow.id);
-      setWorkflow(updated);
+      const updated = await compensateWorkflow(targetId, { signal: controller.signal });
+      if (workflowIdRef.current === targetId) {
+        setWorkflow(updated);
+      }
     } catch (error) {
-      setActionError(describeError(error).body);
+      if (controller.signal.aborted) return;
+      if (workflowIdRef.current === targetId) {
+        setActionError(describeError(error).body);
+      }
     } finally {
-      setCompensating(false);
+      if (compensateAbortRef.current === controller) {
+        compensateAbortRef.current = null;
+        setCompensating(false);
+      }
     }
   };
 
   const startOver = () => {
+    // Cancel any in-flight execute/compensate request for the workflow being
+    // left behind so its response can never be applied later against the
+    // next workflow, then clear every piece of state tied to the previous
+    // workflow: selected workflow, its errors, in-flight mutation flags, and
+    // its output (implicitly, by clearing `workflow` itself).
+    executeAbortRef.current?.abort();
+    compensateAbortRef.current?.abort();
+    executeAbortRef.current = null;
+    compensateAbortRef.current = null;
+
     setMode('templates');
     setGoalText('');
     setDraft(createEmptyDraft());
     setWorkflow(null);
     setCreateError(null);
     setActionError(null);
+    setExecuting(false);
+    setCompensating(false);
   };
 
   return (
@@ -219,7 +289,13 @@ export default function ChatPage() {
           <div className="mt-8 max-w-2xl space-y-4">
             {actionError && <InlineError message={actionError} />}
             <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-5">
+              {/* Keyed by workflow id so switching workflows always mounts a
+                  fresh panel instance instead of reusing one whose internal
+                  state (e.g. the compensate confirmation dialog) or hook
+                  state (e.g. audit chain verification) belongs to the
+                  previous workflow. */}
               <ExecutionPanel
+                key={workflow.id}
                 workflow={workflow}
                 onExecute={handleExecute}
                 onCompensate={handleCompensate}

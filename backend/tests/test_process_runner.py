@@ -151,6 +151,81 @@ def test_temporary_working_directory_is_cleaned_up() -> None:
     assert not os.path.exists(captured_cwd[0])
 
 
+def test_temp_directory_cleanup_survives_a_transient_windows_file_lock() -> None:
+    """Regression test for a real bug: Google Antigravity's `agy.exe` was observed
+    on Windows to briefly hold a file handle open inside its working directory
+    after `subprocess.run` returned, causing an immediate `shutil.rmtree` to raise
+    `PermissionError: [WinError 32]` and the whole `/agents/antigravity/verify`
+    call to fail with a `500 INTERNAL_ERROR` even though the CLI call itself had
+    already succeeded. The runner must retry cleanup and never let a transient
+    cleanup race surface as (or mask) an execution failure."""
+    runner = SubprocessRunner()
+    call_count = {"n": 0}
+
+    def _flaky_rmtree(path: str, *args: object, **kwargs: object) -> None:
+        call_count["n"] += 1
+        if call_count["n"] < 3:
+            raise PermissionError(
+                32, "The process cannot access the file because it is being used by another process"
+            )
+
+    with (
+        patch("app.adapters.process_runner.shutil.which", return_value="/usr/bin/mock"),
+        patch("app.adapters.process_runner.subprocess.run", return_value=_completed(stdout="hi")),
+        patch("app.adapters.process_runner.shutil.rmtree", side_effect=_flaky_rmtree),
+        patch("app.adapters.process_runner.time.sleep"),
+    ):
+        result = runner.run(
+            "mock", [], stdin_text=None, timeout_seconds=5.0, max_output_characters=1000
+        )
+
+    assert result.stdout == "hi"
+    assert call_count["n"] == 3
+
+
+def test_temp_directory_cleanup_gives_up_after_retries_without_raising() -> None:
+    """Even if cleanup never succeeds, `run()` must still return the real result —
+    a stuck temp-directory removal must never be reported as an execution failure."""
+    runner = SubprocessRunner()
+
+    def _always_locked(path: str, *args: object, **kwargs: object) -> None:
+        raise PermissionError(32, "still locked")
+
+    with (
+        patch("app.adapters.process_runner.shutil.which", return_value="/usr/bin/mock"),
+        patch("app.adapters.process_runner.subprocess.run", return_value=_completed(stdout="hi")),
+        patch(
+            "app.adapters.process_runner.shutil.rmtree", side_effect=_always_locked
+        ) as mock_rmtree,
+        patch("app.adapters.process_runner.time.sleep"),
+    ):
+        result = runner.run(
+            "mock", [], stdin_text=None, timeout_seconds=5.0, max_output_characters=1000
+        )
+
+    assert result.stdout == "hi"
+    assert mock_rmtree.call_count == 5  # _CLEANUP_RETRY_ATTEMPTS, then gives up
+
+
+def test_cleanup_is_still_attempted_when_the_process_itself_fails() -> None:
+    """Cleanup must run even when the subprocess call raises — a failed
+    execution must never leak its temp working directory."""
+    runner = SubprocessRunner()
+
+    with (
+        patch("app.adapters.process_runner.shutil.which", return_value="/usr/bin/mock"),
+        patch(
+            "app.adapters.process_runner.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="mock", timeout=5.0),
+        ),
+        patch("app.adapters.process_runner.shutil.rmtree") as mock_rmtree,
+        pytest.raises(AgentTimeoutError),
+    ):
+        runner.run("mock", [], stdin_text=None, timeout_seconds=5.0, max_output_characters=1000)
+
+    assert mock_rmtree.call_count == 1
+
+
 def test_workflow_payload_cannot_inject_executable_arguments() -> None:
     """The runner only ever receives the trusted `executable`/`arguments` a caller
     passes explicitly — there is no code path that reads workflow step input to

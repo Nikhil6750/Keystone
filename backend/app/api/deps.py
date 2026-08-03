@@ -3,6 +3,7 @@
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
+from app.adapters.connection import AgentConnectionCache
 from app.core.config import Settings, get_settings
 from app.database.session import get_db
 from app.engine.compensation import CompensationService
@@ -67,3 +68,9 @@ def get_compensation_service(
 ) -> CompensationService:
     """Build a `CompensationService` wired to this request's DB session and handler registry."""
     return CompensationService(db, registry)
+
+
+def get_agent_connection_cache(request: Request) -> AgentConnectionCache:
+    """Return the application's agent-connection cache, created during lifespan startup."""
+    cache: AgentConnectionCache = request.app.state.agent_connection_cache
+    return cache

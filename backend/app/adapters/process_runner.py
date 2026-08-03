@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -24,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 _STDERR_LIMIT = 300
 _INHERITED_ENV_KEYS = ("PATH", "SYSTEMROOT", "TEMP", "TMP", "HOME", "USERPROFILE")
+_CLEANUP_RETRY_ATTEMPTS = 5
+_CLEANUP_RETRY_BASE_DELAY_SECONDS = 0.1
 
 
 @dataclass(frozen=True)
@@ -66,6 +69,33 @@ def _bound_text(text: str, limit: int) -> str:
     return stripped[:limit] + "... [truncated]"
 
 
+def _cleanup_temp_dir(path: str) -> None:
+    """Best-effort removal of one per-call temp working directory.
+
+    Some real provider CLIs (observed with Google Antigravity's `agy.exe` on
+    Windows) briefly hold a file handle open inside their working directory
+    after `subprocess.run` has already returned — this races an immediate
+    `shutil.rmtree` and raises a transient `PermissionError: [WinError 32]`.
+    Retried a few times with a short backoff; a final failure is only logged,
+    never raised, since a cleanup race must never be mistaken for an
+    execution failure and the directory already lives under the OS temp root.
+    """
+    for attempt in range(_CLEANUP_RETRY_ATTEMPTS):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            if attempt == _CLEANUP_RETRY_ATTEMPTS - 1:
+                logger.warning(
+                    "failed to remove temporary agent working directory after retries path=%s",
+                    path,
+                )
+                return
+            time.sleep(_CLEANUP_RETRY_BASE_DELAY_SECONDS * (attempt + 1))
+
+
 def _restricted_environment(overrides: dict[str, str] | None) -> dict[str, str]:
     """A minimal inherited environment plus explicit, trusted overrides.
 
@@ -98,7 +128,8 @@ class SubprocessRunner:
         command = [resolved, *arguments]
         env = _restricted_environment(env_overrides)
 
-        with tempfile.TemporaryDirectory(prefix="keystone-agent-") as work_dir:
+        work_dir = tempfile.mkdtemp(prefix="keystone-agent-")
+        try:
             try:
                 if stdin_text is not None:
                     completed = subprocess.run(
@@ -134,6 +165,8 @@ class SubprocessRunner:
                 raise AgentProcessError(
                     f"'{executable}' failed to start: {exc.__class__.__name__}"
                 ) from exc
+        finally:
+            _cleanup_temp_dir(work_dir)
 
         stdout = completed.stdout or ""
         stderr = _bound_text(completed.stderr or "", _STDERR_LIMIT)

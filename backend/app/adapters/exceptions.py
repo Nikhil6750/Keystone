@@ -54,3 +54,30 @@ class AgentOutputError(AgentAdapterError):
 
     def __init__(self, message: str, *, retryable: bool = True) -> None:
         super().__init__(message, error_code="AGENT_OUTPUT_ERROR", retryable=retryable)
+
+
+class AgentAuthenticationError(AgentAdapterError):
+    """The provider CLI is not authenticated (or its session expired). Not
+    retryable — requires the operator to run the provider's local login
+    command; no automated retry can fix this."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, error_code="AGENT_AUTHENTICATION_ERROR", retryable=False)
+
+
+class AgentUsageLimitError(AgentAdapterError):
+    """The provider reported a usage/quota/rate limit. Not retryable by
+    default in this prototype — the existing resilience policy has no
+    retry-after-aware scheduling, so retrying immediately would just fail
+    again identically."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, error_code="AGENT_USAGE_LIMIT_ERROR", retryable=False)
+
+
+class AgentPermissionError(AgentAdapterError):
+    """The provider CLI refused to proceed pending a permission/approval only
+    a human can grant interactively. Not retryable."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, error_code="AGENT_PERMISSION_ERROR", retryable=False)

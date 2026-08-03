@@ -8,13 +8,19 @@ from app.engine.registry import ExecutorRegistry
 from app.services.agent_availability import list_agent_availability
 
 
-def test_all_four_canonical_agent_types_are_reported() -> None:
+def test_all_canonical_agent_types_are_reported() -> None:
     settings = Settings()
     registry = ExecutorRegistry()
 
     results = list_agent_availability(settings, registry)
 
-    assert {item.agent_type for item in results} == {"claude_code", "codex", "gemini", "demo"}
+    assert {item.agent_type for item in results} == {
+        "claude_code",
+        "codex",
+        "antigravity",
+        "gemini",
+        "demo",
+    }
 
 
 def test_disabled_agents_report_correct_reason() -> None:
@@ -76,7 +82,7 @@ def test_availability_response_count_is_correct() -> None:
 
     results = list_agent_availability(settings, registry)
 
-    assert len(results) == 4
+    assert len(results) == 5
 
 
 def test_stable_ordering_is_preserved() -> None:
@@ -85,7 +91,13 @@ def test_stable_ordering_is_preserved() -> None:
 
     results = list_agent_availability(settings, registry)
 
-    assert [item.agent_type for item in results] == ["claude_code", "codex", "gemini", "demo"]
+    assert [item.agent_type for item in results] == [
+        "claude_code",
+        "codex",
+        "antigravity",
+        "gemini",
+        "demo",
+    ]
 
 
 def test_invalid_configuration_reports_safely() -> None:

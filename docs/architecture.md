@@ -226,27 +226,56 @@ every adapter shells out to an **already-installed, already-authenticated** loca
 authenticated, the adapter is simply unavailable; Keystone never attempts to install a
 CLI or drive an interactive login.
 
-- `types.py` — the four canonical agent types (`claude_code`, `codex`, `gemini`,
-  `demo`); `CLIProfile` (trusted, settings-derived configuration: executable, argument
-  list, input/output mode, timeout, output cap) and `create_cli_profile`, the single
-  place that validates a profile (blank executable, non-positive timeout, invalid
-  input/output mode, unsafe shell-string arguments, wrong prompt-placeholder count all
-  rejected with `ValueError`).
+- `types.py` — the five canonical agent types (`claude_code`, `codex`, `gemini`,
+  `antigravity`, `demo`); `CLIProfile` (trusted, settings-derived configuration:
+  executable, argument list, input/output mode, timeout, output cap) and
+  `create_cli_profile`, the single place that validates a profile (blank executable,
+  non-positive timeout, invalid input/output mode, unsafe shell-string arguments, wrong
+  prompt-placeholder count all rejected with `ValueError`). `gemini` and `antigravity`
+  are permanently separate canonical values — Google Antigravity is never registered,
+  executed, or labeled as "Gemini CLI" (see `docs/live-agent-connectors.md`).
 - `exceptions.py` — `AgentAdapterError` and its subclasses (`AgentUnavailableError`,
   `AgentConfigurationError`, `AgentTimeoutError`, `AgentProcessError`,
-  `AgentOutputError`), each a `StepExecutionError` subclass carrying a stable
-  `error_code` and whether the engine should retry it.
+  `AgentOutputError`, `AgentAuthenticationError`, `AgentUsageLimitError`,
+  `AgentPermissionError`), each a `StepExecutionError` subclass carrying a stable
+  `error_code` and whether the engine should retry it. The last three are always
+  non-retryable — an auth failure, a usage-limit exhaustion, or a
+  sandbox/approval-required failure needs human action, not an automatic retry.
+- `error_classification.py` — shared, keyword-based (best-effort, not exhaustive)
+  helpers (`looks_like_authentication_failure`, `looks_like_usage_limit_failure`,
+  `looks_like_permission_failure`) used by all three live-provider adapters to
+  classify a CLI's own error text into the right non-retryable exception.
+- `connection.py` — the safe connection-state model shared by every local-CLI adapter:
+  `InstallationStatus`/`AuthenticationStatus`/`ConnectionStatus` (three independent
+  enums — never collapsed into one boolean), the `ConnectionVerifier` protocol
+  (`detect`/`read_version`/`check_authentication`/`verify_connection`), and
+  `AgentConnectionCache` (a per-application, in-process TTL cache plus an in-process
+  lock preventing two concurrent verifications of the same agent type).
+- `workspace.py` — `resolve_workspace_directory`, defense-in-depth path-traversal
+  validation for a future working-directory feature; not yet wired into execution
+  (no workflow can specify a working directory today).
 - `process_runner.py` — the safe subprocess execution boundary (see below).
 - `prompt_builder.py` — one deterministic, JSON-serializing prompt builder shared by
   every local CLI adapter (never `str()`/`repr()` of Python objects), rejecting
   oversized prompts as a non-retryable `AgentConfigurationError`.
 - `local_cli.py` — `LocalCLIAdapter`, the shared `AgentExecutor` implementation:
   builds the prompt, passes it via stdin or a `{prompt}` argument placeholder per the
-  profile's `input_mode`, runs the process, and parses `text`/`json`/`json_lines`
-  output into the stable result envelope
-  `{"agent_type", "content", "metadata": {"execution_mode": "local_cli", ...}}`.
-- `claude_code.py`, `codex.py`, `gemini.py` — thin `LocalCLIAdapter` subclasses, one
-  per provider, each carrying its own agent type via its `CLIProfile`.
+  profile's `input_mode`, runs the process via a shared `_run_process` step, and hands
+  the raw result to an overridable `_build_result` for provider-specific parsing (the
+  default handles plain `text`/`json`/`json_lines`). Also implements `ConnectionVerifier`
+  directly, so every subclass gets `detect`/`read_version`/`verify_connection` "for
+  free," with `check_authentication` overridable per provider.
+- `claude_code.py` — parses Claude Code's real, verified JSON envelope
+  (`{"type", "subtype", "is_error", "result", "session_id", "duration_ms"}`);
+  `check_authentication` runs `claude auth status` and reads **only** the `loggedIn`
+  boolean from its JSON output — never the email, org ID, org name, or subscription
+  type it also returns.
+- `codex.py` — parses Codex's live-verified `exec --json` JSONL event stream (one JSON
+  object per line; skips malformed lines rather than failing), extracting the final
+  `agent_message`/`assistant_message` item's text. Verified against Codex CLI 0.146.0.
+- `antigravity.py` — `AntigravityAdapter`, parsing the JSON object result envelope
+  live-verified against `agy.exe` 1.1.10 (final text under `response`, with safe status,
+  conversation, timing, turn-count, and usage metadata).
 - `demo.py` — `DemoAgentAdapter`, a deterministic, no-subprocess, no-network adapter
   for local demonstration and frontend integration. Disabled by default; registers only
   when explicitly enabled; always labels its result `metadata.execution_mode="demo"`
@@ -312,11 +341,16 @@ overwrites its original execution output or error message), `create_compensation
 and `complete_compensation_attempt`. Each state-changing operation persists through the
 state machine in `engine/state_machine.py` within a single transaction, rolling back and
 re-raising on invalid transitions or database errors. `services/agent_availability.py`
-reports each canonical agent type's enabled/available/registered status and a safe
-reason string (never an absolute executable path or CLI arguments) for
-`GET /api/v1/agents`. `WorkflowEngine` (`engine/workflow_engine.py`) and
-`CompensationService` (`engine/compensation.py`) are the higher-level orchestration
-services for execution and compensation respectively.
+reports each canonical agent type's enabled/available/registered/connection status and
+a safe reason string (never an absolute executable path or CLI arguments) for
+`GET /api/v1/agents`, reading connection fields from the `AgentConnectionCache` when a
+recent verification exists. `services/agent_connection.py` (`verify_agent`) performs
+the one real, live, safe verification behind `POST /agents/{agent_type}/verify` —
+resolving the adapter, checking `detect`/`read_version`/`check_authentication`, then
+running one harmless headless prompt with a fresh, single-use token via
+`verify_connection`, and caching the sanitized result. `WorkflowEngine`
+(`engine/workflow_engine.py`) and `CompensationService` (`engine/compensation.py`) are
+the higher-level orchestration services for execution and compensation respectively.
 
 ### `audit/`
 A hash-linked, append-only log of workflow, step, attempt, and compensation events, so
@@ -393,11 +427,16 @@ dependencies; it is not intended to be the storage engine for a production deplo
 
 Keystone assumes the operator already has working, authenticated local CLI sessions
 for whichever providers they enable (subscription-based login — `claude`, `codex`,
-`gemini`), managed entirely by those CLIs. Keystone never stores, reads, or logs
-credentials; never automates a provider login; and never installs a CLI. `available`
-in the agent-availability API means only "the executable resolves on `PATH`" — it does
-not prove authentication is valid, since that can only be confirmed by an actual
-execution.
+`agy`, `gemini`), managed entirely by those CLIs, under the same OS user account that
+runs the Keystone backend. Keystone never stores, reads, or logs credentials; never
+reads Windows Credential Manager, browser storage, OAuth tokens, or keyring data; never
+automates a provider login; and never installs a CLI. `available` in the
+agent-availability API means only "the executable resolves on `PATH`" — it does not
+prove authentication is valid. `connected` means more than `available`: it means a
+safe, harmless headless verification call actually succeeded recently (see
+`docs/live-agent-connectors.md`), but even that is never treated as license to expose
+anything beyond the sanitized `AgentConnectionState` fields — no raw provider output,
+email, org ID, or credential ever leaves the adapter layer.
 
 ## Explicitly out of scope for this prototype
 

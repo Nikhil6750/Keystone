@@ -129,8 +129,10 @@ recorded as additional `StepAttempt` rows on the same step, visible via `GET
 
 ### `GET /api/v1/agents`
 
-Reports configuration/availability/registration status for all four canonical agent
-types (`claude_code`, `codex`, `gemini`, `demo`), in that stable order.
+Reports configuration/availability/connection status for all five canonical agent
+types (`claude_code`, `codex`, `antigravity`, `gemini`, `demo`), in that stable order.
+Always returns instantly from cached/last-known connection state — this endpoint never
+performs a live verification call itself (see `POST /agents/{agent_type}/verify` below).
 
 **Response `200 OK`**
 
@@ -139,14 +141,21 @@ types (`claude_code`, `codex`, `gemini`, `demo`), in that stable order.
   "items": [
     {
       "agent_type": "claude_code",
+      "display_name": "Claude Code",
       "enabled": false,
       "available": true,
       "registered": false,
       "execution_mode": "local_cli",
-      "reason": "Disabled by configuration"
+      "reason": "Disabled by configuration",
+      "installation_status": "unknown",
+      "authentication_status": "unknown",
+      "connection_status": "disabled",
+      "version": null,
+      "last_checked_at": null,
+      "capabilities": ["workflow_step_execution"]
     }
   ],
-  "count": 4
+  "count": 5
 }
 ```
 
@@ -156,13 +165,47 @@ types (`claude_code`, `codex`, `gemini`, `demo`), in that stable order.
   authentication was verified — only a real execution proves that.
 - `registered` — whether the adapter is registered in the current application's
   executor registry.
-- `execution_mode` — `"local_cli"` for Claude Code/Codex/Gemini, `"demo"` for demo.
+- `execution_mode` — `"local_cli"` for Claude Code/Codex/Antigravity/Gemini, `"demo"`
+  for demo.
 - `reason` — a short, safe explanation. Never includes absolute executable paths,
   CLI arguments, or any secret.
+- `installation_status` — one of `installed`, `not_installed`, `unknown`.
+- `authentication_status` — one of `authenticated`, `unauthenticated`, `unknown`,
+  `error`. Never inferred merely from the executable's presence.
+- `connection_status` — one of `connected`, `unavailable`, `verification_failed`,
+  `verification_required`, `disabled`. `connected` means a safe headless
+  verification actually succeeded **recently** (within the connection-cache
+  window) — not merely that the executable was found.
+- `version` — the CLI's own reported version string, or `null` if unknown.
+- `last_checked_at` — ISO-8601 timestamp of the last verification, or `null` if
+  never verified.
+- `capabilities` — a short, static list of capability tags for display purposes only.
 
-No local agent CLI (`claude`, `codex`, `gemini`) is installed, authenticated, or
-started by Keystone itself — each must already be installed and authenticated
-(subscription-based login) separately by the operator.
+No local agent CLI (`claude`, `codex`, `agy`, `gemini`) is installed, authenticated,
+or started by Keystone itself — each must already be installed and authenticated
+(subscription-based login) separately by the operator, under the same OS user
+account running the Keystone backend.
+
+### `POST /api/v1/agents/{agent_type}/verify`
+
+Runs one safe, backend-owned headless verification for `agent_type` and returns its
+sanitized connection state. Takes no request body — the prompt sent to the provider
+CLI is always a fixed, harmless, backend-owned instruction; nothing from the caller
+is ever forwarded to a provider process.
+
+**Response `200 OK`**: an `AgentConnectionVerifyRead` (same shape as one `GET /agents`
+item, minus `available`; includes the supported `capabilities`). Never includes a raw provider response, an
+email address, or any other account-identifying detail.
+
+**Response `404 Not Found`**: `AGENT_TYPE_UNKNOWN` — `agent_type` is not one of the
+five canonical values.
+
+**Response `409 Conflict`**: `AGENT_VERIFICATION_IN_PROGRESS` — a verification for
+this same agent type is already running (guarded by an in-process lock, not a
+per-request queue).
+
+Verification results are cached briefly (`KEYSTONE_AGENT_CONNECTION_CACHE_SECONDS`,
+default 60s) and reflected in subsequent `GET /agents` calls until the cache expires.
 
 ### `GET /api/v1/resilience/circuit-breakers`
 

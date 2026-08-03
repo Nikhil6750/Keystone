@@ -10,7 +10,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.adapters.connection import AgentConnectionCache
 from app.api.deps import (
+    get_agent_connection_cache,
     get_circuit_breaker_registry,
     get_compensation_registry,
     get_executor_registry,
@@ -91,6 +93,12 @@ def compensation_registry() -> CompensationRegistry:
 
 
 @pytest.fixture
+def agent_connection_cache() -> AgentConnectionCache:
+    """A fresh, isolated agent-connection cache for one test."""
+    return AgentConnectionCache(cache_seconds=60.0)
+
+
+@pytest.fixture
 def workflow_engine(
     db_session: Session,
     executor_registry: ExecutorRegistry,
@@ -132,13 +140,14 @@ async def client(
     circuit_breaker_registry: CircuitBreakerRegistry,
     retry_policy: RetryPolicy,
     compensation_registry: CompensationRegistry,
+    agent_connection_cache: AgentConnectionCache,
 ) -> AsyncIterator[AsyncClient]:
     """An async HTTP client wired to the FastAPI ASGI app.
 
     Overrides the database, executor-registry, circuit-breaker-registry,
-    retry-policy, and compensation-registry dependencies so requests hit
-    isolated test state instead of production state or a real lifespan
-    (ASGITransport never triggers lifespan events).
+    retry-policy, compensation-registry, and agent-connection-cache
+    dependencies so requests hit isolated test state instead of production
+    state or a real lifespan (ASGITransport never triggers lifespan events).
     """
     session_factory = sessionmaker(bind=db_engine, autoflush=False, expire_on_commit=False)
 
@@ -154,6 +163,7 @@ async def client(
     app.dependency_overrides[get_circuit_breaker_registry] = lambda: circuit_breaker_registry
     app.dependency_overrides[get_retry_policy] = lambda: retry_policy
     app.dependency_overrides[get_compensation_registry] = lambda: compensation_registry
+    app.dependency_overrides[get_agent_connection_cache] = lambda: agent_connection_cache
     try:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as async_client:

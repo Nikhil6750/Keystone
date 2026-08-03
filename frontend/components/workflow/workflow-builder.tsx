@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import { useAgents } from '@/hooks/use-agents';
+import { canSelectAgentForStep } from '@/lib/presentation';
 import type { AgentAvailabilityRead, WorkflowCreate } from '@/types/backend';
 
 export interface DraftStep {
@@ -53,7 +54,10 @@ export interface WorkflowBuilderErrors {
   steps: Record<string, string | undefined>;
 }
 
-function validateJson(text: string): { value: Record<string, unknown> | null; error: string | null } {
+function validateJson(text: string): {
+  value: Record<string, unknown> | null;
+  error: string | null;
+} {
   const trimmed = text.trim();
   if (trimmed.length === 0) return { value: {}, error: null };
   try {
@@ -121,7 +125,17 @@ function agentBadge(agent: AgentAvailabilityRead | undefined): string {
   if (!agent) return 'Unknown agent';
   if (!agent.enabled) return 'Disabled';
   if (!agent.registered) return 'Not registered';
-  if (!agent.available) return 'Unavailable';
+  if (agent.installation_status !== 'installed') return 'Not installed';
+  // `unauthenticated` is a confirmed failure; `unknown`/`error` mean "not
+  // recently verified" — never installation alone. Distinct wording here
+  // avoids telling the operator an agent that simply hasn't been re-verified
+  // yet has actually failed authentication (a real point of confusion this
+  // phase's manual verification surfaced).
+  if (agent.authentication_status === 'unauthenticated') return 'Not authenticated';
+  if (agent.authentication_status !== 'authenticated') {
+    return 'Needs verification — check the Agents page';
+  }
+  if (agent.connection_status !== 'connected') return 'Not connected — verify on the Agents page';
   return 'Ready';
 }
 
@@ -335,16 +349,17 @@ export const WorkflowBuilder: React.FC<WorkflowBuilderProps> = ({
                       <option
                         key={candidate.agent_type}
                         value={candidate.agent_type}
+                        disabled={!canSelectAgentForStep(candidate)}
                         className="bg-[#0B1120]"
                       >
-                        {candidate.agent_type} — {agentBadge(candidate)}
+                        {candidate.display_name} — {agentBadge(candidate)}
                       </option>
                     ))}
                   </select>
-                  {step.agentType && agent && !agent.registered && (
+                  {step.agentType && agent && !canSelectAgentForStep(agent) && (
                     <p className="text-[11px] text-amber-400">
-                      Warning: this agent is not currently registered in the running backend —
-                      execution will fail until it is.
+                      Warning: this agent is not currently ready ({agentBadge(agent).toLowerCase()})
+                      — execution will fail until it is. Verify it on the Agents page.
                     </p>
                   )}
                 </div>

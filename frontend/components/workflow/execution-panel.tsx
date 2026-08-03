@@ -158,7 +158,13 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
       <div className="flex gap-2">
         <button
           type="button"
-          onClick={onExecute}
+          onClick={() => {
+            // Defense in depth alongside `disabled`: never invoke `onExecute`
+            // for a workflow that isn't pending, even if this handler were
+            // ever reached through something other than a direct click.
+            if (!canExecute || executing) return;
+            onExecute();
+          }}
           disabled={!canExecute || executing}
           className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white shadow-sm transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
         >

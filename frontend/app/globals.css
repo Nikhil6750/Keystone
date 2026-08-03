@@ -1,0 +1,11 @@
+@import 'tailwindcss';
+@import '../styles/theme.css';
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  min-height: 100vh;
+  font-feature-settings:
+    'rlig' 1,
+    'calt' 1;
+}

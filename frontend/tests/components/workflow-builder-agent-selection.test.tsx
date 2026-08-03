@@ -70,6 +70,51 @@ describe('WorkflowBuilder agent selectability', () => {
     expect(option.disabled).toBe(true);
   });
 
+  it('regression: an agent whose verification cache has expired (authentication_status "unknown") remains unselectable but is labeled distinctly from a confirmed authentication failure', () => {
+    agents = [
+      buildAgent({ agent_type: 'demo', display_name: 'Demo Agent' }),
+      buildAgent({
+        agent_type: 'claude_code',
+        display_name: 'Claude Code',
+        authentication_status: 'unknown',
+        connection_status: 'verification_required',
+      }),
+    ];
+
+    render(
+      <WorkflowBuilder draft={createEmptyDraft()} onChange={vi.fn()} errors={{ steps: {} }} />
+    );
+
+    const option = screen.getByRole('option', { name: /Claude Code/i }) as HTMLOptionElement;
+    // Still not selectable — installation alone (or a stale prior verification)
+    // is never trusted as authentication.
+    expect(option.disabled).toBe(true);
+    // But honestly labeled "needs verification," not falsely claimed to have
+    // failed authentication — this is the exact confusion a 60s cache TTL
+    // produced during Phase 6A.1 manual verification.
+    expect(option.textContent).toMatch(/needs verification/i);
+    expect(option.textContent).not.toMatch(/not authenticated/i);
+  });
+
+  it('labels a confirmed authentication failure as "Not authenticated", distinct from "needs verification"', () => {
+    agents = [
+      buildAgent({ agent_type: 'demo', display_name: 'Demo Agent' }),
+      buildAgent({
+        agent_type: 'codex',
+        display_name: 'OpenAI Codex',
+        authentication_status: 'unauthenticated',
+      }),
+    ];
+
+    render(
+      <WorkflowBuilder draft={createEmptyDraft()} onChange={vi.fn()} errors={{ steps: {} }} />
+    );
+
+    const option = screen.getByRole('option', { name: /OpenAI Codex/i }) as HTMLOptionElement;
+    expect(option.textContent).toMatch(/not authenticated/i);
+    expect(option.textContent).not.toMatch(/needs verification/i);
+  });
+
   it('leaves a fully connected, authenticated, installed agent option selectable', () => {
     agents = [
       buildAgent({ agent_type: 'demo', display_name: 'Demo Agent' }),

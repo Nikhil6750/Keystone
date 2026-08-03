@@ -173,8 +173,17 @@ class Settings(BaseSettings):
 
     # --- Live agent connection verification ---
     agent_workspace_root: str = Field(default=".", validation_alias="KEYSTONE_AGENT_WORKSPACE_ROOT")
+    # 60s (the original default) proved impractical: manually verifying three
+    # providers from /agents and then navigating to /chat to build a workflow
+    # routinely took longer than that, so a freshly `connected` agent had
+    # already reverted to `verification_required` by the time it needed to be
+    # selected — reported as a frontend defect during Phase 6A.1 manual
+    # verification, though the root cause was this backend TTL. 600s (10
+    # minutes) comfortably covers one realistic manual session while still
+    # requiring periodic re-verification — this does not remove the
+    # verification requirement, only makes its cadence practical.
     agent_connection_cache_seconds: float = Field(
-        default=60.0, validation_alias="KEYSTONE_AGENT_CONNECTION_CACHE_SECONDS"
+        default=600.0, validation_alias="KEYSTONE_AGENT_CONNECTION_CACHE_SECONDS"
     )
 
     @property

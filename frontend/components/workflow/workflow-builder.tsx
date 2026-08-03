@@ -126,7 +126,15 @@ function agentBadge(agent: AgentAvailabilityRead | undefined): string {
   if (!agent.enabled) return 'Disabled';
   if (!agent.registered) return 'Not registered';
   if (agent.installation_status !== 'installed') return 'Not installed';
-  if (agent.authentication_status !== 'authenticated') return 'Not authenticated';
+  // `unauthenticated` is a confirmed failure; `unknown`/`error` mean "not
+  // recently verified" — never installation alone. Distinct wording here
+  // avoids telling the operator an agent that simply hasn't been re-verified
+  // yet has actually failed authentication (a real point of confusion this
+  // phase's manual verification surfaced).
+  if (agent.authentication_status === 'unauthenticated') return 'Not authenticated';
+  if (agent.authentication_status !== 'authenticated') {
+    return 'Needs verification — check the Agents page';
+  }
   if (agent.connection_status !== 'connected') return 'Not connected — verify on the Agents page';
   return 'Ready';
 }

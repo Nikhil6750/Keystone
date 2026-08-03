@@ -1,1 +1,1 @@
-"""SQLAlchemy engine, session management, and workflow state persistence. Not yet implemented."""
+"""SQLAlchemy engine, session management, and workflow state persistence."""

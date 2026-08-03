@@ -10,14 +10,23 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.api.deps import get_circuit_breaker_registry, get_executor_registry, get_retry_policy
+from app.api.deps import (
+    get_circuit_breaker_registry,
+    get_compensation_registry,
+    get_executor_registry,
+    get_retry_policy,
+)
 from app.database.base import Base
 from app.database.session import enable_sqlite_foreign_keys, get_db
+from app.engine.compensation import CompensationService
+from app.engine.compensation_registry import CompensationRegistry
 from app.engine.registry import ExecutorRegistry
 from app.engine.workflow_engine import WorkflowEngine
 from app.main import app
 
 # Import models so they register on Base.metadata before create_all() runs below.
+from app.models import audit_event as _audit_event  # noqa: F401
+from app.models import compensation_attempt as _compensation_attempt  # noqa: F401
 from app.models import step_attempt as _step_attempt  # noqa: F401
 from app.models import workflow as _workflow  # noqa: F401
 from app.models import workflow_step as _workflow_step  # noqa: F401
@@ -76,21 +85,44 @@ def fake_sleeper() -> FakeSleeper:
 
 
 @pytest.fixture
+def compensation_registry() -> CompensationRegistry:
+    """A fresh, isolated compensation-handler registry for one test."""
+    return CompensationRegistry()
+
+
+@pytest.fixture
 def workflow_engine(
     db_session: Session,
     executor_registry: ExecutorRegistry,
     circuit_breaker_registry: CircuitBreakerRegistry,
     retry_policy: RetryPolicy,
     fake_sleeper: FakeSleeper,
+    compensation_registry: CompensationRegistry,
 ) -> WorkflowEngine:
-    """A `WorkflowEngine` wired to the isolated test session, registry, and resilience fakes."""
+    """A `WorkflowEngine` wired to the isolated test session, registry, and resilience fakes.
+
+    Automatic compensation stays disabled (the default) so every existing
+    Phase 2/3 test using this fixture is unaffected; `compensation_registry`
+    is still wired in so Phase 4 tests can opt into
+    `auto_compensate_on_failure=True` via a dedicated engine instance without
+    needing a second fixture just for the registry.
+    """
     return WorkflowEngine(
         db_session,
         executor_registry,
         circuit_breakers=circuit_breaker_registry,
         retry_policy=retry_policy,
         sleeper=fake_sleeper,
+        compensation_registry=compensation_registry,
     )
+
+
+@pytest.fixture
+def compensation_service(
+    db_session: Session, compensation_registry: CompensationRegistry
+) -> CompensationService:
+    """A `CompensationService` wired to the isolated test session and handler registry."""
+    return CompensationService(db_session, compensation_registry)
 
 
 @pytest.fixture
@@ -99,13 +131,14 @@ async def client(
     executor_registry: ExecutorRegistry,
     circuit_breaker_registry: CircuitBreakerRegistry,
     retry_policy: RetryPolicy,
+    compensation_registry: CompensationRegistry,
 ) -> AsyncIterator[AsyncClient]:
     """An async HTTP client wired to the FastAPI ASGI app.
 
-    Overrides the database, executor-registry, circuit-breaker-registry, and
-    retry-policy dependencies so requests hit isolated test state instead of
-    production state or a real lifespan (ASGITransport never triggers lifespan
-    events).
+    Overrides the database, executor-registry, circuit-breaker-registry,
+    retry-policy, and compensation-registry dependencies so requests hit
+    isolated test state instead of production state or a real lifespan
+    (ASGITransport never triggers lifespan events).
     """
     session_factory = sessionmaker(bind=db_engine, autoflush=False, expire_on_commit=False)
 
@@ -120,6 +153,7 @@ async def client(
     app.dependency_overrides[get_executor_registry] = lambda: executor_registry
     app.dependency_overrides[get_circuit_breaker_registry] = lambda: circuit_breaker_registry
     app.dependency_overrides[get_retry_policy] = lambda: retry_policy
+    app.dependency_overrides[get_compensation_registry] = lambda: compensation_registry
     try:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as async_client:

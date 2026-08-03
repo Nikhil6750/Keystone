@@ -75,7 +75,8 @@ duplicate step positions, unknown field) — see "Error responses" below.
 Retrieves one workflow with its ordered steps and each step's attempt history.
 
 **Response `200 OK`**: `WorkflowRead` — includes status, input/output payloads, error
-information, timestamps, and version.
+information, timestamps, version, and `compensation_summary` (`null` until
+compensation runs). Each step also carries its own `compensation_attempts`.
 
 **Response `404 Not Found`**: `WORKFLOW_NOT_FOUND`.
 
@@ -198,6 +199,111 @@ breaker is created lazily, the first time that agent type is used).
   (restarting the process is the prototype's manual reset — there is no reset
   endpoint in this phase).
 
+### `POST /api/v1/workflows/{workflow_id}/compensate`
+
+Compensates a workflow's already-successful steps in **descending position order**
+(reverse of execution order), running each step's configured `compensation_handler`.
+Synchronous, like `.../execute` — the request blocks until compensation finishes.
+
+Only a `FAILED` or `SUCCEEDED` workflow may be compensated, and only once.
+
+**Response `200 OK`**: the updated `WorkflowRead` — `status: "compensated"` on full
+success, or `status: "failed"` if a step's compensation handler raised an *expected*,
+handled failure (this is normal compensation execution, not an API error — mirrors how
+an expected step-execution failure returns `200` from `.../execute`). `steps[].
+compensation_attempts` and the top-level `compensation_summary` reflect what was
+attempted. A step with no `compensation_handler` configured is skipped and listed under
+`compensation_summary.not_configured_steps`, never attempted.
+
+**Response `404 Not Found`**: `WORKFLOW_NOT_FOUND`.
+
+**Response `409 Conflict`**: `INVALID_COMPENSATION_STATE` — the workflow is not
+`FAILED`/`SUCCEEDED` (e.g. still `PENDING`/`RUNNING`/`COMPENSATING`); or
+`COMPENSATION_ALREADY_COMPLETED` — the workflow is already `COMPENSATED`.
+
+**Response `503 Service Unavailable`**: `COMPENSATION_HANDLER_NOT_REGISTERED` — an
+eligible step's `compensation_handler` name has no registered handler; the workflow
+stays `FAILED` and no further steps are compensated.
+
+### `GET /api/v1/workflows/{workflow_id}/audit-events`
+
+Lists a workflow's hash-linked audit events in sequence order.
+
+**Query parameters**
+
+- `limit` — integer, default `100`, minimum `1`, maximum `500`. Out-of-range values
+  return `422`.
+
+**Response `200 OK`**
+
+```json
+{
+  "items": [
+    {
+      "id": "...",
+      "workflow_id": "...",
+      "step_id": null,
+      "execution_attempt_id": null,
+      "compensation_attempt_id": null,
+      "sequence_number": 1,
+      "event_type": "workflow_created",
+      "actor_type": "user",
+      "actor_id": "api",
+      "payload": {},
+      "previous_hash": "000...000",
+      "event_hash": "3f2a...",
+      "created_at": "2026-01-01T00:00:00+00:00"
+    }
+  ],
+  "count": 1
+}
+```
+
+**Response `404 Not Found`**: `WORKFLOW_NOT_FOUND`.
+
+### `GET /api/v1/workflows/{workflow_id}/audit-chain/verify`
+
+Verifies a workflow's full audit chain: contiguous sequence numbers from `1`, each
+event's `previous_hash` linking to the prior event's `event_hash` (the genesis hash —
+64 `"0"` characters — for the first event), and each event's own `event_hash` matching
+its recomputed hash.
+
+**Always returns `200 OK`** — an invalid chain (`valid: false`) is a verification
+*result*, not a transport failure.
+
+```json
+{
+  "workflow_id": "...",
+  "valid": true,
+  "event_count": 12,
+  "first_invalid_sequence": null,
+  "reason": null
+}
+```
+
+If `valid` is `false`, `first_invalid_sequence` and `reason` identify the earliest
+broken event; verification stops there rather than reporting every subsequent
+discrepancy.
+
+**Response `404 Not Found`**: `WORKFLOW_NOT_FOUND`.
+
+### `GET /api/v1/workflows/{workflow_id}/provenance`
+
+Returns a workflow's full ordered audit trail together with its chain validity, in one
+call — the same event shape as `.../audit-events`.
+
+**Response `200 OK`**
+
+```json
+{
+  "workflow_id": "...",
+  "chain_valid": true,
+  "events": []
+}
+```
+
+**Response `404 Not Found`**: `WORKFLOW_NOT_FOUND`.
+
 ## Error responses
 
 All handled errors share one envelope:
@@ -212,23 +318,32 @@ All handled errors share one envelope:
 }
 ```
 
-| HTTP status | `code`                          |
-| ----------- | -------------------------------- |
-| 404         | `WORKFLOW_NOT_FOUND`             |
-| 409         | `INVALID_WORKFLOW_STATE`         |
-| 422         | `INVALID_REQUEST`                |
-| 503         | `AGENT_EXECUTOR_NOT_REGISTERED`  |
-| 503         | `CIRCUIT_BREAKER_OPEN`          |
-| 500         | `INTERNAL_ERROR` (unexpected)    |
+| HTTP status | `code`                              |
+| ----------- | ----------------------------------- |
+| 404         | `WORKFLOW_NOT_FOUND`                |
+| 409         | `INVALID_WORKFLOW_STATE`            |
+| 409         | `INVALID_COMPENSATION_STATE`        |
+| 409         | `COMPENSATION_ALREADY_COMPLETED`    |
+| 422         | `INVALID_REQUEST`                   |
+| 503         | `AGENT_EXECUTOR_NOT_REGISTERED`     |
+| 503         | `CIRCUIT_BREAKER_OPEN`              |
+| 503         | `COMPENSATION_HANDLER_NOT_REGISTERED` |
+| 500         | `COMPENSATION_EXECUTION_FAILED` (unexpected leak only — normally returned as `200`) |
+| 500         | `INTERNAL_ERROR` (unexpected)        |
 
 `STEP_EXECUTION_FAILED` is not currently returned via this envelope: an *expected* step
 execution failure is normal workflow execution and comes back as a `200` response with
 the failed workflow body (see `POST .../execute` above). The code is reserved for that
-failure mode should it ever need to be surfaced as an API-level error.
+failure mode should it ever need to be surfaced as an API-level error. `AUDIT_CHAIN_INVALID`
+and `AUDIT_EVENT_CONFLICT` are reserved the same way: `.../audit-chain/verify` always
+returns `200` (an invalid chain is a verification result, not a transport error), and an
+audit-append sequence-number race is retried internally and never surfaces as an API-level
+conflict in practice.
 
 Error responses never include stack traces, database URLs, or internal configuration.
 
 ## Planned, not yet implemented
 
-Compensation and audit endpoints will be added here as they are implemented. They do
-not exist yet. No public circuit-breaker reset endpoint exists in this phase.
+No public circuit-breaker reset endpoint exists in this phase. Provider-backed
+compensation handlers (reversing a real external side effect, rather than the demo
+handler) are not yet implemented.

@@ -3,7 +3,10 @@
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
+from app.core.config import Settings, get_settings
 from app.database.session import get_db
+from app.engine.compensation import CompensationService
+from app.engine.compensation_registry import CompensationRegistry
 from app.engine.registry import ExecutorRegistry
 from app.engine.workflow_engine import WorkflowEngine
 from app.resilience.circuit_breaker import CircuitBreakerRegistry
@@ -33,11 +36,19 @@ def get_retry_policy(request: Request) -> RetryPolicy:
     return policy
 
 
+def get_compensation_registry(request: Request) -> CompensationRegistry:
+    """Return the application's compensation-handler registry, created during lifespan startup."""
+    registry: CompensationRegistry = request.app.state.compensation_registry
+    return registry
+
+
 def get_workflow_engine(
     db: Session = Depends(get_db),  # noqa: B008
     registry: ExecutorRegistry = Depends(get_executor_registry),  # noqa: B008
     circuit_breakers: CircuitBreakerRegistry = Depends(get_circuit_breaker_registry),  # noqa: B008
     retry_policy: RetryPolicy = Depends(get_retry_policy),  # noqa: B008
+    compensation_registry: CompensationRegistry = Depends(get_compensation_registry),  # noqa: B008
+    settings: Settings = Depends(get_settings),  # noqa: B008
 ) -> WorkflowEngine:
     """Build a `WorkflowEngine` wired to this request's DB session and the app's registries."""
     return WorkflowEngine(
@@ -45,4 +56,14 @@ def get_workflow_engine(
         registry,
         circuit_breakers=circuit_breakers,
         retry_policy=retry_policy,
+        compensation_registry=compensation_registry,
+        auto_compensate_on_failure=settings.auto_compensate_on_failure,
     )
+
+
+def get_compensation_service(
+    db: Session = Depends(get_db),  # noqa: B008
+    registry: CompensationRegistry = Depends(get_compensation_registry),  # noqa: B008
+) -> CompensationService:
+    """Build a `CompensationService` wired to this request's DB session and handler registry."""
+    return CompensationService(db, registry)

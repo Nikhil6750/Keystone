@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session, selectinload
 from app.engine.state_machine import InvalidStateTransition
 from app.engine.state_machine import transition_step as apply_step_transition
 from app.engine.state_machine import transition_workflow as apply_workflow_transition
-from app.models.enums import AttemptStatus, StepStatus, WorkflowStatus
+from app.models.compensation_attempt import CompensationAttempt
+from app.models.enums import AttemptStatus, CompensationAttemptStatus, StepStatus, WorkflowStatus
 from app.models.step_attempt import StepAttempt
 from app.models.workflow import Workflow
 from app.models.workflow_step import WorkflowStep
@@ -167,6 +168,82 @@ def complete_step_attempt(
     attempt = db.get(StepAttempt, attempt_id)
     if attempt is None:
         raise ValueError(f"step attempt '{attempt_id}' not found")
+
+    attempt.status = status
+    attempt.completed_at = datetime.now(UTC)
+    attempt.output_payload = output_payload
+    attempt.error_type = error_type
+    attempt.error_message = error_message
+
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        raise
+    return attempt
+
+
+def set_compensation_summary(db: Session, workflow_id: str, summary: dict[str, Any]) -> Workflow:
+    """Persist a workflow's compensation summary.
+
+    Deliberately separate from `set_workflow_result`: that function always
+    overwrites both `output_payload` and `error_message` (by design, for the
+    execution success/failure paths), which would erase the original
+    execution output or failure reason if reused here. This function touches
+    only `compensation_summary`.
+    """
+    workflow = db.get(Workflow, workflow_id)
+    if workflow is None:
+        raise ValueError(f"workflow '{workflow_id}' not found")
+
+    workflow.compensation_summary = summary
+
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        raise
+    return workflow
+
+
+def create_compensation_attempt(
+    db: Session, step_id: str, *, handler_name: str
+) -> CompensationAttempt:
+    """Allocate and persist the next compensation attempt for a step."""
+    step = db.get(WorkflowStep, step_id)
+    if step is None:
+        raise ValueError(f"workflow step '{step_id}' not found")
+
+    attempt_number = len(step.compensation_attempts) + 1
+    attempt = CompensationAttempt(
+        step_id=step.id, attempt_number=attempt_number, handler_name=handler_name
+    )
+
+    db.add(attempt)
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        raise
+    return attempt
+
+
+def complete_compensation_attempt(
+    db: Session,
+    attempt_id: str,
+    *,
+    status: CompensationAttemptStatus,
+    output_payload: dict[str, Any] | None = None,
+    error_type: str | None = None,
+    error_message: str | None = None,
+) -> CompensationAttempt:
+    """Record the terminal outcome of a compensation attempt."""
+    if status is CompensationAttemptStatus.RUNNING:
+        raise ValueError("complete_compensation_attempt requires a terminal attempt status")
+
+    attempt = db.get(CompensationAttempt, attempt_id)
+    if attempt is None:
+        raise ValueError(f"compensation attempt '{attempt_id}' not found")
 
     attempt.status = status
     attempt.completed_at = datetime.now(UTC)

@@ -9,6 +9,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.engine.compensation_exceptions import (
+    CompensationAlreadyCompletedError,
+    CompensationExecutionError,
+    CompensationHandlerNotRegisteredError,
+    InvalidCompensationStateError,
+)
 from app.engine.exceptions import InvalidWorkflowStateError, WorkflowNotFoundError
 from app.engine.registry import ExecutorNotRegisteredError
 from app.resilience.circuit_breaker import CircuitBreakerOpenError
@@ -56,6 +62,46 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content=_envelope(APIErrorCode.CIRCUIT_BREAKER_OPEN, str(exc)),
+        )
+
+    @app.exception_handler(CompensationAlreadyCompletedError)
+    async def _compensation_already_completed(
+        _: Request, exc: CompensationAlreadyCompletedError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=_envelope(APIErrorCode.COMPENSATION_ALREADY_COMPLETED, str(exc)),
+        )
+
+    @app.exception_handler(InvalidCompensationStateError)
+    async def _invalid_compensation_state(
+        _: Request, exc: InvalidCompensationStateError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=_envelope(APIErrorCode.INVALID_COMPENSATION_STATE, str(exc)),
+        )
+
+    @app.exception_handler(CompensationHandlerNotRegisteredError)
+    async def _compensation_handler_not_registered(
+        _: Request, exc: CompensationHandlerNotRegisteredError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=_envelope(APIErrorCode.COMPENSATION_HANDLER_NOT_REGISTERED, str(exc)),
+        )
+
+    @app.exception_handler(CompensationExecutionError)
+    async def _compensation_execution_failed(
+        _: Request, exc: CompensationExecutionError
+    ) -> JSONResponse:
+        # Normal handler-execution failures are handled inside CompensationService
+        # and returned as a 200 with the persisted failed workflow; reaching this
+        # handler means one leaked unexpectedly, so it is treated as a server error.
+        logger.exception("unexpected_compensation_execution_error", exc_info=exc)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=_envelope(APIErrorCode.COMPENSATION_EXECUTION_FAILED, str(exc)),
         )
 
     @app.exception_handler(RequestValidationError)

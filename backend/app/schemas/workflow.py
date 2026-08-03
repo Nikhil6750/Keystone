@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.models.enums import AttemptStatus, StepStatus, WorkflowStatus
+from app.models.enums import AttemptStatus, CompensationAttemptStatus, StepStatus, WorkflowStatus
 
 
 class WorkflowStepCreate(BaseModel):
@@ -83,6 +83,23 @@ class StepAttemptRead(BaseModel):
     error_message: str | None
 
 
+class CompensationAttemptRead(BaseModel):
+    """Serialized representation of one compensation-handler invocation."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    step_id: str
+    attempt_number: int
+    handler_name: str
+    status: CompensationAttemptStatus
+    started_at: datetime
+    completed_at: datetime | None
+    output_payload: dict[str, Any] | None
+    error_type: str | None
+    error_message: str | None
+
+
 class WorkflowStepRead(BaseModel):
     """Serialized representation of a workflow step."""
 
@@ -105,6 +122,7 @@ class WorkflowStepRead(BaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     attempts: list[StepAttemptRead] = Field(default_factory=list)
+    compensation_attempts: list[CompensationAttemptRead] = Field(default_factory=list)
 
 
 class WorkflowRead(BaseModel):
@@ -119,6 +137,7 @@ class WorkflowRead(BaseModel):
     input_payload: dict[str, Any]
     output_payload: dict[str, Any] | None
     error_message: str | None
+    compensation_summary: dict[str, Any] | None
     created_at: datetime
     updated_at: datetime
     started_at: datetime | None

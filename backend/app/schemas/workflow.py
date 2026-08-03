@@ -125,3 +125,12 @@ class WorkflowRead(BaseModel):
     completed_at: datetime | None
     version: int
     steps: list[WorkflowStepRead] = Field(default_factory=list)
+
+
+class WorkflowListResponse(BaseModel):
+    """Response envelope for `GET /api/v1/workflows`."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    items: list[WorkflowRead]
+    count: int

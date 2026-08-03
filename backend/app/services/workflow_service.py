@@ -128,6 +128,29 @@ def create_step_attempt(db: Session, step_id: str) -> StepAttempt:
     return attempt
 
 
+def set_workflow_result(
+    db: Session,
+    workflow_id: str,
+    *,
+    output_payload: dict[str, Any] | None = None,
+    error_message: str | None = None,
+) -> Workflow:
+    """Persist a workflow's aggregated output and/or error message, without changing its status."""
+    workflow = db.get(Workflow, workflow_id)
+    if workflow is None:
+        raise ValueError(f"workflow '{workflow_id}' not found")
+
+    workflow.output_payload = output_payload
+    workflow.error_message = error_message
+
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        raise
+    return workflow
+
+
 def complete_step_attempt(
     db: Session,
     attempt_id: str,

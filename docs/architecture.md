@@ -26,20 +26,39 @@ so far (`api/routes/health.py`).
 
 ### `schemas/`
 Pydantic models defining request and response shapes for the API layer.
-**Implementation status: partially implemented.** Only `schemas/health.py` exists so far.
+**Implementation status: partially implemented.** `schemas/health.py` and
+`schemas/workflow.py` (`WorkflowCreate`, `WorkflowStepCreate`, `WorkflowRead`,
+`WorkflowStepRead`, `StepAttemptRead`) exist. The workflow schemas are used internally by
+`services/workflow_service.py`; no API routes consume them yet.
 
 ### `database/`
 SQLAlchemy engine/session setup and persistence of workflow state to SQLite.
-**Implementation status: not implemented.** Directory exists as a placeholder package.
+**Implementation status: implemented.** `database/base.py` defines the typed declarative
+base; `database/session.py` centralizes engine and session creation (SQLite foreign-key
+enforcement enabled per connection) and exposes a `get_db()` FastAPI dependency for later
+use; `database/init_db.py` exposes `initialize_database()`, called from the FastAPI
+lifespan on startup to create tables if they don't already exist. No connection is opened
+and no tables are created at import time.
 
 ### `models/`
 SQLAlchemy ORM models representing workflows, steps, and agent invocations.
-**Implementation status: not implemented.**
+**Implementation status: implemented** for workflow state. `models/enums.py` defines
+`WorkflowStatus`, `StepStatus`, and `AttemptStatus`. `models/workflow.py` defines
+`Workflow` (the top-level orchestration unit, versioned, with an ordered `steps`
+relationship). `models/workflow_step.py` defines `WorkflowStep` (one ordered, retryable
+unit of work per workflow, unique by `(workflow_id, position)`). `models/step_attempt.py`
+defines `StepAttempt` (retained execution-attempt history per step, unique by
+`(step_id, attempt_number)`). Deleting a workflow cascades to its steps and attempts at
+both the ORM and database level.
 
 ### `engine/`
 The workflow orchestration engine: sequencing steps, tracking workflow state, and
 invoking agents through adapters.
-**Implementation status: not implemented.**
+**Implementation status: partially implemented.** `engine/state_machine.py` implements
+and validates all workflow and step state transitions (`transition_workflow`,
+`transition_step`, raising `InvalidStateTransition` on disallowed transitions) and owns
+timestamp/version bookkeeping. Step execution sequencing and the orchestration loop
+itself are not yet implemented.
 
 ### `adapters/`
 Thin integration layers between the orchestration engine and individual LLM agents
@@ -54,7 +73,14 @@ agent failures don't cascade into workflow failures.
 ### `services/`
 Application services that coordinate the engine, adapters, and persistence layer on
 behalf of the API layer (e.g., "start a workflow," "compensate a failed step").
-**Implementation status: not implemented.**
+**Implementation status: partially implemented.** `services/workflow_service.py`
+implements workflow/step/attempt persistence: `create_workflow` (workflow plus its
+ordered steps in one transaction, rolled back entirely on failure), `get_workflow`,
+`list_workflows`, `transition_workflow`, `transition_step`, `create_step_attempt`, and
+`complete_step_attempt`. Each state-changing operation persists through the state
+machine in `engine/state_machine.py` within a single transaction, rolling back and
+re-raising on invalid transitions or database errors. Higher-level orchestration
+services (invoking agents, running compensation) are not yet implemented.
 
 ### `audit/`
 A hash-linked, append-only log of workflow and agent events, so that after-the-fact

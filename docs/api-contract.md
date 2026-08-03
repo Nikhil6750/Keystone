@@ -40,3 +40,9 @@ Health check endpoint.
 
 Workflow orchestration endpoints (create/inspect/cancel workflows, agent step results,
 audit event retrieval) will be added here as they are implemented. They do not exist yet.
+
+Workflow domain schemas (`WorkflowCreate`, `WorkflowStepCreate`, `WorkflowRead`,
+`WorkflowStepRead`, `StepAttemptRead`) now exist internally at
+`backend/app/schemas/workflow.py` and are used by the persistence service
+(`backend/app/services/workflow_service.py`), but are not yet exposed through any API
+route.

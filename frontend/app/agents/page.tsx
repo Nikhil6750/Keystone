@@ -29,6 +29,17 @@ export default function AgentsPage() {
   const [newAgentDesc, setNewAgentDesc] = React.useState('');
   const [newAgentTools, setNewAgentTools] = React.useState('');
 
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSelectedAgent(null);
+        setIsRegisterOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   const handleRegisterAgent = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAgentName.trim()) return;

@@ -54,6 +54,16 @@ export default function SettingsPage() {
   const [toastMessage, setToastMessage] = React.useState<string | null>(null);
   const [dangerModal, setDangerModal] = React.useState<string | null>(null);
 
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && dangerModal) {
+        setDangerModal(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [dangerModal]);
+
   // Load from localStorage on mount
   React.useEffect(() => {
     try {

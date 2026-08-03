@@ -13,6 +13,16 @@ export default function WorkflowsPage() {
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [newWorkflowName, setNewWorkflowName] = React.useState('');
 
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isModalOpen) {
+        setIsModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isModalOpen]);
+
   const handleCreateWorkflow = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newWorkflowName.trim()) return;

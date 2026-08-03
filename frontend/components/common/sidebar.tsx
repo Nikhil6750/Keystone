@@ -16,10 +16,10 @@ import {
 
 const NAV_ITEMS = [
   { label: 'Chat', href: '/chat', icon: MessageSquare },
-  { label: 'Workflows', href: '/chat', icon: GitFork },
-  { label: 'Agents', href: '/chat', icon: Bot },
-  { label: 'Logs', href: '/chat', icon: Terminal },
-  { label: 'Settings', href: '/chat', icon: Settings },
+  { label: 'Workflows', href: '/workflows', icon: GitFork },
+  { label: 'Agents', href: '/agents', icon: Bot },
+  { label: 'Logs', href: '/logs', icon: Terminal },
+  { label: 'Settings', href: '/settings', icon: Settings },
 ];
 
 export const Sidebar: React.FC = () => {
@@ -39,13 +39,13 @@ export const Sidebar: React.FC = () => {
           </div>
 
           {/* + New Workflow Primary Button */}
-          <button
-            type="button"
+          <Link
+            href="/chat"
             className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white shadow-sm transition-colors hover:bg-blue-500"
           >
             <Plus className="h-4 w-4" />
             <span>New Workflow</span>
-          </button>
+          </Link>
         </div>
 
         {/* NAVIGATION SECTION */}
@@ -57,8 +57,7 @@ export const Sidebar: React.FC = () => {
           <nav className="space-y-1">
             {NAV_ITEMS.map((item) => {
               const IconComponent = item.icon;
-              const isActive =
-                pathname === item.href || (item.label === 'Chat' && pathname === '/chat');
+              const isActive = pathname === item.href;
 
               return (
                 <Link

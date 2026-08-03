@@ -20,34 +20,76 @@ export default function WorkflowsPage() {
 
   const workflows = data?.items ?? [];
 
+  // Mirrors the currently-selected workflow id so an in-flight
+  // execute/compensate response can tell, once it resolves, whether the
+  // user has since selected a different workflow — and if so, skip applying
+  // it instead of clobbering the newer selection with stale data.
+  const selectedIdRef = React.useRef<string | null>(selected?.id ?? null);
+  selectedIdRef.current = selected?.id ?? null;
+  const executeAbortRef = React.useRef<AbortController | null>(null);
+  const compensateAbortRef = React.useRef<AbortController | null>(null);
+
+  const abortInFlight = () => {
+    executeAbortRef.current?.abort();
+    compensateAbortRef.current?.abort();
+    executeAbortRef.current = null;
+    compensateAbortRef.current = null;
+  };
+
+  // Selects a workflow (or clears the selection) and always drops any
+  // stale error/in-flight state tied to the previous selection.
+  const selectWorkflow = (wf: WorkflowRead | null) => {
+    abortInFlight();
+    setSelected(wf);
+    setActionError(null);
+    setExecuting(false);
+    setCompensating(false);
+  };
+
   const applyUpdate = (updated: WorkflowRead) => {
     setSelected(updated);
     refresh();
   };
 
   const handleExecute = async () => {
-    if (!selected) return;
+    if (!selected || selected.status !== 'pending' || executing) return;
+    const targetId = selected.id;
+    const controller = new AbortController();
+    executeAbortRef.current = controller;
     setExecuting(true);
     setActionError(null);
     try {
-      applyUpdate(await executeWorkflow(selected.id));
+      const updated = await executeWorkflow(targetId, { signal: controller.signal });
+      if (selectedIdRef.current === targetId) applyUpdate(updated);
     } catch (err) {
-      setActionError(describeError(err).body);
+      if (controller.signal.aborted) return;
+      if (selectedIdRef.current === targetId) setActionError(describeError(err).body);
     } finally {
-      setExecuting(false);
+      if (executeAbortRef.current === controller) {
+        executeAbortRef.current = null;
+        setExecuting(false);
+      }
     }
   };
 
   const handleCompensate = async () => {
     if (!selected) return;
+    const targetId = selected.id;
+    const controller = new AbortController();
+    compensateAbortRef.current = controller;
     setCompensating(true);
     setActionError(null);
     try {
-      applyUpdate(await compensateWorkflow(selected.id));
+      const updated = await compensateWorkflow(targetId, { signal: controller.signal });
+      if (selectedIdRef.current === targetId) applyUpdate(updated);
     } catch (err) {
-      setActionError(describeError(err).body);
+      if (controller.signal.aborted) return;
+      if (selectedIdRef.current === targetId) setActionError(describeError(err).body);
     } finally {
-      setCompensating(false);
+      if (compensateAbortRef.current === controller) {
+        compensateAbortRef.current = null;
+        setCompensating(false);
+      }
     }
   };
 
@@ -107,7 +149,7 @@ export default function WorkflowsPage() {
                 <button
                   key={wf.id}
                   type="button"
-                  onClick={() => setSelected(wf)}
+                  onClick={() => selectWorkflow(wf)}
                   className="grid w-full grid-cols-6 items-center gap-4 px-6 py-3.5 text-left text-zinc-300 hover:bg-white/[0.02]"
                 >
                   <div className="col-span-2 truncate font-semibold text-white">{wf.name}</div>
@@ -130,7 +172,7 @@ export default function WorkflowsPage() {
         <div
           className="fixed inset-0 z-50 flex items-center justify-end bg-black/60 backdrop-blur-sm"
           role="presentation"
-          onClick={() => setSelected(null)}
+          onClick={() => selectWorkflow(null)}
         >
           <div
             className="h-full w-full max-w-lg overflow-y-auto border-l border-white/[0.08] bg-[#0B1120] p-6 shadow-2xl"
@@ -142,7 +184,7 @@ export default function WorkflowsPage() {
             <div className="mb-4 flex justify-end">
               <button
                 type="button"
-                onClick={() => setSelected(null)}
+                onClick={() => selectWorkflow(null)}
                 aria-label="Close workflow details"
                 className="text-zinc-400 hover:text-white"
               >
@@ -155,6 +197,7 @@ export default function WorkflowsPage() {
               </div>
             )}
             <ExecutionPanel
+              key={selected.id}
               workflow={selected}
               onExecute={handleExecute}
               onCompensate={handleCompensate}

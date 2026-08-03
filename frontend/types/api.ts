@@ -1,27 +1,12 @@
-export interface ApiResponse<T> {
-  data: T;
-  message?: string;
-  success: boolean;
-  timestamp: string;
-}
+/**
+ * Generic client-side API plumbing types. Backend response/request shapes
+ * live in `./backend.ts` — nothing here assumes a `data`/`success`/`message`
+ * wrapper or `{items, total, page, ...}` pagination envelope, since the real
+ * backend returns resources unwrapped and paginates only via `{items, count}`
+ * (see `docs/api-contract.md`).
+ */
 
-export interface ApiError {
-  message: string;
-  statusCode: number;
-  details?: Record<string, unknown>;
-}
-
-export interface PaginationParams {
-  page?: number;
-  limit?: number;
-  sortBy?: string;
-  sortOrder?: 'asc' | 'desc';
-}
-
-export interface PaginatedResponse<T> {
-  items: T[];
-  total: number;
-  page: number;
-  limit: number;
-  totalPages: number;
+export interface RequestOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }

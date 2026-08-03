@@ -4,14 +4,16 @@ import * as React from 'react';
 import Link from 'next/link';
 import { Search, Bell, ChevronDown, Check, Trash2, X } from 'lucide-react';
 import { APP_CONFIG } from '@/lib/constants';
-import { INITIAL_NOTIFICATIONS } from '@/lib/mock';
+import { INITIAL_NOTIFICATIONS } from '@/lib/notifications';
 import { NotificationItem } from '@/types';
+import { useBackendHealth } from '@/hooks/use-backend-health';
 import { ThemeToggle } from './theme-toggle';
 
 export const Header: React.FC = () => {
   const [notifications, setNotifications] =
     React.useState<NotificationItem[]>(INITIAL_NOTIFICATIONS);
   const [isOpen, setIsOpen] = React.useState(false);
+  const { data: health, loading: healthLoading, error: healthError } = useBackendHealth();
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
@@ -35,26 +37,32 @@ export const Header: React.FC = () => {
         </Link>
       </div>
 
-      {/* Center Search Input Placeholder */}
-      <div className="hidden w-72 items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-xs text-zinc-400 transition-colors focus-within:border-white/20 md:flex lg:w-96">
-        <Search className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
-        <input
-          type="text"
-          placeholder="Search anything..."
-          className="w-full bg-transparent text-xs text-white placeholder:text-zinc-500 focus:outline-none"
-          readOnly
-        />
-        <kbd className="hidden items-center rounded border border-white/10 bg-white/5 px-1.5 text-[10px] font-medium text-zinc-400 sm:inline-flex">
-          ⌘ K
-        </kbd>
+      {/* Center Search Input — honest disabled control; real search is not yet implemented */}
+      <div
+        className="hidden w-72 items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-1.5 text-xs text-zinc-500 opacity-60 md:flex lg:w-96"
+        title="Search coming soon"
+      >
+        <Search className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        <span>Search coming soon</span>
       </div>
 
       {/* Right Header Controls */}
       <div className="flex items-center gap-3">
-        {/* Backend Connected Status Badge */}
-        <div className="hidden items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.04] px-3 py-1 text-xs font-medium text-zinc-300 sm:flex">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
-          <span>Backend: Connected</span>
+        {/* Real Backend Health Status Badge */}
+        <div
+          className="hidden items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.04] px-3 py-1 text-xs font-medium text-zinc-300 sm:flex"
+          role="status"
+        >
+          <span
+            className={`h-2 w-2 rounded-full ${
+              healthLoading ? 'bg-zinc-500' : healthError ? 'bg-rose-500' : 'bg-emerald-500'
+            } ${!healthLoading && !healthError ? 'animate-pulse' : ''}`}
+            aria-hidden="true"
+          />
+          <span>
+            Backend:{' '}
+            {healthLoading ? 'Checking…' : healthError ? 'Unreachable' : (health?.status ?? 'Unknown')}
+          </span>
         </div>
 
         {/* Theme Toggle Button */}

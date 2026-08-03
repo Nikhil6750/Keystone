@@ -2,7 +2,8 @@
 
 This document describes the intended module layout for the Keystone backend. It reflects
 the target design, not the current implementation state — see the "Implementation status"
-note under each module.
+note under each module. For the Next.js frontend's architecture and how it integrates
+with the API described here, see [`phase5-integration.md`](./phase5-integration.md).
 
 ## Overview
 

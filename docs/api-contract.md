@@ -347,3 +347,10 @@ Error responses never include stack traces, database URLs, or internal configura
 No public circuit-breaker reset endpoint exists in this phase. Provider-backed
 compensation handlers (reversing a real external side effect, rather than the demo
 handler) are not yet implemented.
+
+## Frontend consumer
+
+As of Phase 5, the Next.js frontend under `frontend/` implements a typed client against
+every endpoint on this page (see [`phase5-integration.md`](./phase5-integration.md) for
+the screen-to-endpoint mapping and the exact TypeScript types, which mirror the Pydantic
+schemas above field-for-field).

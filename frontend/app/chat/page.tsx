@@ -1,337 +1,242 @@
 'use client';
 
 import * as React from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { AppLayout, PromptCard, WorkflowStageCard } from '@/components/common';
-import { EmptyState } from '@/components/ui';
-import { generateAssistantResponse } from '@/lib/mock';
-import { ChatMessage } from '@/types';
+import { Info, Sparkles } from 'lucide-react';
+import { AppLayout, PromptCard } from '@/components/common';
+import { InlineError, describeError } from '@/components/common/inline-error';
 import {
-  Code2,
-  Atom,
-  BarChart3,
-  Bug,
-  FileText,
-  Search,
-  Sparkles,
-  Package,
-  BookOpen,
-  Terminal,
-  ShieldCheck,
-  Clock,
-  Paperclip,
-  SendHorizontal,
-  Bot,
-} from 'lucide-react';
+  WorkflowBuilder,
+  ExecutionPanel,
+  type WorkflowDraft,
+  createEmptyDraft,
+  createEmptyStep,
+  validateDraft,
+  draftHasErrors,
+  draftToWorkflowCreate,
+} from '@/components/workflow';
+import { WORKFLOW_TEMPLATES } from '@/lib/templates';
+import { createWorkflow, executeWorkflow, compensateWorkflow } from '@/services/workflows';
+import type { WorkflowRead } from '@/types/backend';
 
-const SUGGESTIONS = [
-  {
-    title: 'Build FastAPI Backend',
-    subtitle: 'Scalable REST API with authentication',
-    prompt: 'Build a FastAPI backend with REST endpoints and authentication.',
-    icon: Code2,
-    iconBg: 'bg-blue-600/20 text-blue-400',
-  },
-  {
-    title: 'Create React Dashboard',
-    subtitle: 'Modern dashboard with charts and tables',
-    prompt: 'Create a modern React dashboard layout with charts and tables.',
-    icon: Atom,
-    iconBg: 'bg-emerald-600/20 text-emerald-400',
-  },
-  {
-    title: 'Analyze CSV Dataset',
-    subtitle: 'Extract insights and generate summary reports',
-    prompt: 'Analyze a CSV dataset to extract summary insights and data trends.',
-    icon: BarChart3,
-    iconBg: 'bg-purple-600/20 text-purple-400',
-  },
-  {
-    title: 'Debug Python Code',
-    subtitle: 'Find issues and suggest fixes',
-    prompt: 'Debug my Python code for runtime exceptions and performance fixes.',
-    icon: Bug,
-    iconBg: 'bg-amber-600/20 text-amber-400',
-  },
-  {
-    title: 'Generate Test Cases',
-    subtitle: 'Create unit and integration test suites',
-    prompt: 'Generate unit and integration test suites for core service functions.',
-    icon: FileText,
-    iconBg: 'bg-cyan-600/20 text-cyan-400',
-  },
-  {
-    title: 'Explain SQL Query',
-    subtitle: 'Understand and optimize SQL queries',
-    prompt: 'Explain this SQL query execution plan and suggest optimizations.',
-    icon: Search,
-    iconBg: 'bg-rose-600/20 text-rose-400',
-  },
-];
-
-const WORKFLOW_STAGES = [
-  {
-    name: 'Planner',
-    badge: 'Waiting',
-    description: 'Understand goal and create execution plan',
-    icon: Package,
-    iconBg: 'bg-blue-600/20 text-blue-400',
-  },
-  {
-    name: 'Research',
-    badge: 'Waiting',
-    description: 'Gather context and relevant information',
-    icon: BookOpen,
-    iconBg: 'bg-emerald-600/20 text-emerald-400',
-  },
-  {
-    name: 'Executor',
-    badge: 'Waiting',
-    description: 'Execute tasks and build requested solution',
-    icon: Terminal,
-    iconBg: 'bg-purple-600/20 text-purple-400',
-  },
-  {
-    name: 'Validator',
-    badge: 'Waiting',
-    description: 'Validate results and ensure quality standards',
-    icon: ShieldCheck,
-    iconBg: 'bg-amber-600/20 text-amber-400',
-  },
-  {
-    name: 'Reporter',
-    badge: 'Waiting',
-    description: 'Generate summary and final report',
-    icon: FileText,
-    iconBg: 'bg-cyan-600/20 text-cyan-400',
-  },
-];
+type Mode = 'templates' | 'builder' | 'created';
 
 export default function ChatPage() {
-  const [taskInput, setTaskInput] = React.useState('');
-  const [messages, setMessages] = React.useState<ChatMessage[]>([]);
-  const [isTyping, setIsTyping] = React.useState(false);
-  const messagesEndRef = React.useRef<HTMLDivElement>(null);
-  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+  const [mode, setMode] = React.useState<Mode>('templates');
+  const [goalText, setGoalText] = React.useState('');
+  const [draft, setDraft] = React.useState<WorkflowDraft>(createEmptyDraft());
+  const [creating, setCreating] = React.useState(false);
+  const [createError, setCreateError] = React.useState<string | null>(null);
+  const [workflow, setWorkflow] = React.useState<WorkflowRead | null>(null);
+  const [executing, setExecuting] = React.useState(false);
+  const [compensating, setCompensating] = React.useState(false);
+  const [actionError, setActionError] = React.useState<string | null>(null);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  const startFromGoal = () => {
+    if (!goalText.trim()) return;
+    setDraft({
+      ...createEmptyDraft(),
+      name: goalText.trim().slice(0, 120),
+      description: goalText.trim(),
+    });
+    setMode('builder');
   };
 
-  React.useEffect(() => {
-    scrollToBottom();
-  }, [messages, isTyping]);
-
-  const handleSelectSuggestion = (prompt: string) => {
-    setTaskInput(prompt);
-    textareaRef.current?.focus();
+  const startFromTemplate = (templateId: string) => {
+    const template = WORKFLOW_TEMPLATES.find((t) => t.id === templateId);
+    if (!template) return;
+    setDraft({
+      name: template.workflowName,
+      description: template.workflowDescription,
+      inputPayloadText: template.inputPayloadText,
+      steps: template.steps.map((step) => ({
+        ...createEmptyStep(),
+        name: step.name,
+        agentType: step.agentType,
+        maxAttempts: step.maxAttempts,
+      })),
+    });
+    setMode('builder');
   };
 
-  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setTaskInput(e.target.value);
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 160)}px`;
+  const [errors, setErrors] = React.useState(() => validateDraft(draft));
+
+  const handleDraftChange = (next: WorkflowDraft) => {
+    setDraft(next);
+    setErrors(validateDraft(next));
+  };
+
+  const handleCreate = async () => {
+    const currentErrors = validateDraft(draft);
+    setErrors(currentErrors);
+    if (draftHasErrors(currentErrors)) return;
+
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const created = await createWorkflow(draftToWorkflowCreate(draft));
+      setWorkflow(created);
+      setMode('created');
+    } catch (error) {
+      setCreateError(describeError(error).body);
+    } finally {
+      setCreating(false);
     }
   };
 
-  const handleSendMessage = () => {
-    if (!taskInput.trim()) return;
-
-    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const userMessage: ChatMessage = {
-      id: `user-${Date.now()}`,
-      sender: 'user',
-      content: taskInput.trim(),
-      timestamp,
-    };
-
-    const currentPrompt = taskInput;
-    setMessages((prev) => [...prev, userMessage]);
-    setTaskInput('');
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
+  const handleExecute = async () => {
+    if (!workflow) return;
+    setExecuting(true);
+    setActionError(null);
+    try {
+      const updated = await executeWorkflow(workflow.id);
+      setWorkflow(updated);
+    } catch (error) {
+      setActionError(describeError(error).body);
+    } finally {
+      setExecuting(false);
     }
-
-    setIsTyping(true);
-    setTimeout(() => {
-      const assistantMessage = generateAssistantResponse(currentPrompt);
-      setMessages((prev) => [...prev, assistantMessage]);
-      setIsTyping(false);
-    }, 1000);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage();
+  const handleCompensate = async () => {
+    if (!workflow) return;
+    setCompensating(true);
+    setActionError(null);
+    try {
+      const updated = await compensateWorkflow(workflow.id);
+      setWorkflow(updated);
+    } catch (error) {
+      setActionError(describeError(error).body);
+    } finally {
+      setCompensating(false);
     }
+  };
+
+  const startOver = () => {
+    setMode('templates');
+    setGoalText('');
+    setDraft(createEmptyDraft());
+    setWorkflow(null);
+    setCreateError(null);
+    setActionError(null);
   };
 
   return (
     <AppLayout showSidebar={true}>
-      {/* Center Workspace Area */}
-      <main className="flex flex-1 flex-col justify-between overflow-y-auto p-6 md:p-8">
-        {/* Top Title & Header */}
+      <main className="flex flex-1 flex-col overflow-y-auto p-6 md:p-8">
         <div className="space-y-2">
           <span className="text-xs font-bold tracking-wider text-blue-400 uppercase">
-            CHAT WORKSPACE
+            New Workflow
           </span>
           <h1 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">
-            What would you like Keystone to accomplish today?
+            Create and review the workflow steps, assign agents, then execute through Keystone.
           </h1>
-          <p className="max-w-2xl text-sm leading-relaxed text-zinc-400">
-            Describe your goal and Keystone will orchestrate multiple AI agents to plan, execute,
-            validate and report the results.
+          <p className="flex items-start gap-2 rounded-lg border border-blue-900/30 bg-blue-950/20 p-3 text-xs text-blue-300">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              Keystone does not automatically decompose your goal or select agents for you in
+              this prototype. You define each step and choose its agent manually. Automatic
+              planning and agent routing are <strong>coming in Phase 6</strong>.
+            </span>
           </p>
         </div>
 
-        {/* 6 Suggestion Cards Grid (2x3) */}
-        <div className="py-6">
-          <div className="grid w-full gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {SUGGESTIONS.map((item) => (
-              <PromptCard
-                key={item.title}
-                title={item.title}
-                subtitle={item.subtitle}
-                prompt={item.prompt}
-                icon={item.icon}
-                iconBg={item.iconBg}
-                onSelect={handleSelectSuggestion}
+        {mode === 'templates' && (
+          <div className="mt-8 space-y-8">
+            <div className="space-y-3">
+              <label htmlFor="goal-input" className="block text-xs font-medium text-zinc-400">
+                Describe your goal (optional starting point)
+              </label>
+              <textarea
+                id="goal-input"
+                value={goalText}
+                onChange={(e) => setGoalText(e.target.value)}
+                rows={3}
+                placeholder="e.g. Build a REST API with FastAPI and validate the output"
+                className="w-full resize-none rounded-xl border border-white/[0.08] bg-white/[0.04] p-4 text-sm text-white placeholder:text-zinc-500 focus:border-blue-500/50 focus:outline-none"
               />
-            ))}
-          </div>
-        </div>
+              <button
+                type="button"
+                onClick={startFromGoal}
+                disabled={!goalText.trim()}
+                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white shadow-sm transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                <span>Start workflow draft</span>
+              </button>
+            </div>
 
-        {/* Conversation Area */}
-        {messages.length === 0 ? (
-          <EmptyState
-            icon={<Sparkles className="h-5 w-5" />}
-            title="No workflow started"
-            description="Start a conversation to begin or choose a suggestion above."
-          />
-        ) : (
-          <div className="my-4 max-h-[340px] space-y-4 overflow-y-auto rounded-xl border border-white/[0.08] bg-white/[0.03] p-4">
-            <AnimatePresence>
-              {messages.map((msg) => (
-                <motion.div
-                  key={msg.id}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  className={`flex gap-3 text-xs ${
-                    msg.sender === 'user' ? 'justify-end' : 'justify-start'
-                  }`}
-                >
-                  {msg.sender === 'assistant' && (
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-blue-500/30 bg-blue-600/20 text-blue-400">
-                      <Bot className="h-4 w-4" />
-                    </div>
-                  )}
-
-                  <div
-                    className={`max-w-[80%] space-y-1 rounded-xl p-3 ${
-                      msg.sender === 'user'
-                        ? 'bg-blue-600 text-white'
-                        : 'border border-white/[0.08] bg-white/[0.04] text-zinc-200'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-4 text-[10px] opacity-75">
-                      <span className="font-semibold">
-                        {msg.sender === 'user' ? 'You' : 'Keystone AI'}
-                      </span>
-                      <span>{msg.timestamp}</span>
-                    </div>
-                    <p className="leading-relaxed">{msg.content}</p>
-                  </div>
-
-                  {msg.sender === 'user' && (
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/10 bg-zinc-800 text-xs font-semibold text-white">
-                      KS
-                    </div>
-                  )}
-                </motion.div>
-              ))}
-            </AnimatePresence>
-
-            {isTyping && (
-              <div className="flex items-center gap-2 pt-2 text-xs text-zinc-400">
-                <Bot className="h-4 w-4 animate-spin text-blue-400" />
-                <span>Orchestrating agents...</span>
+            <div className="space-y-3">
+              <h2 className="text-xs font-bold tracking-wider text-zinc-400 uppercase">
+                Or start from a template
+              </h2>
+              <p className="text-[11px] text-zinc-500">
+                Static, locally-defined starting points — not generated, learned, or personalized.
+                Review and edit every field before creating the workflow.
+              </p>
+              <div className="grid w-full gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {WORKFLOW_TEMPLATES.map((template) => (
+                  <PromptCard
+                    key={template.id}
+                    title={template.title}
+                    subtitle={template.description}
+                    prompt={template.id}
+                    icon={Sparkles}
+                    iconBg="bg-blue-600/20 text-blue-400"
+                    onSelect={startFromTemplate}
+                  />
+                ))}
               </div>
-            )}
-            <div ref={messagesEndRef} />
+            </div>
           </div>
         )}
 
-        {/* Sticky Bottom Chat Composer */}
-        <div className="sticky bottom-0 z-10 bg-[#0B1120] pt-4">
-          <div className="rounded-xl border border-white/[0.08] bg-[#0B1120]/90 p-4 shadow-xl backdrop-blur-md transition-colors focus-within:border-white/20">
-            <textarea
-              ref={textareaRef}
-              value={taskInput}
-              onChange={handleTextareaChange}
-              onKeyDown={handleKeyDown}
-              placeholder="Ask Keystone anything..."
-              rows={2}
-              className="w-full resize-none bg-transparent text-sm text-white placeholder:text-zinc-500 focus:outline-none"
-            />
-            <div className="flex items-center justify-between border-t border-white/[0.08] pt-2">
-              {/* Left Attachment Button */}
+        {mode === 'builder' && (
+          <div className="mt-8 max-w-3xl space-y-4">
+            <WorkflowBuilder draft={draft} onChange={handleDraftChange} errors={errors} disabled={creating} />
+            {createError && <InlineError message={createError} />}
+            <div className="flex gap-2">
               <button
                 type="button"
-                className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.04] text-zinc-400 transition-colors hover:text-white"
-                title="Attach file"
-                aria-label="Attach file"
+                onClick={() => setMode('templates')}
+                disabled={creating}
+                className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-4 py-2 text-xs text-zinc-300 hover:bg-white/[0.08] disabled:opacity-50"
               >
-                <Paperclip className="h-4 w-4" />
+                Back
               </button>
-
-              {/* Right Send Button */}
               <button
                 type="button"
-                onClick={handleSendMessage}
-                className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm transition-colors hover:bg-blue-500"
-                aria-label="Send message"
+                onClick={handleCreate}
+                disabled={creating || draftHasErrors(errors)}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white shadow-sm hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                <SendHorizontal className="h-4 w-4" />
+                {creating ? 'Creating…' : 'Create Workflow'}
               </button>
             </div>
           </div>
-        </div>
-      </main>
+        )}
 
-      {/* Right Workflow Execution Panel (~320px) */}
-      <aside className="hidden w-[320px] shrink-0 flex-col justify-between space-y-6 border-l border-white/[0.08] bg-[#0B1120]/80 p-6 lg:flex">
-        <div className="space-y-4">
-          <h2 className="text-base font-semibold text-white">Workflow Execution</h2>
-
-          {/* Vertical Execution Pipeline */}
-          <div className="relative space-y-3">
-            {WORKFLOW_STAGES.map((stage, index) => (
-              <WorkflowStageCard
-                key={stage.name}
-                name={stage.name}
-                badge={stage.badge}
-                description={stage.description}
-                icon={stage.icon}
-                iconBg={stage.iconBg}
-                isLast={index === WORKFLOW_STAGES.length - 1}
+        {mode === 'created' && workflow && (
+          <div className="mt-8 max-w-2xl space-y-4">
+            {actionError && <InlineError message={actionError} />}
+            <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-5">
+              <ExecutionPanel
+                workflow={workflow}
+                onExecute={handleExecute}
+                onCompensate={handleCompensate}
+                executing={executing}
+                compensating={compensating}
               />
-            ))}
+            </div>
+            <button
+              type="button"
+              onClick={startOver}
+              className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-4 py-2 text-xs text-zinc-300 hover:bg-white/[0.08]"
+            >
+              Start another workflow
+            </button>
           </div>
-        </div>
-
-        {/* Recent Activity Section */}
-        <div className="space-y-3 border-t border-white/[0.08] pt-4">
-          <h3 className="text-xs font-semibold text-white">Recent Activity</h3>
-          <div className="flex flex-col items-center justify-center space-y-1.5 rounded-xl border border-white/[0.06] bg-white/[0.02] p-6 text-center">
-            <Clock className="h-4 w-4 text-zinc-500" />
-            <p className="text-xs font-medium text-zinc-400">No activity yet.</p>
-            <p className="text-[11px] text-zinc-500">Workflow events will appear here.</p>
-          </div>
-        </div>
-      </aside>
+        )}
+      </main>
     </AppLayout>
   );
 }

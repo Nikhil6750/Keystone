@@ -5,5 +5,5 @@ export * from './theme-toggle';
 export * from './user-menu';
 export * from './app-layout';
 export * from './prompt-card';
-export * from './workflow-stage-card';
 export * from './chat-composer';
+export * from './inline-error';

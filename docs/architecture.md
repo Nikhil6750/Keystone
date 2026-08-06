@@ -216,6 +216,51 @@ one at this layer. Provider-backed compensation handlers (calling a real externa
 system to undo a step) are out of scope for this prototype; only the demo handler and
 the test-only fakes exist today.
 
+### `engine/workflow/` — DAG graph and concurrent scheduler
+An additive, dependency-aware execution capability alongside the live sequential
+`WorkflowEngine` above — not a replacement for it. **Implementation status:
+implemented as a standalone, fully-tested capability; not yet wired into the live
+`/workflows` API or the persisted `Workflow`/`WorkflowStep` models** (that wiring
+needs a schema migration for step dependencies/new statuses and is a breaking change
+to `POST /workflows/{id}/execute`'s synchronous contract — both require explicit
+sign-off before proceeding, per the build plan's manual checkpoints).
+
+- `graph.py` — `WorkflowGraph.from_definition()` builds an adjacency view of a Stage 1
+  `WorkflowDefinition`/`WorkflowStepDefinition` graph, detects cycles (the one
+  structural check the contract layer doesn't already perform — duplicate keys,
+  unknown dependencies, and self-dependencies are rejected by the contract's own
+  validators), and provides deterministic `ready_steps()`, `transitive_dependents()`,
+  and `topological_order()` (ties broken by declaration order).
+- `scheduler.py` — `GraphScheduler.run()` executes one workflow's DAG to completion:
+  independent steps run concurrently under two configurable bounds
+  (`max_concurrent_steps_per_workflow`, and `max_concurrent_per_agent_type` shared
+  across every `run()` call on one scheduler instance); a failed step skips its
+  transitive dependents without aborting unrelated branches; cancellation
+  (`cancellation.py::CancellationToken`, one per run, never shared) stops scheduling
+  new work and cancels in-flight steps cooperatively rather than waiting for them to
+  finish naturally; each step has a timeout (`WorkflowStepDefinition.timeout_seconds`
+  or a scheduler-wide default) enforced independently of the runner. The core loop is
+  driven entirely by `asyncio.wait(..., return_when=FIRST_COMPLETED)` — no busy-wait,
+  no fixed-interval polling. State is local to each `run()` call, so two concurrent
+  workflows (even sharing one `GraphScheduler` instance) never observe or affect each
+  other's cancellation or failure.
+- `runner.py` — the `StepRunner` protocol the scheduler delegates actual step
+  execution to, independent of both the live `AgentExecutor` and the Stage 1
+  `AgentAdapter` contract so a later stage can bridge to either without scheduler
+  changes. Retries are explicitly out of scope here (Stage 3 adds retry as a
+  `StepRunner` decorator); each step runs at most once this stage.
+- `events.py` — the `StateSink` protocol the scheduler emits a `WorkflowExecutionEvent`
+  to for every transition — the "restart-safe persisted state preparation" seam. No
+  implementation here writes to a database; `tests/support/graph_fakes.py`'s
+  `RecordingStateSink` is the only implementation, used to assert event ordering.
+- `state_machine.py` — a validated transition table (`transition_graph_workflow`,
+  `transition_graph_step`) for the in-memory `GraphWorkflowStatus`/`GraphStepStatus`
+  enums (`status.py`), covering the fuller status vocabulary (`ready`, `cancelling`,
+  `planning`, ...) than the persisted `WorkflowStatus`/`StepStatus` enums, which are
+  unchanged. Mirrors `engine/state_machine.py`'s pattern but is independently testable
+  rather than wired into the scheduler's per-step bookkeeping, since the scheduler only
+  ever produces valid terminal outcomes by construction.
+
 ### `adapters/`
 Local CLI integration layers between the orchestration engine and individual coding
 agents. **Implementation status: implemented**, for local-CLI-based execution.

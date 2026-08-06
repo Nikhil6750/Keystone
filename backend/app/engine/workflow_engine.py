@@ -13,7 +13,11 @@ from app.audit.types import ActorType, AuditEventType
 from app.engine.compensation import CompensationService
 from app.engine.compensation_registry import CompensationRegistry
 from app.engine.context import ExecutionContext
-from app.engine.exceptions import InvalidWorkflowStateError, WorkflowNotFoundError
+from app.engine.exceptions import (
+    InvalidWorkflowStateError,
+    WorkflowNotFoundError,
+    WorkflowResumeConflictError,
+)
 from app.engine.executor import StepExecutionError, StepExecutionRequest
 from app.engine.registry import ExecutorNotRegisteredError, ExecutorRegistry
 from app.models.enums import AttemptStatus, StepStatus, WorkflowStatus
@@ -134,7 +138,111 @@ class WorkflowEngine:
         )
         steps = sorted(workflow.steps, key=lambda s: s.position)
 
-        for step in steps:
+        return self._run_to_completion(workflow, steps, steps, context)
+
+    def resume_workflow(self, workflow_id: str) -> Workflow:
+        """Resume a workflow left `RUNNING` by a process interruption.
+
+        Raises `WorkflowNotFoundError` if the workflow does not exist,
+        `InvalidWorkflowStateError` if it is not `RUNNING` (only a workflow a
+        prior `execute_workflow` call left mid-flight is resumable — a
+        `PENDING` workflow should use `execute_workflow` instead), and
+        `WorkflowResumeConflictError` if another resume is already in
+        progress for this workflow (detected via an atomic optimistic check
+        on `Workflow.version`, so two concurrent resumes can never both
+        proceed).
+
+        Already-`SUCCEEDED` steps are never re-run: their persisted output
+        seeds the execution context exactly as if they had just completed.
+        A step still `RUNNING` at resume time (the one in-flight when the
+        interruption happened) has its dangling attempt marked `FAILED` with
+        a clear `EXECUTION_INTERRUPTED` reason — it cannot be assumed to
+        have completed or to be safely retriable as-is — and is then
+        re-attempted from a fresh attempt, exactly like any other retry.
+        """
+        workflow = workflow_service.get_workflow(self._db, workflow_id)
+        if workflow is None:
+            raise WorkflowNotFoundError(workflow_id)
+        if WorkflowStatus(workflow.status) is not WorkflowStatus.RUNNING:
+            raise InvalidWorkflowStateError(workflow_id, WorkflowStatus(workflow.status))
+
+        claimed = workflow_service.claim_workflow_for_resume(
+            self._db, workflow_id, expected_version=workflow.version
+        )
+        if not claimed:
+            raise WorkflowResumeConflictError(workflow_id)
+        workflow = self._reload(workflow_id)
+
+        logger.info("workflow_resume_started workflow_id=%s", workflow_id)
+        context = ExecutionContext(
+            workflow_id=workflow.id, workflow_input=dict(workflow.input_payload)
+        )
+        all_steps = sorted(workflow.steps, key=lambda s: s.position)
+        pending_steps: list[WorkflowStep] = []
+        for step in all_steps:
+            if StepStatus(step.status) is StepStatus.SUCCEEDED:
+                context = context.with_step_output(step.id, step.output_payload or {})
+                continue
+            if StepStatus(step.status) is StepStatus.RUNNING:
+                self._mark_interrupted_attempt_failed(step)
+                workflow_service.transition_step(self._db, step.id, StepStatus.RETRYING)
+            pending_steps.append(step)
+
+        audit_service.append_event(
+            self._db,
+            workflow_id=workflow.id,
+            event_type=AuditEventType.WORKFLOW_RESUMED,
+            actor_type=ActorType.SYSTEM,
+            actor_id=_SYSTEM_ACTOR,
+            payload={
+                "resumed_step_count": len(pending_steps),
+                "already_succeeded_step_count": len(all_steps) - len(pending_steps),
+            },
+        )
+
+        return self._run_to_completion(workflow, all_steps, pending_steps, context)
+
+    def _mark_interrupted_attempt_failed(self, step: WorkflowStep) -> None:
+        """Mark a step's dangling `RUNNING` attempt `FAILED` before resume re-attempts it.
+
+        Never assumes the interrupted attempt actually failed on the
+        provider side — only that this process can no longer observe its
+        outcome, so it must not be trusted as a completed attempt.
+        """
+        if not step.attempts:
+            return
+        latest = max(step.attempts, key=lambda attempt: attempt.attempt_number)
+        if AttemptStatus(latest.status) is not AttemptStatus.RUNNING:
+            return
+        workflow_service.complete_step_attempt(
+            self._db,
+            latest.id,
+            status=AttemptStatus.FAILED,
+            error_type="EXECUTION_INTERRUPTED",
+            error_message="attempt was in-flight when the process was interrupted",
+        )
+        audit_service.append_event(
+            self._db,
+            workflow_id=step.workflow_id,
+            step_id=step.id,
+            execution_attempt_id=latest.id,
+            event_type=AuditEventType.EXECUTION_ATTEMPT_FAILED,
+            actor_type=ActorType.SYSTEM,
+            actor_id=_SYSTEM_ACTOR,
+            payload={"error_code": "EXECUTION_INTERRUPTED", "reason": "process_interrupted"},
+        )
+
+    def _run_to_completion(
+        self,
+        workflow: Workflow,
+        all_steps: list[WorkflowStep],
+        pending_steps: list[WorkflowStep],
+        context: ExecutionContext,
+    ) -> Workflow:
+        """Run `pending_steps` in order, then succeed the workflow using `all_steps`
+        for output aggregation (so a resumed run's final output includes
+        already-succeeded steps too, identical to an uninterrupted run)."""
+        for step in pending_steps:
             try:
                 context = self._execute_step(workflow, step, context)
             except ExecutorNotRegisteredError as exc:
@@ -167,7 +275,7 @@ class WorkflowEngine:
                 )
                 raise
 
-        return self._succeed_workflow(workflow, steps, context)
+        return self._succeed_workflow(workflow, all_steps, context)
 
     def _execute_step(
         self, workflow: Workflow, step: WorkflowStep, context: ExecutionContext

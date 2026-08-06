@@ -117,6 +117,50 @@ synchronously and sequentially in position order, given a database session and a
   actually wait), transitions back to `RUNNING`, and creates the next attempt. If the
   failure itself opens the circuit, no further retry is attempted for that step
   regardless of attempts remaining.
+
+`WorkflowEngine.resume_workflow(workflow_id)` (Stage 3) recovers a workflow left
+`RUNNING` by a process interruption — a pure extension of the class above, reusing
+`_execute_step` via a shared `_run_to_completion` helper (extracted from
+`execute_workflow`'s loop with no behavior change; the full existing test suite passed
+unchanged before and after the extraction) rather than a second execution path:
+
+- Requires `RUNNING` status; raises the existing `InvalidWorkflowStateError` otherwise
+  and `WorkflowNotFoundError` if the workflow doesn't exist — no new API-facing error
+  shapes.
+- Claims the workflow atomically via `workflow_service.claim_workflow_for_resume`, a
+  single conditional `UPDATE ... WHERE version = :expected_version` (using the
+  `Workflow.version` column that already existed for this purpose but wasn't yet used
+  as an optimistic-concurrency guard) — a second concurrent resume attempt loses the
+  race and gets `WorkflowResumeConflictError` rather than double-executing the workflow.
+- Already-`SUCCEEDED` steps are never re-run: their persisted `output_payload` seeds
+  the resumed `ExecutionContext` exactly as if they had just completed.
+- The one step still `RUNNING` at interruption time (if any) has its dangling
+  `StepAttempt` explicitly marked `FAILED` with `error_type="EXECUTION_INTERRUPTED"`
+  (never assumed to have silently succeeded), is transitioned `RUNNING → RETRYING`, and
+  is then re-attempted with a fresh `StepAttempt` — consuming one unit of its
+  `max_attempts` budget, same as any other retry.
+- Emits a new `AuditEventType.WORKFLOW_RESUMED` event (additive to the enum, no DB
+  migration — the column is un-constrained `VARCHAR`) before continuing; the resumed
+  run's events extend the same hash-linked chain, verified by
+  `tests/test_engine_resume.py::test_resume_preserves_audit_chain_integrity`.
+
+### `engine/workflow/` — Stage 3 additions (retry and idempotency for the graph scheduler)
+Per the Stage 2 scheduler's own docstring promise, Stage 3 adds retry/backoff/circuit-
+breaker behavior and duplicate-execution protection as decorators around the additive
+`GraphScheduler` from Stage 2, without changing the scheduler itself:
+
+- `retry_runner.py` — `RetryingStepRunner` wraps any `StepRunner`, reusing
+  `RetryPolicy.compute_delay()` (its math, not its blocking `time.sleep`-based
+  `Sleeper`, replaced here by `asyncio.sleep`) and the existing per-agent-type
+  `CircuitBreakerRegistry` — the same failure-classification shape as the live engine's
+  retry loop above, driven by the Stage 1 `FailureCategory` taxonomy via
+  `classify_legacy_error_type`.
+- `idempotency.py` — `IdempotentExecutionGuard[T]` ensures at most one execution runs
+  per idempotency key at a time; a duplicate call for an in-flight key awaits and
+  shares that call's result (success or failure) instead of starting a second
+  execution, and a duplicate call for an already-completed key returns the cached
+  result immediately. In-memory only, per-process — the same persistence-deferral
+  posture as the rest of this additive package.
 - On any other step failure — non-retryable, retries exhausted, or a missing executor
   (`ExecutorNotRegisteredError`) — persists the step/attempt/workflow as `FAILED` with a
   safe error message, and stops; later steps are left `PENDING`. A missing executor or

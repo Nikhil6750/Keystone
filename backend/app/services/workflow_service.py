@@ -1,9 +1,9 @@
 """Workflow persistence and state-transition operations."""
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import select
+from sqlalchemy import CursorResult, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
@@ -92,6 +92,33 @@ def transition_workflow(db: Session, workflow_id: str, target: WorkflowStatus) -
         db.rollback()
         raise
     return workflow
+
+
+def claim_workflow_for_resume(db: Session, workflow_id: str, *, expected_version: int) -> bool:
+    """Atomically bump `version` iff the workflow is still `RUNNING` at `expected_version`.
+
+    Returns `True` if this caller won the claim, `False` if another writer
+    (most importantly, a concurrent `resume_workflow` call) already changed
+    the row since the caller read `expected_version` — the caller must treat
+    `False` as "already being resumed/changed" and abort rather than
+    proceeding. Implemented as a single conditional `UPDATE` rather than
+    `SELECT` then `UPDATE`, so the check and the claim are one atomic
+    operation even across two separate database connections.
+    """
+    result = cast(
+        "CursorResult[Any]",
+        db.execute(
+            update(Workflow)
+            .where(
+                Workflow.id == workflow_id,
+                Workflow.version == expected_version,
+                Workflow.status == WorkflowStatus.RUNNING,
+            )
+            .values(version=expected_version + 1, updated_at=datetime.now(UTC))
+        ),
+    )
+    db.commit()
+    return bool(result.rowcount == 1)
 
 
 def transition_step(db: Session, step_id: str, target: StepStatus) -> WorkflowStep:

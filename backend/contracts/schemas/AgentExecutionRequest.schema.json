@@ -1,0 +1,136 @@
+{
+  "$defs": {
+    "RepositoryMetadata": {
+      "additionalProperties": false,
+      "description": "Non-sensitive repository context passed to an agent execution.\n\nNever carries an absolute filesystem path or credentials \u2014 only\nidentifying and descriptive metadata a routing/passport signal or a\nprovider prompt might use.",
+      "properties": {
+        "commit_sha": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Commit Sha"
+        },
+        "default_branch": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Default Branch"
+        },
+        "languages": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Languages",
+          "type": "array"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "repository_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Repository Id"
+        }
+      },
+      "title": "RepositoryMetadata",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Everything an `AgentAdapter.execute()` call needs, provider-agnostic.",
+  "properties": {
+    "agent_id": {
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "agent_type": {
+      "title": "Agent Type",
+      "type": "string"
+    },
+    "attempt_number": {
+      "default": 1,
+      "title": "Attempt Number",
+      "type": "integer"
+    },
+    "execution_id": {
+      "title": "Execution Id",
+      "type": "string"
+    },
+    "input_payload": {
+      "additionalProperties": true,
+      "title": "Input Payload",
+      "type": "object"
+    },
+    "metadata": {
+      "additionalProperties": true,
+      "title": "Metadata",
+      "type": "object"
+    },
+    "repository": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RepositoryMetadata"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "step_id": {
+      "title": "Step Id",
+      "type": "string"
+    },
+    "task_type": {
+      "title": "Task Type",
+      "type": "string"
+    },
+    "timeout_seconds": {
+      "title": "Timeout Seconds",
+      "type": "number"
+    },
+    "workflow_id": {
+      "title": "Workflow Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "agent_id",
+    "agent_type",
+    "execution_id",
+    "workflow_id",
+    "step_id",
+    "task_type",
+    "timeout_seconds"
+  ],
+  "title": "AgentExecutionRequest",
+  "type": "object"
+}

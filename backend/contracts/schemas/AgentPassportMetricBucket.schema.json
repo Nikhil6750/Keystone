@@ -1,0 +1,39 @@
+{
+  "description": "Execution counts and latency for one dimension (a task type, a repository, ...).",
+  "properties": {
+    "execution_count": {
+      "default": 0,
+      "title": "Execution Count",
+      "type": "integer"
+    },
+    "failure_count": {
+      "default": 0,
+      "title": "Failure Count",
+      "type": "integer"
+    },
+    "low_sample_size": {
+      "default": false,
+      "title": "Low Sample Size",
+      "type": "boolean"
+    },
+    "median_latency_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Median Latency Ms"
+    },
+    "success_count": {
+      "default": 0,
+      "title": "Success Count",
+      "type": "integer"
+    }
+  },
+  "title": "AgentPassportMetricBucket",
+  "type": "object"
+}

@@ -1,0 +1,148 @@
+{
+  "$defs": {
+    "AgentCapability": {
+      "description": "Capability tags an agent adapter can declare and a task can require.",
+      "enum": [
+        "code_generation",
+        "code_review",
+        "test_generation",
+        "test_execution",
+        "debugging",
+        "refactoring",
+        "documentation",
+        "planning",
+        "general_reasoning",
+        "file_editing",
+        "shell_execution"
+      ],
+      "title": "AgentCapability",
+      "type": "string"
+    },
+    "RepositoryMetadata": {
+      "additionalProperties": false,
+      "description": "Non-sensitive repository context passed to an agent execution.\n\nNever carries an absolute filesystem path or credentials \u2014 only\nidentifying and descriptive metadata a routing/passport signal or a\nprovider prompt might use.",
+      "properties": {
+        "commit_sha": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Commit Sha"
+        },
+        "default_branch": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Default Branch"
+        },
+        "languages": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Languages",
+          "type": "array"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "repository_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Repository Id"
+        }
+      },
+      "title": "RepositoryMetadata",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A request to select an agent for one task.",
+  "properties": {
+    "candidate_agent_types": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Candidate Agent Types"
+    },
+    "constraints": {
+      "additionalProperties": true,
+      "title": "Constraints",
+      "type": "object"
+    },
+    "manual_override_agent_type": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Manual Override Agent Type"
+    },
+    "repository": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RepositoryMetadata"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "required_capabilities": {
+      "items": {
+        "$ref": "#/$defs/AgentCapability"
+      },
+      "title": "Required Capabilities",
+      "type": "array"
+    },
+    "task_type": {
+      "title": "Task Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_type"
+  ],
+  "title": "RoutingRequest",
+  "type": "object"
+}

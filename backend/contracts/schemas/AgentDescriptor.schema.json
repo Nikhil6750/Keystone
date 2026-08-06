@@ -1,0 +1,51 @@
+{
+  "$defs": {
+    "AgentCapability": {
+      "description": "Capability tags an agent adapter can declare and a task can require.",
+      "enum": [
+        "code_generation",
+        "code_review",
+        "test_generation",
+        "test_execution",
+        "debugging",
+        "refactoring",
+        "documentation",
+        "planning",
+        "general_reasoning",
+        "file_editing",
+        "shell_execution"
+      ],
+      "title": "AgentCapability",
+      "type": "string"
+    }
+  },
+  "description": "Static identity and capability declaration for one registered agent.",
+  "properties": {
+    "agent_type": {
+      "title": "Agent Type",
+      "type": "string"
+    },
+    "capabilities": {
+      "items": {
+        "$ref": "#/$defs/AgentCapability"
+      },
+      "title": "Capabilities",
+      "type": "array"
+    },
+    "display_name": {
+      "title": "Display Name",
+      "type": "string"
+    },
+    "metadata": {
+      "additionalProperties": true,
+      "title": "Metadata",
+      "type": "object"
+    }
+  },
+  "required": [
+    "agent_type",
+    "display_name"
+  ],
+  "title": "AgentDescriptor",
+  "type": "object"
+}

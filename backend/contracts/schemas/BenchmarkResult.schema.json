@@ -1,0 +1,171 @@
+{
+  "$defs": {
+    "AgentUsage": {
+      "additionalProperties": false,
+      "description": "Optional token/cost usage, populated only when a provider reports it.",
+      "properties": {
+        "cost_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cost Usd"
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Tokens"
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Tokens"
+        },
+        "total_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Tokens"
+        }
+      },
+      "title": "AgentUsage",
+      "type": "object"
+    },
+    "FailureCategory": {
+      "description": "A coarse, stable classification of why an agent execution failed.",
+      "enum": [
+        "timeout",
+        "cancelled",
+        "authentication_failure",
+        "validation_failure",
+        "rate_limited",
+        "circuit_open",
+        "provider_error",
+        "network_error",
+        "resource_exhausted",
+        "internal_error",
+        "unknown"
+      ],
+      "title": "FailureCategory",
+      "type": "string"
+    }
+  },
+  "description": "One agent's outcome on one task, for one run attempt.",
+  "properties": {
+    "agent_type": {
+      "title": "Agent Type",
+      "type": "string"
+    },
+    "attempt_number": {
+      "default": 1,
+      "title": "Attempt Number",
+      "type": "integer"
+    },
+    "benchmark_id": {
+      "title": "Benchmark Id",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "duration_ms": {
+      "title": "Duration Ms",
+      "type": "number"
+    },
+    "environment": {
+      "additionalProperties": true,
+      "title": "Environment",
+      "type": "object"
+    },
+    "failure_category": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FailureCategory"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "is_warm_up": {
+      "default": false,
+      "title": "Is Warm Up",
+      "type": "boolean"
+    },
+    "output_payload": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Output Payload"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "success": {
+      "title": "Success",
+      "type": "boolean"
+    },
+    "task_id": {
+      "title": "Task Id",
+      "type": "string"
+    },
+    "usage": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AgentUsage"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "benchmark_id",
+    "run_id",
+    "agent_type",
+    "task_id",
+    "success",
+    "duration_ms",
+    "created_at"
+  ],
+  "title": "BenchmarkResult",
+  "type": "object"
+}

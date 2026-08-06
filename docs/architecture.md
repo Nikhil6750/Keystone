@@ -405,6 +405,27 @@ commits — never before, and never for a transition that didn't actually commit
 this is **best-effort sequential coupling, not single-transaction atomicity**: the state
 transition and its audit event are two separate commits.
 
+### `contracts/`
+Canonical, provider-neutral Pydantic v2 domain contracts shared across the engine, API,
+CLI and extension clients — the stable vNext shapes for workflow graphs, agent adapters,
+routing, agent passports, knowledge and benchmarking.
+**Implementation status: contracts defined (this stage); consuming subsystems land in
+later stages.** `contracts/adapter.py` (`AgentAdapter` protocol, `AgentDescriptor`,
+`AgentExecutionRequest`/`AgentExecutionResult`, `AgentUsage`, `RepositoryMetadata`),
+`contracts/workflow.py` (`WorkflowDefinition`/`WorkflowStepDefinition` — DAG-aware,
+additive to the live position-ordered `WorkflowCreate`/`WorkflowStepCreate` — and
+`WorkflowExecutionEvent`), `contracts/routing.py` (`RoutingRequest`/
+`RoutingCandidateScore`/`RoutingDecision`), `contracts/passports.py` (`AgentPassport`),
+`contracts/knowledge.py` (`KnowledgeDocument`/`KnowledgeSearchResult`),
+`contracts/benchmark.py` (`BenchmarkDefinition`/`BenchmarkTask`/`BenchmarkResult`),
+`contracts/errors.py` (the `FailureCategory` taxonomy and `classify_legacy_error_type`
+bridge from existing `StepExecutionError.error_type` strings), and
+`contracts/schema_export.py` (the `CONTRACT_MODELS` registry and JSON Schema generator
+behind `scripts/export_contracts.py`, whose output is committed under
+`backend/contracts/schemas/`). See [`contracts.md`](./contracts.md) for the ownership
+and dependency-direction model. This package is purely additive: `schemas/`,
+`models/enums.py`, and the live engine/API behavior described above are unchanged.
+
 ### Known limitations (by design, for this prototype)
 
 - No digital signature, external notarization, or write-once storage backs the chain —

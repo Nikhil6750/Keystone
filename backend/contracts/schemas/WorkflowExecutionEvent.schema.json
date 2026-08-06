@@ -1,0 +1,52 @@
+{
+  "description": "One event in a workflow's execution timeline, for audit replay and SSE delivery.",
+  "properties": {
+    "event_id": {
+      "title": "Event Id",
+      "type": "string"
+    },
+    "event_type": {
+      "title": "Event Type",
+      "type": "string"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "title": "Payload",
+      "type": "object"
+    },
+    "sequence_number": {
+      "title": "Sequence Number",
+      "type": "integer"
+    },
+    "step_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Step Id"
+    },
+    "timestamp": {
+      "format": "date-time",
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "workflow_id": {
+      "title": "Workflow Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "event_id",
+    "workflow_id",
+    "event_type",
+    "sequence_number",
+    "timestamp"
+  ],
+  "title": "WorkflowExecutionEvent",
+  "type": "object"
+}

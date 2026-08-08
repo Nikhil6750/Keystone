@@ -33,22 +33,47 @@ from app.engine.verification.evaluators import ObservedOutcome
 MAX_BENCHMARK_REPEAT_COUNT = 20
 _ABSOLUTE_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
-_UNSAFE_INPUT_KEY_PATTERNS = frozenset(
+_RESERVED_CREDENTIAL_KEYS: frozenset[str] = frozenset(
     {
-        "chain_of_thought",
-        "hidden_reasoning",
-        "raw_prompt",
-        "thought_process",
-        "reasoning_trace",
         "password",
         "credential",
+        "credentials",
         "secret",
         "api_key",
         "apikey",
         "access_token",
+        "access_key",
         "session_token",
     }
 )
+
+
+def _normalize_key(key: Any) -> str:
+    return str(key).strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _walk_credentials(node: Any) -> None:
+    if isinstance(node, dict):
+        for key, nested in node.items():
+            normalized = _normalize_key(key)
+            if normalized in _RESERVED_CREDENTIAL_KEYS:
+                raise ValueError(
+                    f"dict key '{key}' is prohibited (credential-shaped)"
+                )
+            _walk_credentials(nested)
+    elif isinstance(node, list | tuple):
+        for item in node:
+            _walk_credentials(item)
+
+
+def reject_credential_shaped_keys(value: Any) -> Any:
+    """Recursively reject exact normalized credential-shaped dict keys in `value`.
+
+    Walks dicts and lists/tuples at any depth. Matches exact normalized key name --
+    never arbitrary substrings inside values or benign keys.
+    """
+    _walk_credentials(value)
+    return value
 
 
 def _looks_like_unsafe_repository_id(value: str) -> bool:
@@ -60,22 +85,6 @@ def _looks_like_unsafe_repository_id(value: str) -> bool:
         return True
     segments = re.split(r"[\\/]", value)
     return ".." in segments
-
-
-def _reject_unsafe_benchmark_input_keys(val: Any, path: str = "$") -> None:
-    """Recursively reject dictionary keys that are reasoning-shaped or credential-shaped."""
-    if isinstance(val, dict):
-        for k, v in val.items():
-            k_lower = str(k).lower()
-            if any(pattern in k_lower for pattern in _UNSAFE_INPUT_KEY_PATTERNS):
-                raise MalformedBenchmarkCaseError(
-                    f"benchmark input/metadata key '{k}' at {path} is prohibited "
-                    "(reasoning-shaped or credential-shaped)"
-                )
-            _reject_unsafe_benchmark_input_keys(v, f"{path}.{k}")
-    elif isinstance(val, list):
-        for idx, item in enumerate(val):
-            _reject_unsafe_benchmark_input_keys(item, f"{path}[{idx}]")
 
 
 @dataclass(frozen=True)
@@ -112,8 +121,21 @@ class BenchmarkCase:
                     f"{self.repository_id!r}"
                 )
 
-        _reject_unsafe_benchmark_input_keys(self.input_payload, "input_payload")
-        _reject_unsafe_benchmark_input_keys(self.metadata, "metadata")
+        try:
+            reject_reasoning_shaped_keys(self.input_payload)
+            reject_credential_shaped_keys(self.input_payload)
+        except ValueError as exc:
+            raise MalformedBenchmarkCaseError(
+                f"input_payload contains prohibited key: {exc}"
+            ) from exc
+
+        try:
+            reject_reasoning_shaped_keys(self.metadata)
+            reject_credential_shaped_keys(self.metadata)
+        except ValueError as exc:
+            raise MalformedBenchmarkCaseError(
+                f"metadata contains prohibited key: {exc}"
+            ) from exc
 
 
 @dataclass(frozen=True)
@@ -153,8 +175,11 @@ class BenchmarkSuite:
 
         try:
             reject_reasoning_shaped_keys(self.metadata)
+            reject_credential_shaped_keys(self.metadata)
         except ValueError as exc:
-            raise MalformedBenchmarkSuiteError(str(exc)) from exc
+            raise MalformedBenchmarkSuiteError(
+                f"suite metadata contains prohibited key: {exc}"
+            ) from exc
 
 
 @dataclass(frozen=True)
@@ -208,7 +233,8 @@ class BenchmarkExecutionResult:
     one repetition, verified via Stage 4E.
 
     `created_at` is excluded from dataclass comparison (`compare=False`) so operational
-    timestamps do not affect semantic result equality.
+    timestamps do not affect top-level result comparison. Embedded Stage 4E `VerificationResult`
+    carries its own operational timestamp.
     """
 
     suite_id: str
@@ -232,4 +258,5 @@ __all__ = [
     "BenchmarkExecutionObservation",
     "BenchmarkExecutionResult",
     "BenchmarkSuite",
+    "reject_credential_shaped_keys",
 ]

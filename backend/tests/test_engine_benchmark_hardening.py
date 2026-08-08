@@ -262,32 +262,156 @@ def test_timestamp_semantic_equality() -> None:
     assert met1 == met2
 
 
-def test_nested_credential_shaped_input_keys_rejected() -> None:
+def test_reasoning_shaped_keys_rejection() -> None:
     expected = ExpectedOutcome(
         evaluator_type=BenchmarkEvaluatorType.EXACT_MATCH,
         criteria={"expected": "x"},
     )
+    prohibited_reasoning_keys = [
+        "chain_of_thought",
+        "chain-of-thought",
+        "Chain Of Thought",
+        "hidden_reasoning",
+        "internal_reasoning",
+        "private_reasoning",
+        "internal_thought",
+        "hidden_prompt",
+        "raw_prompt",
+        "scratchpad",
+    ]
+    for key in prohibited_reasoning_keys:
+        with pytest.raises(MalformedBenchmarkCaseError, match="prohibited"):
+            BenchmarkCase(
+                case_id="c1",
+                task_type="t1",
+                expected_outcome=expected,
+                input_payload={key: "value"},
+            )
 
-    with pytest.raises(MalformedBenchmarkCaseError, match="password"):
+
+def test_credential_shaped_keys_rejection() -> None:
+    expected = ExpectedOutcome(
+        evaluator_type=BenchmarkEvaluatorType.EXACT_MATCH,
+        criteria={"expected": "x"},
+    )
+    prohibited_credential_keys = [
+        "api_key",
+        "api-key",
+        "API Key",
+        "apikey",
+        "password",
+        "credential",
+        "credentials",
+        "secret",
+        "access_token",
+        "access-token",
+        "session_token",
+    ]
+    for key in prohibited_credential_keys:
+        with pytest.raises(MalformedBenchmarkCaseError, match="prohibited"):
+            BenchmarkCase(
+                case_id="c1",
+                task_type="t1",
+                expected_outcome=expected,
+                input_payload={key: "secret-value"},
+            )
+
+
+def test_nested_unsafe_keys_rejected_3_levels_deep() -> None:
+    expected = ExpectedOutcome(
+        evaluator_type=BenchmarkEvaluatorType.EXACT_MATCH,
+        criteria={"expected": "x"},
+    )
+    # 3+ levels deep: dict -> list -> dict -> key
+    nested_payload = {
+        "level1": {
+            "level2_list": [
+                {"normal_key": 123},
+                {"level3_dict": {"API-Key": "secret"}},
+            ]
+        }
+    }
+    with pytest.raises(MalformedBenchmarkCaseError, match="prohibited"):
         BenchmarkCase(
             case_id="c1",
             task_type="t1",
             expected_outcome=expected,
-            input_payload={"auth": {"db_password": "123"}},
+            input_payload=nested_payload,
         )
 
-    with pytest.raises(MalformedBenchmarkCaseError, match="api_key"):
-        BenchmarkCase(
-            case_id="c1",
-            task_type="t1",
-            expected_outcome=expected,
-            input_payload={"config": {"nested": [{"api_key": "sk-123"}]}},
+
+def test_benign_exact_keys_accepted() -> None:
+    expected = ExpectedOutcome(
+        evaluator_type=BenchmarkEvaluatorType.EXACT_MATCH,
+        criteria={"expected": "x"},
+    )
+    benign_keys = [
+        "secretary_task",
+        "password_field_label",
+        "credentials_form_schema",
+        "api_key_documentation_example",
+        "password_reset_ui_label",
+    ]
+    payload = {k: "acceptable value" for k in benign_keys}
+    case = BenchmarkCase(
+        case_id="c1",
+        task_type="t1",
+        expected_outcome=expected,
+        input_payload=payload,
+    )
+    assert case.input_payload["secretary_task"] == "acceptable value"
+
+
+def test_benchmark_suite_metadata_validation() -> None:
+    expected = ExpectedOutcome(
+        evaluator_type=BenchmarkEvaluatorType.EXACT_MATCH,
+        criteria={"expected": "x"},
+    )
+    case = BenchmarkCase(case_id="c1", task_type="t1", expected_outcome=expected)
+
+    # Suite metadata with reasoning key rejected
+    with pytest.raises(MalformedBenchmarkSuiteError, match="prohibited"):
+        BenchmarkSuite(
+            suite_id="s1",
+            name="S1",
+            cases=(case,),
+            metadata={"Chain-Of-Thought": "reasoning"},
         )
 
-    with pytest.raises(MalformedBenchmarkCaseError, match="credential"):
-        BenchmarkCase(
-            case_id="c1",
-            task_type="t1",
-            expected_outcome=expected,
-            metadata={"user_credentials": {"token": "xyz"}},
+    # Suite metadata with credential key rejected
+    with pytest.raises(MalformedBenchmarkSuiteError, match="prohibited"):
+        BenchmarkSuite(
+            suite_id="s1",
+            name="S1",
+            cases=(case,),
+            metadata={"API Key": "key"},
         )
+
+    # Suite metadata with benign keys accepted
+    suite = BenchmarkSuite(
+        suite_id="s1",
+        name="S1",
+        cases=(case,),
+        metadata={"credentials_form_schema": "v1"},
+    )
+    assert suite.metadata["credentials_form_schema"] == "v1"
+
+
+def test_legitimate_content_in_string_values_accepted() -> None:
+    expected = ExpectedOutcome(
+        evaluator_type=BenchmarkEvaluatorType.EXACT_MATCH,
+        criteria={"expected": "x"},
+    )
+    # Unsafe words in string values or label values MUST be accepted
+    case = BenchmarkCase(
+        case_id="c1",
+        task_type="t1",
+        expected_outcome=expected,
+        input_payload={
+            "task_description": "Implement a password reset screen",
+            "ui_element": {"label": "API Key"},
+            "code_example": "function get_secret() { return 42; }",
+        },
+    )
+    assert case.input_payload["task_description"] == "Implement a password reset screen"
+    assert case.input_payload["ui_element"]["label"] == "API Key"

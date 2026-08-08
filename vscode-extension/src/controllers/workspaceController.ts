@@ -54,7 +54,7 @@ export class WorkspaceController {
     });
 
     panel.webview.onDidReceiveMessage((msg) => {
-      MessageBridge.handleWebviewMessage(msg);
+      MessageBridge.handleWebviewMessage(msg, panel.webview);
     });
 
     // Send init message to webview after short delay for listener setup

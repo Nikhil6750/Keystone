@@ -1,4 +1,5 @@
 import { MockProvider } from './MockProvider';
+import { RequestManager } from '../core/RequestManager';
 
 export interface ApiResponse<T> {
   data: T;
@@ -8,11 +9,14 @@ export interface ApiResponse<T> {
 
 /**
  * ApiClient handles request dispatching.
- * Communicates ONLY with MockProvider for local execution.
+ * Routes all requests through RequestManager.
  */
 export class ApiClient {
   public static async get<T>(endpoint: string): Promise<ApiResponse<T>> {
-    const data = await this.routeMockRequest<T>('GET', endpoint);
+    const data = await RequestManager.execute<T>(
+      { endpoint, method: 'GET' },
+      () => this.routeMockRequest<T>('GET', endpoint)
+    );
     return {
       data,
       status: 200,
@@ -21,7 +25,10 @@ export class ApiClient {
   }
 
   public static async post<T>(endpoint: string, payload?: unknown): Promise<ApiResponse<T>> {
-    const data = await this.routeMockRequest<T>('POST', endpoint, payload);
+    const data = await RequestManager.execute<T>(
+      { endpoint, method: 'POST', payload },
+      () => this.routeMockRequest<T>('POST', endpoint, payload)
+    );
     return {
       data,
       status: 200,

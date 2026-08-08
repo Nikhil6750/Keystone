@@ -225,6 +225,57 @@ def test_routing_request_constraints_default_to_a_typed_empty_model() -> None:
     assert request.constraints.excluded_agent_types == []
 
 
+def test_selected_agent_types_defaults_to_empty_list() -> None:
+    decision = RoutingDecision.model_validate(
+        {
+            "task_type": "code_generation",
+            "selected_agent_type": "claude_code",
+            "explanation": "only eligible candidate",
+            "decided_at": datetime.now(UTC),
+        }
+    )
+    assert decision.selected_agent_types == []
+
+
+def test_selected_agent_types_may_carry_a_multi_select_set() -> None:
+    decision = RoutingDecision.model_validate(
+        {
+            "task_type": "code_generation",
+            "selected_agent_type": "claude_code",
+            "selected_agent_types": ["claude_code", "codex"],
+            "explanation": "consensus selection",
+            "decided_at": datetime.now(UTC),
+        }
+    )
+    assert decision.selected_agent_types == ["claude_code", "codex"]
+
+
+def test_selected_agent_types_must_include_the_primary() -> None:
+    with pytest.raises(ValidationError):
+        RoutingDecision.model_validate(
+            {
+                "task_type": "code_generation",
+                "selected_agent_type": "claude_code",
+                "selected_agent_types": ["codex", "gemini"],
+                "explanation": "consensus selection",
+                "decided_at": datetime.now(UTC),
+            }
+        )
+
+
+def test_selected_agent_types_must_be_empty_when_no_primary_is_selected() -> None:
+    with pytest.raises(ValidationError):
+        RoutingDecision.model_validate(
+            {
+                "task_type": "code_generation",
+                "selected_agent_type": None,
+                "selected_agent_types": ["claude_code"],
+                "explanation": "no eligible candidates",
+                "decided_at": datetime.now(UTC),
+            }
+        )
+
+
 def test_routing_request_accepts_nested_constraints_dict() -> None:
     request = RoutingRequest.model_validate(
         {

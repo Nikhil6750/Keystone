@@ -147,12 +147,23 @@ class RoutingCandidateScore(BaseModel):
 
 
 class RoutingDecision(BaseModel):
-    """The outcome of one routing evaluation, always explainable."""
+    """The outcome of one routing evaluation, always explainable.
+
+    `selected_agent_types` is an additive field (Stage 4B) alongside the
+    original `selected_agent_type`, kept for backward compatibility: it
+    carries the full ordered selected set for parallel/consensus routing
+    (`RoutingConstraints.allow_parallel`), while `selected_agent_type`
+    remains the single deterministic primary — the first entry of
+    `selected_agent_types` whenever both are populated. Single-selection
+    decisions populate both with one matching entry; a decision with no
+    selection (no eligible candidates) leaves both empty/`None`.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
     task_type: str
     selected_agent_type: str | None
+    selected_agent_types: list[str] = Field(default_factory=list)
     candidates: list[RoutingCandidateScore] = Field(default_factory=list)
     fallback_order: list[str] = Field(default_factory=list)
     manual_override: bool = False
@@ -175,6 +186,22 @@ class RoutingDecision(BaseModel):
             self.selected_agent_type and self.selected_agent_type.strip()
         ):
             raise ValueError("selected_agent_type is required when manual_override is True")
+        return self
+
+    @model_validator(mode="after")
+    def _selected_agent_types_consistency(self) -> "RoutingDecision":
+        """`selected_agent_types` must never contradict `selected_agent_type`
+        — never silently reconciled, only rejected."""
+        if self.selected_agent_type is None and self.selected_agent_types:
+            raise ValueError("selected_agent_types must be empty when selected_agent_type is None")
+        if (
+            self.selected_agent_type is not None
+            and self.selected_agent_types
+            and self.selected_agent_type not in self.selected_agent_types
+        ):
+            raise ValueError(
+                "selected_agent_type must be included in selected_agent_types when both are set"
+            )
         return self
 
 

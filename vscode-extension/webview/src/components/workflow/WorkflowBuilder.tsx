@@ -3,8 +3,10 @@ import { PromptInput } from './PromptInput';
 import { SuggestionGrid } from './SuggestionGrid';
 import { WorkflowPreview } from './WorkflowPreview';
 import { ExecuteButton } from './ExecuteButton';
+import { ExecutionConsole } from '../execution/ExecutionConsole';
 import { useWorkflowBuilder } from '../../hooks/useWorkflowBuilder';
-import { AlertCircle, X } from 'lucide-react';
+import { useWorkflowExecution } from '../../hooks/useWorkflowExecution';
+import type { Suggestion } from '../../hooks/useWorkflowBuilder';
 
 export const WorkflowBuilder: React.FC = () => {
   const {
@@ -12,31 +14,32 @@ export const WorkflowBuilder: React.FC = () => {
     setPrompt,
     selectedTemplate,
     selectSuggestion,
-    handleExecute,
-    toastMessage,
-    dismissToast,
   } = useWorkflowBuilder();
+
+  const {
+    executionStarted,
+    executionCompleted,
+    stageStatuses,
+    logs,
+    progressPercentage,
+    startExecution,
+    resetExecution,
+  } = useWorkflowExecution();
+
+  const handlePromptChange = (value: string) => {
+    if (executionStarted) resetExecution();
+    setPrompt(value);
+  };
+
+  const handleSelectSuggestion = (suggestion: Suggestion) => {
+    if (executionStarted) resetExecution();
+    selectSuggestion(suggestion);
+  };
+
+  const isExecuting = executionStarted && !executionCompleted;
 
   return (
     <div className="workflow-builder-container">
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="toast-notification" role="alert">
-          <div className="toast-content">
-            <AlertCircle size={16} className="toast-icon" />
-            <span>{toastMessage}</span>
-          </div>
-          <button
-            type="button"
-            className="toast-close"
-            onClick={dismissToast}
-            aria-label="Dismiss toast"
-          >
-            <X size={14} />
-          </button>
-        </div>
-      )}
-
       {/* Header */}
       <header className="builder-header">
         <h1 className="builder-title">Workflow Builder</h1>
@@ -47,16 +50,25 @@ export const WorkflowBuilder: React.FC = () => {
 
       {/* Main Content */}
       <div className="builder-body">
-        <PromptInput value={prompt} onChange={setPrompt} />
+        <PromptInput value={prompt} onChange={handlePromptChange} />
 
         <SuggestionGrid
           selectedTemplate={selectedTemplate}
-          onSelectSuggestion={selectSuggestion}
+          onSelectSuggestion={handleSelectSuggestion}
         />
 
         <WorkflowPreview />
 
-        <ExecuteButton onExecute={handleExecute} />
+        <ExecuteButton onExecute={startExecution} disabled={isExecuting} />
+
+        {/* Execution Console */}
+        <ExecutionConsole
+          executionStarted={executionStarted}
+          executionCompleted={executionCompleted}
+          stageStatuses={stageStatuses}
+          logs={logs}
+          progressPercentage={progressPercentage}
+        />
       </div>
     </div>
   );

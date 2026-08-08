@@ -104,6 +104,50 @@ implementations into `GraphScheduler`, or retiring `AgentExecutor` are all
 future work requiring their own explicit sign-off — none of that happens as
 part of this contract-invariant fix pass.
 
+## Intelligence layer architecture (Stage 4A)
+
+Four separable components, each a thin layer communicating only through
+typed contracts. **Contracts only in this stage — none of the logic below is
+implemented yet**; this section documents the target shape so later slices
+build against an agreed design rather than improvising one per component.
+
+```
+Planner:          goal + context           -> TaskSpec[] (WorkflowPlan)
+Router:            TaskSpec + runtime evidence -> RoutingDecision   (existing, Stage 1)
+Compiler (thin):   TaskSpec + RoutingDecision  -> WorkflowStepDefinition (existing, Stage 1)
+Workflow Engine:    WorkflowDefinition         -> StepOutcome / WorkflowRunResult (existing, Stage 2)
+Verifier:           execution result           -> VerificationResult
+Explainability:      existing decisions/evidence -> DecisionTrace
+Learning Engine:     historical outcomes         -> evidence for Planner/Router (Stage 5, AgentPassport)
+```
+
+The Planner never selects a runtime — `TaskSpec` (`app/contracts/planning.py`)
+has no `agent_type` field, deliberately: `required_capabilities` and
+`task_type` are as far as planning goes. The Router (existing `RoutingRequest`/
+`RoutingDecision`, unchanged by this stage) resolves those into a concrete
+`agent_type`; a future "compiler" combines `TaskSpec` + `RoutingDecision` into
+the `WorkflowStepDefinition` the existing Stage 2 scheduler executes
+unmodified. Verification and Explainability read results/decisions after the
+fact — neither is in the execution path.
+
+### Universal runtime handling
+
+Agent-CLI runtimes (Claude Code, Codex, OpenCode, Hermes-style, Gemini CLI)
+and model-API runtimes (Nemotron, GPT/Claude/Gemini APIs, local Ollama, vLLM,
+NVIDIA NIM, OpenAI-compatible endpoints) use **the same `AgentAdapter`
+contract** — there is no separate "model orchestration" system.
+`AgentDescriptor.runtime_kind` (`RuntimeKind`: `AGENT_CLI`, `MODEL_API`,
+`LOCAL_MODEL`, `HYBRID`; defaults to `AGENT_CLI`, matching every
+currently-implemented connector) is purely classificatory, letting the
+Router reason about the qualitative difference between an autonomous
+multi-turn CLI agent and a single-shot completion endpoint. It never
+branches `AgentAdapter.execute()`'s contract itself — that stays one uniform
+verb regardless of what's on the other end. `AgentCapability` gained three
+additive interaction-mode tags (`RAW_COMPLETION`, `STRUCTURED_OUTPUT`,
+`TOOL_CALLING`) alongside its existing task-domain tags, in the same flat
+enum rather than a forked `RuntimeCapability` — a task's
+`required_capabilities` can freely mix both kinds.
+
 ## Allowed metadata and provenance content
 
 `AgentDescriptor.metadata`, `AgentExecutionRequest.metadata`,
@@ -160,6 +204,22 @@ guard, so treat this list as the contract for what may go inside them.
 | `BenchmarkTask` | `app/contracts/benchmark.py` | One task within a benchmark |
 | `BenchmarkResult` | `app/contracts/benchmark.py` | One agent/task/attempt outcome |
 | `FailureCategory` | `app/contracts/errors.py` | Standardized failure taxonomy |
+| `RuntimeKind` | `app/contracts/enums.py` | Agent-CLI vs. model-API vs. local vs. hybrid runtime classification |
+| `ExpectedOutcome` | `app/contracts/planning.py` | What "done" means for one task |
+| `TaskSpec` | `app/contracts/planning.py` | One Planner-produced task node (no `agent_type`) |
+| `WorkflowPlan` | `app/contracts/planning.py` | A Planner's full task graph for one goal |
+| `PlanningRequest` | `app/contracts/planning.py` | A request for the Planner to decompose a goal |
+| `VerificationStatus` | `app/contracts/verification.py` | Passed / failed / inconclusive / requires human review |
+| `VerificationEvidence` | `app/contracts/verification.py` | One observable piece of verification evidence |
+| `VerificationResult` | `app/contracts/verification.py` | The outcome of verifying one execution result |
+| `DecisionType` | `app/contracts/explainability.py` | What kind of decision a `DecisionTrace` explains |
+| `EvidenceItem` | `app/contracts/explainability.py` | One piece of evidence behind a decision |
+| `ScoreContribution` | `app/contracts/explainability.py` | One scoring factor's contribution to a composite score |
+| `ExclusionReason` | `app/contracts/explainability.py` | Why one candidate was excluded |
+| `Confidence` | `app/contracts/explainability.py` | How confident Keystone is in a decision, and why |
+| `CounterfactualCondition` | `app/contracts/explainability.py` | What would have changed the outcome |
+| `DecisionTrace` | `app/contracts/explainability.py` | A structured explanation of one decision |
+| `RoutingExplanation` | `app/contracts/explainability.py` | A `DecisionTrace` wrapping a `RoutingDecision`, with score breakdown |
 | `ErrorResponse` | `app.schemas.errors.APIErrorEnvelope` (reused, not redefined) | API error envelope |
 
 ## Explainability and evidence rules encoded in the contracts
@@ -197,6 +257,29 @@ guard, so treat this list as the contract for what may go inside them.
 - None of the validators above ever rewrite an inconsistent input to make it
   valid — an inconsistent combination is always a rejected `ValidationError`,
   never a silent correction.
+- `TaskSpec` structurally cannot carry an `agent_type` (`extra="forbid"`
+  rejects one if supplied) — the Planner decides *what* work exists, never
+  *who* performs it. `WorkflowPlan` rejects duplicate task keys, unknown
+  dependencies, self-dependencies, duplicate `depends_on` entries, and
+  cycles (a small, self-contained cycle-detection helper — deliberately not
+  shared with `app.engine.workflow.graph.WorkflowGraph`'s algorithm, since
+  contracts must never import from the engine layer; the two are
+  structurally similar by design, independently defined).
+- `VerificationResult.status`/`.failure_reason` follow the same
+  never-silently-coerced pattern as `AgentExecutionResult`: `PASSED` forbids
+  a `failure_reason`; `FAILED` requires a non-blank one. `confidence`, where
+  present, is bounded to `[0, 1]`, on both `VerificationResult` and
+  `Confidence`.
+- **Explainability contracts (`EvidenceItem`, `VerificationEvidence`) may
+  describe only Keystone's own observable decision evidence** — execution
+  counts, success rates, circuit-breaker state, timing, configured
+  constraints. Never a model's hidden chain-of-thought, its internal
+  reasoning trace, a provider's private reasoning, credentials, prompts
+  containing private data, or full private file contents. Enforced
+  defensively where a dict-shaped `value` is the most likely leak vector
+  (rejecting keys like `reasoning`, `chain_of_thought`, `scratchpad`), but
+  this is ultimately a field-design discipline, not something a validator
+  can fully guarantee on its own.
 
 ## Generated JSON Schema
 

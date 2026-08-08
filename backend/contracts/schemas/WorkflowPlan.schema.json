@@ -21,6 +21,54 @@
       "title": "AgentCapability",
       "type": "string"
     },
+    "BenchmarkEvaluatorType": {
+      "description": "Objective evaluators a benchmark task may use. No subjective rankings.",
+      "enum": [
+        "exact_match",
+        "json_schema",
+        "regex",
+        "exit_code",
+        "unit_test",
+        "build",
+        "lint",
+        "type_check",
+        "file_diff",
+        "human_reviewed"
+      ],
+      "title": "BenchmarkEvaluatorType",
+      "type": "string"
+    },
+    "ExpectedOutcome": {
+      "additionalProperties": false,
+      "description": "What \"done\" means for one task, for the future Verifier to check\nagainst the executed step's actual result.",
+      "properties": {
+        "criteria": {
+          "additionalProperties": true,
+          "title": "Criteria",
+          "type": "object"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "evaluator_type": {
+          "$ref": "#/$defs/BenchmarkEvaluatorType"
+        }
+      },
+      "required": [
+        "evaluator_type"
+      ],
+      "title": "ExpectedOutcome",
+      "type": "object"
+    },
     "RepositoryMetadata": {
       "additionalProperties": false,
       "description": "Non-sensitive repository context passed to an agent execution.\n\nNever carries an absolute filesystem path or credentials \u2014 only\nidentifying and descriptive metadata a routing/passport signal or a\nprovider prompt might use.",
@@ -84,121 +132,82 @@
       "title": "RepositoryMetadata",
       "type": "object"
     },
-    "RoutingConstraints": {
+    "TaskSpec": {
       "additionalProperties": false,
-      "description": "Structured, explainable routing constraints.\n\nReplaces an earlier schema-less `dict[str, Any]`: every recognized\nconstraint now has a typed, validated, documented shape instead of an\nundocumented key vocabulary a caller had to guess at. Contains no\nprovider-specific settings \u2014 provider detail belongs in\n`AgentExecutionRequest.metadata`, never here.",
+      "description": "One node in a Planner-produced task graph.\n\nDeliberately has no `agent_type`: only `required_capabilities` and\n`task_type`, which the Router resolves into a concrete agent later. Only\nstructural well-formedness (unique keys, known dependencies, no\nself-dependency, no cycles) is validated at the `WorkflowPlan` level,\nmirroring `WorkflowStepDefinition`/`WorkflowDefinition`'s own split.",
       "properties": {
-        "allow_parallel": {
-          "default": false,
-          "title": "Allow Parallel",
-          "type": "boolean"
-        },
-        "consensus_size": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Consensus Size"
-        },
-        "excluded_agent_types": {
+        "depends_on": {
           "items": {
             "type": "string"
           },
-          "title": "Excluded Agent Types",
+          "title": "Depends On",
           "type": "array"
         },
-        "max_cost_usd": {
+        "expected_outcome": {
           "anyOf": [
             {
-              "type": "number"
+              "$ref": "#/$defs/ExpectedOutcome"
             },
             {
               "type": "null"
             }
           ],
-          "default": null,
-          "title": "Max Cost Usd"
+          "default": null
         },
-        "max_latency_ms": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Max Latency Ms"
+        "input_payload": {
+          "additionalProperties": true,
+          "title": "Input Payload",
+          "type": "object"
         },
-        "minimum_reliability": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Minimum Reliability"
+        "key": {
+          "title": "Key",
+          "type": "string"
         },
-        "preferred_agent_types": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Preferred Agent Types",
-          "type": "array"
+        "name": {
+          "title": "Name",
+          "type": "string"
         },
         "required_capabilities": {
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/AgentCapability"
           },
           "title": "Required Capabilities",
           "type": "array"
+        },
+        "task_type": {
+          "title": "Task Type",
+          "type": "string"
         }
       },
-      "title": "RoutingConstraints",
+      "required": [
+        "key",
+        "name",
+        "task_type"
+      ],
+      "title": "TaskSpec",
       "type": "object"
     }
   },
   "additionalProperties": false,
-  "description": "A request to select an agent for one task.",
+  "description": "A Planner's full output: an ordered, dependency-linked task graph for\none goal. List order is preserved exactly as given \u2014 task ordering is\ndeterministic by construction, not recomputed here.",
   "properties": {
-    "candidate_agent_types": {
-      "anyOf": [
-        {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Candidate Agent Types"
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
     },
-    "constraints": {
-      "$ref": "#/$defs/RoutingConstraints"
+    "goal": {
+      "title": "Goal",
+      "type": "string"
     },
-    "manual_override_agent_type": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Manual Override Agent Type"
+    "metadata": {
+      "additionalProperties": true,
+      "title": "Metadata",
+      "type": "object"
+    },
+    "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
     },
     "repository": {
       "anyOf": [
@@ -211,21 +220,19 @@
       ],
       "default": null
     },
-    "required_capabilities": {
+    "tasks": {
       "items": {
-        "$ref": "#/$defs/AgentCapability"
+        "$ref": "#/$defs/TaskSpec"
       },
-      "title": "Required Capabilities",
+      "title": "Tasks",
       "type": "array"
-    },
-    "task_type": {
-      "title": "Task Type",
-      "type": "string"
     }
   },
   "required": [
-    "task_type"
+    "plan_id",
+    "goal",
+    "created_at"
   ],
-  "title": "RoutingRequest",
+  "title": "WorkflowPlan",
   "type": "object"
 }

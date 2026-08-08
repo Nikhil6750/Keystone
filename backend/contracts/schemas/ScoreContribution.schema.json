@@ -1,0 +1,61 @@
+{
+  "additionalProperties": false,
+  "description": "How much one scoring factor contributed to a candidate's composite score.",
+  "properties": {
+    "factor_name": {
+      "title": "Factor Name",
+      "type": "string"
+    },
+    "low_sample_size": {
+      "default": false,
+      "title": "Low Sample Size",
+      "type": "boolean"
+    },
+    "raw_score": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Raw Score"
+    },
+    "sample_size": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sample Size"
+    },
+    "weight": {
+      "title": "Weight",
+      "type": "number"
+    },
+    "weighted_contribution": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Weighted Contribution"
+    }
+  },
+  "required": [
+    "factor_name",
+    "weight"
+  ],
+  "title": "ScoreContribution",
+  "type": "object"
+}

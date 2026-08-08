@@ -1,0 +1,167 @@
+{
+  "$defs": {
+    "BenchmarkEvaluatorType": {
+      "description": "Objective evaluators a benchmark task may use. No subjective rankings.",
+      "enum": [
+        "exact_match",
+        "json_schema",
+        "regex",
+        "exit_code",
+        "unit_test",
+        "build",
+        "lint",
+        "type_check",
+        "file_diff",
+        "human_reviewed"
+      ],
+      "title": "BenchmarkEvaluatorType",
+      "type": "string"
+    },
+    "VerificationEvidence": {
+      "additionalProperties": false,
+      "description": "One piece of observable evidence backing a `VerificationResult` \u2014 a\ntest count, an exit code, a diff, a reviewer's sign-off. Never a model's\ninternal reasoning.",
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "timestamp": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timestamp"
+        },
+        "value": {
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "kind",
+        "description"
+      ],
+      "title": "VerificationEvidence",
+      "type": "object"
+    },
+    "VerificationStatus": {
+      "description": "The outcome of one verification check.",
+      "enum": [
+        "passed",
+        "failed",
+        "inconclusive",
+        "requires_human_review"
+      ],
+      "title": "VerificationStatus",
+      "type": "string"
+    }
+  },
+  "description": "The outcome of verifying one execution result against its\n`ExpectedOutcome` (`app.contracts.planning`).",
+  "properties": {
+    "confidence": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Confidence"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "evaluator_type": {
+      "$ref": "#/$defs/BenchmarkEvaluatorType"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/VerificationEvidence"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
+    "failure_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Failure Reason"
+    },
+    "reviewer_type": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reviewer Type"
+    },
+    "status": {
+      "$ref": "#/$defs/VerificationStatus"
+    },
+    "step_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Step Id"
+    },
+    "verification_id": {
+      "title": "Verification Id",
+      "type": "string"
+    },
+    "workflow_id": {
+      "title": "Workflow Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "verification_id",
+    "workflow_id",
+    "status",
+    "evaluator_type",
+    "created_at"
+  ],
+  "title": "VerificationResult",
+  "type": "object"
+}

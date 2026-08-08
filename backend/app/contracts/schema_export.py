@@ -20,14 +20,25 @@ from app.contracts.adapter import (
     RepositoryMetadata,
 )
 from app.contracts.benchmark import BenchmarkDefinition, BenchmarkResult, BenchmarkTask
+from app.contracts.explainability import (
+    Confidence,
+    CounterfactualCondition,
+    DecisionTrace,
+    EvidenceItem,
+    ExclusionReason,
+    RoutingExplanation,
+    ScoreContribution,
+)
 from app.contracts.knowledge import KnowledgeDocument, KnowledgeSearchResult
 from app.contracts.passports import AgentPassport, AgentPassportMetricBucket
+from app.contracts.planning import ExpectedOutcome, PlanningRequest, TaskSpec, WorkflowPlan
 from app.contracts.routing import (
     RoutingCandidateScore,
     RoutingConstraints,
     RoutingDecision,
     RoutingRequest,
 )
+from app.contracts.verification import VerificationEvidence, VerificationResult
 from app.contracts.workflow import (
     WorkflowDefinition,
     WorkflowExecutionEvent,
@@ -58,6 +69,19 @@ CONTRACT_MODELS: dict[str, type[BaseModel]] = {
     "BenchmarkDefinition": BenchmarkDefinition,
     "BenchmarkTask": BenchmarkTask,
     "BenchmarkResult": BenchmarkResult,
+    "ExpectedOutcome": ExpectedOutcome,
+    "TaskSpec": TaskSpec,
+    "WorkflowPlan": WorkflowPlan,
+    "PlanningRequest": PlanningRequest,
+    "VerificationEvidence": VerificationEvidence,
+    "VerificationResult": VerificationResult,
+    "EvidenceItem": EvidenceItem,
+    "ScoreContribution": ScoreContribution,
+    "ExclusionReason": ExclusionReason,
+    "Confidence": Confidence,
+    "CounterfactualCondition": CounterfactualCondition,
+    "DecisionTrace": DecisionTrace,
+    "RoutingExplanation": RoutingExplanation,
     "ErrorResponse": APIErrorEnvelope,
 }
 

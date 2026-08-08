@@ -16,7 +16,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.contracts.enums import AgentCapability, AgentExecutionStatus, AgentStatus
+from app.contracts.enums import AgentCapability, AgentExecutionStatus, AgentStatus, RuntimeKind
 from app.contracts.errors import FailureCategory
 
 
@@ -49,12 +49,20 @@ class AgentUsage(BaseModel):
 
 
 class AgentDescriptor(BaseModel):
-    """Static identity and capability declaration for one registered agent."""
+    """Static identity and capability declaration for one registered agent.
+
+    `runtime_kind` defaults to `AGENT_CLI` — every currently-implemented
+    connector (Claude Code, Codex, Antigravity, Gemini, the demo adapter) is
+    an autonomous CLI, so this default reflects today's reality without
+    requiring any existing caller to change. A model-API/local-model/hybrid
+    runtime sets it explicitly.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
     agent_type: str
     display_name: str
+    runtime_kind: RuntimeKind = RuntimeKind.AGENT_CLI
     capabilities: list[AgentCapability] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 

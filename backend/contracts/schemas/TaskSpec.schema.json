@@ -1,0 +1,126 @@
+{
+  "$defs": {
+    "AgentCapability": {
+      "description": "Capability tags an agent adapter can declare and a task can require.\n\nMost values describe *task-domain* capability (what kind of work the\nruntime can do). `RAW_COMPLETION`, `STRUCTURED_OUTPUT`, and\n`TOOL_CALLING` describe *interaction-mode* capability instead (how the\nruntime can be talked to) \u2014 kept in this same flat tag set rather than a\nsecond enum, so a task's `required_capabilities` list can freely mix\nboth kinds without the Router needing to reconcile two vocabularies.",
+      "enum": [
+        "code_generation",
+        "code_review",
+        "test_generation",
+        "test_execution",
+        "debugging",
+        "refactoring",
+        "documentation",
+        "planning",
+        "general_reasoning",
+        "file_editing",
+        "shell_execution",
+        "raw_completion",
+        "structured_output",
+        "tool_calling"
+      ],
+      "title": "AgentCapability",
+      "type": "string"
+    },
+    "BenchmarkEvaluatorType": {
+      "description": "Objective evaluators a benchmark task may use. No subjective rankings.",
+      "enum": [
+        "exact_match",
+        "json_schema",
+        "regex",
+        "exit_code",
+        "unit_test",
+        "build",
+        "lint",
+        "type_check",
+        "file_diff",
+        "human_reviewed"
+      ],
+      "title": "BenchmarkEvaluatorType",
+      "type": "string"
+    },
+    "ExpectedOutcome": {
+      "additionalProperties": false,
+      "description": "What \"done\" means for one task, for the future Verifier to check\nagainst the executed step's actual result.",
+      "properties": {
+        "criteria": {
+          "additionalProperties": true,
+          "title": "Criteria",
+          "type": "object"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "evaluator_type": {
+          "$ref": "#/$defs/BenchmarkEvaluatorType"
+        }
+      },
+      "required": [
+        "evaluator_type"
+      ],
+      "title": "ExpectedOutcome",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One node in a Planner-produced task graph.\n\nDeliberately has no `agent_type`: only `required_capabilities` and\n`task_type`, which the Router resolves into a concrete agent later. Only\nstructural well-formedness (unique keys, known dependencies, no\nself-dependency, no cycles) is validated at the `WorkflowPlan` level,\nmirroring `WorkflowStepDefinition`/`WorkflowDefinition`'s own split.",
+  "properties": {
+    "depends_on": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Depends On",
+      "type": "array"
+    },
+    "expected_outcome": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExpectedOutcome"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "input_payload": {
+      "additionalProperties": true,
+      "title": "Input Payload",
+      "type": "object"
+    },
+    "key": {
+      "title": "Key",
+      "type": "string"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "required_capabilities": {
+      "items": {
+        "$ref": "#/$defs/AgentCapability"
+      },
+      "title": "Required Capabilities",
+      "type": "array"
+    },
+    "task_type": {
+      "title": "Task Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "key",
+    "name",
+    "task_type"
+  ],
+  "title": "TaskSpec",
+  "type": "object"
+}

@@ -11,7 +11,7 @@ from app.contracts.adapter import (
     AgentExecutionRequest,
     AgentExecutionResult,
 )
-from app.contracts.enums import AgentCapability, AgentExecutionStatus, AgentStatus
+from app.contracts.enums import AgentCapability, AgentExecutionStatus, AgentStatus, RuntimeKind
 from app.contracts.errors import FailureCategory
 
 
@@ -206,3 +206,48 @@ async def test_stub_adapter_execute_round_trips() -> None:
     adapter: AgentAdapter = _StubAdapter()
     result = await adapter.execute(AgentExecutionRequest.model_validate(_request()))
     assert result.status is AgentExecutionStatus.SUCCEEDED
+
+
+# --- Universal runtime metadata (Stage 4A) ---------------------------------
+
+
+def test_agent_descriptor_defaults_to_agent_cli_runtime_kind() -> None:
+    descriptor = AgentDescriptor(agent_type="claude_code", display_name="Claude Code")
+    assert descriptor.runtime_kind is RuntimeKind.AGENT_CLI
+
+
+def test_agent_descriptor_accepts_a_model_api_runtime_kind() -> None:
+    descriptor = AgentDescriptor(
+        agent_type="nemotron-nim",
+        display_name="Nemotron via NIM",
+        runtime_kind=RuntimeKind.MODEL_API,
+        capabilities=[AgentCapability.RAW_COMPLETION, AgentCapability.STRUCTURED_OUTPUT],
+    )
+    assert descriptor.runtime_kind is RuntimeKind.MODEL_API
+    assert AgentCapability.TOOL_CALLING not in descriptor.capabilities
+
+
+def test_runtime_kind_round_trips_through_json() -> None:
+    for kind in RuntimeKind:
+        descriptor = AgentDescriptor(agent_type="x", display_name="X", runtime_kind=kind)
+        restored = AgentDescriptor.model_validate_json(descriptor.model_dump_json())
+        assert restored.runtime_kind is kind
+
+
+def test_new_interaction_mode_capabilities_are_valid_agent_capability_values() -> None:
+    for capability in (
+        AgentCapability.RAW_COMPLETION,
+        AgentCapability.STRUCTURED_OUTPUT,
+        AgentCapability.TOOL_CALLING,
+    ):
+        descriptor = AgentDescriptor(agent_type="x", display_name="X", capabilities=[capability])
+        assert capability in descriptor.capabilities
+
+
+def test_agent_descriptor_without_runtime_kind_is_still_valid_json() -> None:
+    """Backward compatibility: a descriptor built before this field existed
+    (no `runtime_kind` key at all) must still validate, defaulting sensibly."""
+    descriptor = AgentDescriptor.model_validate(
+        {"agent_type": "claude_code", "display_name": "Claude Code"}
+    )
+    assert descriptor.runtime_kind is RuntimeKind.AGENT_CLI

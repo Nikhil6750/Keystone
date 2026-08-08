@@ -1,0 +1,27 @@
+{
+  "additionalProperties": false,
+  "description": "What would have had to be different for a different outcome.",
+  "properties": {
+    "description": {
+      "title": "Description",
+      "type": "string"
+    },
+    "would_change_outcome_to": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Would Change Outcome To"
+    }
+  },
+  "required": [
+    "description"
+  ],
+  "title": "CounterfactualCondition",
+  "type": "object"
+}

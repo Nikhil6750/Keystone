@@ -1,0 +1,498 @@
+{
+  "$defs": {
+    "Confidence": {
+      "additionalProperties": false,
+      "description": "How confident Keystone is in a decision, and why.",
+      "properties": {
+        "basis": {
+          "title": "Basis",
+          "type": "string"
+        },
+        "low_sample_size": {
+          "default": false,
+          "title": "Low Sample Size",
+          "type": "boolean"
+        },
+        "sample_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sample Size"
+        },
+        "value": {
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "value",
+        "basis"
+      ],
+      "title": "Confidence",
+      "type": "object"
+    },
+    "CounterfactualCondition": {
+      "additionalProperties": false,
+      "description": "What would have had to be different for a different outcome.",
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "would_change_outcome_to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Would Change Outcome To"
+        }
+      },
+      "required": [
+        "description"
+      ],
+      "title": "CounterfactualCondition",
+      "type": "object"
+    },
+    "DecisionTrace": {
+      "additionalProperties": false,
+      "description": "A structured, human-readable explanation of one Keystone decision.",
+      "properties": {
+        "confidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Confidence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "counterfactuals": {
+          "items": {
+            "$ref": "#/$defs/CounterfactualCondition"
+          },
+          "title": "Counterfactuals",
+          "type": "array"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "decision_id": {
+          "title": "Decision Id",
+          "type": "string"
+        },
+        "decision_type": {
+          "$ref": "#/$defs/DecisionType"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/EvidenceItem"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "subject_id": {
+          "title": "Subject Id",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "decision_id",
+        "decision_type",
+        "subject_id",
+        "summary",
+        "created_at"
+      ],
+      "title": "DecisionTrace",
+      "type": "object"
+    },
+    "DecisionType": {
+      "description": "What kind of Keystone decision a `DecisionTrace` explains.",
+      "enum": [
+        "planning",
+        "routing",
+        "verification",
+        "retry",
+        "reroute"
+      ],
+      "title": "DecisionType",
+      "type": "string"
+    },
+    "EvidenceItem": {
+      "additionalProperties": false,
+      "description": "One piece of observable evidence that influenced a decision.",
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "sample_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sample Size"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "value": {
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "kind",
+        "description"
+      ],
+      "title": "EvidenceItem",
+      "type": "object"
+    },
+    "ExclusionReason": {
+      "additionalProperties": false,
+      "description": "Why one candidate was excluded from consideration.",
+      "properties": {
+        "candidate_id": {
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "reason_code": {
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "reason_text": {
+          "title": "Reason Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "reason_code",
+        "reason_text"
+      ],
+      "title": "ExclusionReason",
+      "type": "object"
+    },
+    "RoutingCandidateScore": {
+      "description": "One candidate agent's evaluated fitness for a routing request.\n\nMissing historical data must never be silently treated as perfect\nperformance \u2014 callers should leave the relevant score field `None` and\nset `low_sample_size=True` rather than defaulting to a high score.",
+      "properties": {
+        "agent_type": {
+          "title": "Agent Type",
+          "type": "string"
+        },
+        "capability_match": {
+          "title": "Capability Match",
+          "type": "boolean"
+        },
+        "composite_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Composite Score"
+        },
+        "cost_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cost Score"
+        },
+        "eligible": {
+          "title": "Eligible",
+          "type": "boolean"
+        },
+        "evidence": {
+          "additionalProperties": true,
+          "title": "Evidence",
+          "type": "object"
+        },
+        "excluded_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Excluded Reason"
+        },
+        "latency_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Latency Score"
+        },
+        "low_sample_size": {
+          "default": false,
+          "title": "Low Sample Size",
+          "type": "boolean"
+        },
+        "reliability_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reliability Score"
+        },
+        "repository_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Repository Score"
+        },
+        "sample_size": {
+          "default": 0,
+          "title": "Sample Size",
+          "type": "integer"
+        },
+        "task_type_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task Type Score"
+        }
+      },
+      "required": [
+        "agent_type",
+        "eligible",
+        "capability_match"
+      ],
+      "title": "RoutingCandidateScore",
+      "type": "object"
+    },
+    "RoutingDecision": {
+      "description": "The outcome of one routing evaluation, always explainable.",
+      "properties": {
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/RoutingCandidateScore"
+          },
+          "title": "Candidates",
+          "type": "array"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "decided_at": {
+          "format": "date-time",
+          "title": "Decided At",
+          "type": "string"
+        },
+        "explanation": {
+          "title": "Explanation",
+          "type": "string"
+        },
+        "fallback_order": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Fallback Order",
+          "type": "array"
+        },
+        "manual_override": {
+          "default": false,
+          "title": "Manual Override",
+          "type": "boolean"
+        },
+        "selected_agent_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Selected Agent Type"
+        },
+        "task_type": {
+          "title": "Task Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_type",
+        "selected_agent_type",
+        "explanation",
+        "decided_at"
+      ],
+      "title": "RoutingDecision",
+      "type": "object"
+    },
+    "ScoreContribution": {
+      "additionalProperties": false,
+      "description": "How much one scoring factor contributed to a candidate's composite score.",
+      "properties": {
+        "factor_name": {
+          "title": "Factor Name",
+          "type": "string"
+        },
+        "low_sample_size": {
+          "default": false,
+          "title": "Low Sample Size",
+          "type": "boolean"
+        },
+        "raw_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Raw Score"
+        },
+        "sample_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sample Size"
+        },
+        "weight": {
+          "title": "Weight",
+          "type": "number"
+        },
+        "weighted_contribution": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Weighted Contribution"
+        }
+      },
+      "required": [
+        "factor_name",
+        "weight"
+      ],
+      "title": "ScoreContribution",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A `DecisionTrace` specifically for a `RoutingDecision`, with the full\nper-candidate score breakdown and exclusion reasons alongside the\ndecision it explains. Wraps `RoutingDecision` rather than duplicating it.",
+  "properties": {
+    "decision": {
+      "$ref": "#/$defs/RoutingDecision"
+    },
+    "exclusions": {
+      "items": {
+        "$ref": "#/$defs/ExclusionReason"
+      },
+      "title": "Exclusions",
+      "type": "array"
+    },
+    "score_contributions": {
+      "additionalProperties": {
+        "items": {
+          "$ref": "#/$defs/ScoreContribution"
+        },
+        "type": "array"
+      },
+      "title": "Score Contributions",
+      "type": "object"
+    },
+    "trace": {
+      "$ref": "#/$defs/DecisionTrace"
+    }
+  },
+  "required": [
+    "decision",
+    "trace"
+  ],
+  "title": "RoutingExplanation",
+  "type": "object"
+}

@@ -1,0 +1,186 @@
+{
+  "$defs": {
+    "Confidence": {
+      "additionalProperties": false,
+      "description": "How confident Keystone is in a decision, and why.",
+      "properties": {
+        "basis": {
+          "title": "Basis",
+          "type": "string"
+        },
+        "low_sample_size": {
+          "default": false,
+          "title": "Low Sample Size",
+          "type": "boolean"
+        },
+        "sample_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sample Size"
+        },
+        "value": {
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "value",
+        "basis"
+      ],
+      "title": "Confidence",
+      "type": "object"
+    },
+    "CounterfactualCondition": {
+      "additionalProperties": false,
+      "description": "What would have had to be different for a different outcome.",
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "would_change_outcome_to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Would Change Outcome To"
+        }
+      },
+      "required": [
+        "description"
+      ],
+      "title": "CounterfactualCondition",
+      "type": "object"
+    },
+    "DecisionType": {
+      "description": "What kind of Keystone decision a `DecisionTrace` explains.",
+      "enum": [
+        "planning",
+        "routing",
+        "verification",
+        "retry",
+        "reroute"
+      ],
+      "title": "DecisionType",
+      "type": "string"
+    },
+    "EvidenceItem": {
+      "additionalProperties": false,
+      "description": "One piece of observable evidence that influenced a decision.",
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "sample_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sample Size"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "value": {
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "kind",
+        "description"
+      ],
+      "title": "EvidenceItem",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A structured, human-readable explanation of one Keystone decision.",
+  "properties": {
+    "confidence": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Confidence"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "counterfactuals": {
+      "items": {
+        "$ref": "#/$defs/CounterfactualCondition"
+      },
+      "title": "Counterfactuals",
+      "type": "array"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "decision_id": {
+      "title": "Decision Id",
+      "type": "string"
+    },
+    "decision_type": {
+      "$ref": "#/$defs/DecisionType"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/EvidenceItem"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
+    "subject_id": {
+      "title": "Subject Id",
+      "type": "string"
+    },
+    "summary": {
+      "title": "Summary",
+      "type": "string"
+    }
+  },
+  "required": [
+    "decision_id",
+    "decision_type",
+    "subject_id",
+    "summary",
+    "created_at"
+  ],
+  "title": "DecisionTrace",
+  "type": "object"
+}

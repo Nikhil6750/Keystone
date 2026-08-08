@@ -1,0 +1,25 @@
+{
+  "additionalProperties": false,
+  "description": "Why one candidate was excluded from consideration.",
+  "properties": {
+    "candidate_id": {
+      "title": "Candidate Id",
+      "type": "string"
+    },
+    "reason_code": {
+      "title": "Reason Code",
+      "type": "string"
+    },
+    "reason_text": {
+      "title": "Reason Text",
+      "type": "string"
+    }
+  },
+  "required": [
+    "candidate_id",
+    "reason_code",
+    "reason_text"
+  ],
+  "title": "ExclusionReason",
+  "type": "object"
+}

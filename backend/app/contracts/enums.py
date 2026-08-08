@@ -26,7 +26,15 @@ class AgentStatus(StrEnum):
 
 
 class AgentCapability(StrEnum):
-    """Capability tags an agent adapter can declare and a task can require."""
+    """Capability tags an agent adapter can declare and a task can require.
+
+    Most values describe *task-domain* capability (what kind of work the
+    runtime can do). `RAW_COMPLETION`, `STRUCTURED_OUTPUT`, and
+    `TOOL_CALLING` describe *interaction-mode* capability instead (how the
+    runtime can be talked to) — kept in this same flat tag set rather than a
+    second enum, so a task's `required_capabilities` list can freely mix
+    both kinds without the Router needing to reconcile two vocabularies.
+    """
 
     CODE_GENERATION = "code_generation"
     CODE_REVIEW = "code_review"
@@ -39,6 +47,25 @@ class AgentCapability(StrEnum):
     GENERAL_REASONING = "general_reasoning"
     FILE_EDITING = "file_editing"
     SHELL_EXECUTION = "shell_execution"
+    RAW_COMPLETION = "raw_completion"
+    STRUCTURED_OUTPUT = "structured_output"
+    TOOL_CALLING = "tool_calling"
+
+
+class RuntimeKind(StrEnum):
+    """What kind of execution runtime an `AgentDescriptor` describes.
+
+    Purely classificatory — the Router/Planner use it to reason about the
+    qualitative difference between an autonomous multi-turn CLI agent and a
+    single-shot model completion endpoint; `AgentAdapter.execute()` stays
+    the same uniform contract for every value, so this never causes a branch
+    in the execution contract itself, only in how a candidate is scored.
+    """
+
+    AGENT_CLI = "agent_cli"
+    MODEL_API = "model_api"
+    LOCAL_MODEL = "local_model"
+    HYBRID = "hybrid"
 
 
 class AgentExecutionStatus(StrEnum):

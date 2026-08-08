@@ -21,6 +21,47 @@
       "title": "AgentCapability",
       "type": "string"
     },
+    "KnowledgeSearchResult": {
+      "description": "One search hit against a vault's index.",
+      "properties": {
+        "document_id": {
+          "title": "Document Id",
+          "type": "string"
+        },
+        "score": {
+          "title": "Score",
+          "type": "number"
+        },
+        "snippet": {
+          "title": "Snippet",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "vault_id": {
+          "title": "Vault Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "document_id",
+        "vault_id",
+        "title",
+        "snippet",
+        "score"
+      ],
+      "title": "KnowledgeSearchResult",
+      "type": "object"
+    },
     "RepositoryMetadata": {
       "additionalProperties": false,
       "description": "Non-sensitive repository context passed to an agent execution.\n\nNever carries an absolute filesystem path or credentials \u2014 only\nidentifying and descriptive metadata a routing/passport signal or a\nprovider prompt might use.",
@@ -168,37 +209,33 @@
     }
   },
   "additionalProperties": false,
-  "description": "A request to select an agent for one task.",
+  "description": "A request for the Planner to decompose one goal into a `WorkflowPlan`.",
   "properties": {
-    "candidate_agent_types": {
-      "anyOf": [
-        {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Candidate Agent Types"
+    "available_capabilities": {
+      "items": {
+        "$ref": "#/$defs/AgentCapability"
+      },
+      "title": "Available Capabilities",
+      "type": "array"
     },
     "constraints": {
       "$ref": "#/$defs/RoutingConstraints"
     },
-    "manual_override_agent_type": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Manual Override Agent Type"
+    "goal": {
+      "title": "Goal",
+      "type": "string"
+    },
+    "knowledge_context": {
+      "items": {
+        "$ref": "#/$defs/KnowledgeSearchResult"
+      },
+      "title": "Knowledge Context",
+      "type": "array"
+    },
+    "metadata": {
+      "additionalProperties": true,
+      "title": "Metadata",
+      "type": "object"
     },
     "repository": {
       "anyOf": [
@@ -210,22 +247,11 @@
         }
       ],
       "default": null
-    },
-    "required_capabilities": {
-      "items": {
-        "$ref": "#/$defs/AgentCapability"
-      },
-      "title": "Required Capabilities",
-      "type": "array"
-    },
-    "task_type": {
-      "title": "Task Type",
-      "type": "string"
     }
   },
   "required": [
-    "task_type"
+    "goal"
   ],
-  "title": "RoutingRequest",
+  "title": "PlanningRequest",
   "type": "object"
 }

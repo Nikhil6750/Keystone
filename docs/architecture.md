@@ -530,6 +530,26 @@ behind `scripts/export_contracts.py`, whose output is committed under
 and dependency-direction model. This package is purely additive: `schemas/`,
 `models/enums.py`, and the live engine/API behavior described above are unchanged.
 
+**Stage 4A** adds the intelligence layer's typed foundation, contracts only —
+no Planner, Router, Verifier, or Explainability logic exists yet:
+`contracts/planning.py` (`TaskSpec` — deliberately no `agent_type`, the
+Planner decides *what* work exists, never *who* performs it — `WorkflowPlan`,
+`ExpectedOutcome`, `PlanningRequest`), `contracts/verification.py`
+(`VerificationResult`/`VerificationEvidence`/`VerificationStatus`, reusing
+`BenchmarkEvaluatorType` rather than a second objective-evaluator
+taxonomy), and `contracts/explainability.py` (`DecisionTrace`,
+`EvidenceItem`, `ScoreContribution`, `ExclusionReason`, `Confidence`,
+`CounterfactualCondition`, `RoutingExplanation` — a read-only lens over
+existing decisions, alongside the tamper-evident `AuditEvent` chain, not a
+replacement for it). `AgentDescriptor` gained an additive `runtime_kind`
+field (`RuntimeKind`: `AGENT_CLI`/`MODEL_API`/`LOCAL_MODEL`/`HYBRID`,
+defaulting to `AGENT_CLI` for backward compatibility) and `AgentCapability`
+gained three additive interaction-mode tags (`RAW_COMPLETION`,
+`STRUCTURED_OUTPUT`, `TOOL_CALLING`) — the same `AgentAdapter` contract
+serves both agent-CLI and model-API runtimes; see
+[`contracts.md`](./contracts.md#intelligence-layer-architecture-stage-4a) for
+the full component breakdown.
+
 ### Known limitations (by design, for this prototype)
 
 - No digital signature, external notarization, or write-once storage backs the chain —

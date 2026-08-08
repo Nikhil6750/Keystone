@@ -6,8 +6,9 @@ request/response contract) or `app.models.enums` (the live persisted
 workflow/step status enums). Those remain the source of truth for behavior
 that already ships. `app.contracts` defines the vNext shapes — the
 provider-neutral `AgentAdapter` protocol, the DAG-aware workflow definition,
-routing, agent-passport, knowledge and benchmark contracts — that later
-stages incrementally wire into persistence, the engine and the API layer.
+routing, agent-passport, knowledge, benchmark, planning, verification and
+explainability contracts — that later stages incrementally wire into
+persistence, the engine and the API layer.
 
 See `docs/contracts.md` for ownership, dependency direction, and the
 generated JSON Schema locations under `backend/contracts/schemas/`.
@@ -27,20 +28,33 @@ from app.contracts.enums import (
     AgentExecutionStatus,
     AgentStatus,
     BenchmarkEvaluatorType,
+    RuntimeKind,
 )
 from app.contracts.errors import (
     RETRYABLE_FAILURE_CATEGORIES,
     FailureCategory,
     classify_legacy_error_type,
 )
+from app.contracts.explainability import (
+    Confidence,
+    CounterfactualCondition,
+    DecisionTrace,
+    DecisionType,
+    EvidenceItem,
+    ExclusionReason,
+    RoutingExplanation,
+    ScoreContribution,
+)
 from app.contracts.knowledge import KnowledgeDocument, KnowledgeSearchResult
 from app.contracts.passports import AgentPassport, AgentPassportMetricBucket
+from app.contracts.planning import ExpectedOutcome, PlanningRequest, TaskSpec, WorkflowPlan
 from app.contracts.routing import (
     RoutingCandidateScore,
     RoutingConstraints,
     RoutingDecision,
     RoutingRequest,
 )
+from app.contracts.verification import VerificationEvidence, VerificationResult, VerificationStatus
 from app.contracts.workflow import (
     WorkflowDefinition,
     WorkflowExecutionEvent,
@@ -62,17 +76,33 @@ __all__ = [
     "AgentExecutionStatus",
     "AgentStatus",
     "BenchmarkEvaluatorType",
+    "RuntimeKind",
     "RETRYABLE_FAILURE_CATEGORIES",
     "FailureCategory",
     "classify_legacy_error_type",
+    "Confidence",
+    "CounterfactualCondition",
+    "DecisionTrace",
+    "DecisionType",
+    "EvidenceItem",
+    "ExclusionReason",
+    "RoutingExplanation",
+    "ScoreContribution",
     "KnowledgeDocument",
     "KnowledgeSearchResult",
     "AgentPassport",
     "AgentPassportMetricBucket",
+    "ExpectedOutcome",
+    "PlanningRequest",
+    "TaskSpec",
+    "WorkflowPlan",
     "RoutingCandidateScore",
     "RoutingConstraints",
     "RoutingDecision",
     "RoutingRequest",
+    "VerificationEvidence",
+    "VerificationResult",
+    "VerificationStatus",
     "WorkflowDefinition",
     "WorkflowExecutionEvent",
     "WorkflowStepDefinition",

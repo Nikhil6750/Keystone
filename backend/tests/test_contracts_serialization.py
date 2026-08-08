@@ -19,8 +19,10 @@ from app.contracts.adapter import (
 )
 from app.contracts.benchmark import BenchmarkDefinition, BenchmarkResult, BenchmarkTask
 from app.contracts.enums import AgentExecutionStatus, BenchmarkEvaluatorType
+from app.contracts.explainability import Confidence, DecisionTrace, DecisionType, EvidenceItem
 from app.contracts.knowledge import KnowledgeDocument, KnowledgeSearchResult
 from app.contracts.passports import AgentPassport, AgentPassportMetricBucket
+from app.contracts.planning import ExpectedOutcome, PlanningRequest, TaskSpec, WorkflowPlan
 from app.contracts.routing import (
     RoutingCandidateScore,
     RoutingConstraints,
@@ -28,6 +30,7 @@ from app.contracts.routing import (
     RoutingRequest,
 )
 from app.contracts.schema_export import CONTRACT_MODELS
+from app.contracts.verification import VerificationEvidence, VerificationResult, VerificationStatus
 from app.contracts.workflow import (
     WorkflowDefinition,
     WorkflowExecutionEvent,
@@ -115,6 +118,32 @@ _SAMPLES: list[BaseModel] = [
         task_id="task-1",
         success=True,
         duration_ms=1.0,
+        created_at=_NOW,
+    ),
+    ExpectedOutcome(evaluator_type=BenchmarkEvaluatorType.UNIT_TEST, criteria={"min_passed": 1}),
+    TaskSpec(key="a", name="a", task_type="analysis"),
+    WorkflowPlan(
+        plan_id="p1",
+        goal="build auth",
+        tasks=[TaskSpec(key="a", name="a", task_type="analysis")],
+        created_at=_NOW,
+    ),
+    PlanningRequest(goal="build auth"),
+    VerificationEvidence(kind="test_run", description="10/10 tests passed", value={"passed": 10}),
+    VerificationResult(
+        verification_id="v1",
+        workflow_id="wf-1",
+        status=VerificationStatus.PASSED,
+        evaluator_type=BenchmarkEvaluatorType.UNIT_TEST,
+        created_at=_NOW,
+    ),
+    EvidenceItem(kind="success_rate", description="90% over 20 runs", value=0.9),
+    Confidence(value=0.8, basis="sample_size", sample_size=20),
+    DecisionTrace(
+        decision_id="d1",
+        decision_type=DecisionType.ROUTING,
+        subject_id="wf-1",
+        summary="selected claude_code",
         created_at=_NOW,
     ),
 ]

@@ -33,6 +33,23 @@ from app.engine.verification.evaluators import ObservedOutcome
 MAX_BENCHMARK_REPEAT_COUNT = 20
 _ABSOLUTE_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
+_UNSAFE_INPUT_KEY_PATTERNS = frozenset(
+    {
+        "chain_of_thought",
+        "hidden_reasoning",
+        "raw_prompt",
+        "thought_process",
+        "reasoning_trace",
+        "password",
+        "credential",
+        "secret",
+        "api_key",
+        "apikey",
+        "access_token",
+        "session_token",
+    }
+)
+
 
 def _looks_like_unsafe_repository_id(value: str) -> bool:
     """True if `value` looks like an absolute filesystem path or contains a `..`
@@ -45,13 +62,29 @@ def _looks_like_unsafe_repository_id(value: str) -> bool:
     return ".." in segments
 
 
+def _reject_unsafe_benchmark_input_keys(val: Any, path: str = "$") -> None:
+    """Recursively reject dictionary keys that are reasoning-shaped or credential-shaped."""
+    if isinstance(val, dict):
+        for k, v in val.items():
+            k_lower = str(k).lower()
+            if any(pattern in k_lower for pattern in _UNSAFE_INPUT_KEY_PATTERNS):
+                raise MalformedBenchmarkCaseError(
+                    f"benchmark input/metadata key '{k}' at {path} is prohibited "
+                    "(reasoning-shaped or credential-shaped)"
+                )
+            _reject_unsafe_benchmark_input_keys(v, f"{path}.{k}")
+    elif isinstance(val, list):
+        for idx, item in enumerate(val):
+            _reject_unsafe_benchmark_input_keys(item, f"{path}[{idx}]")
+
+
 @dataclass(frozen=True)
 class BenchmarkCase:
     """One objective benchmark task definition.
 
     Reuses Stage 4E's `ExpectedOutcome` directly -- no duplicate evaluator schema.
-    Rejects reasoning-shaped keys in `input_payload` and `metadata`. Rejects
-    absolute filesystem paths in `repository_id`.
+    Rejects reasoning-shaped and credential-shaped keys in `input_payload` and `metadata`.
+    Rejects absolute filesystem paths in `repository_id`.
     """
 
     case_id: str
@@ -79,11 +112,8 @@ class BenchmarkCase:
                     f"{self.repository_id!r}"
                 )
 
-        try:
-            reject_reasoning_shaped_keys(self.input_payload)
-            reject_reasoning_shaped_keys(self.metadata)
-        except ValueError as exc:
-            raise MalformedBenchmarkCaseError(str(exc)) from exc
+        _reject_unsafe_benchmark_input_keys(self.input_payload, "input_payload")
+        _reject_unsafe_benchmark_input_keys(self.metadata, "metadata")
 
 
 @dataclass(frozen=True)
@@ -176,6 +206,9 @@ class BenchmarkExecutionObservation:
 class BenchmarkExecutionResult:
     """The full, observable result of executing one agent on one benchmark case for
     one repetition, verified via Stage 4E.
+
+    `created_at` is excluded from dataclass comparison (`compare=False`) so operational
+    timestamps do not affect semantic result equality.
     """
 
     suite_id: str
@@ -190,7 +223,7 @@ class BenchmarkExecutionResult:
     repository_id: str | None = None
     failure_category: FailureCategory | None = None
     cost_usd: float | None = None
-    created_at: datetime | None = None
+    created_at: datetime | None = field(default=None, compare=False)
 
 
 __all__ = [

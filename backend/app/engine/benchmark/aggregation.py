@@ -34,6 +34,8 @@ class BenchmarkBucketMetrics:
     execution_count: int
     execution_success_count: int
     execution_failure_count: int
+    cancellation_count: int
+    timeout_count: int
     verification_sample_count: int
     verified_success_count: int
     verification_failure_count: int
@@ -69,12 +71,16 @@ class BenchmarkAgentMetrics:
 
 @dataclass(frozen=True)
 class BenchmarkAggregateMetrics:
-    """Top-level aggregate benchmark run summary across all candidate agents."""
+    """Top-level aggregate benchmark run summary across all candidate agents.
+
+    `created_at` is excluded from dataclass comparison (`compare=False`) so operational
+    timestamps do not affect semantic result equality.
+    """
 
     suite_id: str
     total_results: int
     agent_metrics: dict[str, BenchmarkAgentMetrics] = field(default_factory=dict)
-    created_at: datetime | None = None
+    created_at: datetime | None = field(default=None, compare=False)
 
 
 def _calculate_bucket_metrics(results: list[BenchmarkExecutionResult]) -> BenchmarkBucketMetrics:
@@ -83,9 +89,13 @@ def _calculate_bucket_metrics(results: list[BenchmarkExecutionResult]) -> Benchm
         1 for r in results if r.execution_status is AgentExecutionStatus.SUCCEEDED
     )
     exec_failure = sum(
-        1
-        for r in results
-        if r.execution_status in (AgentExecutionStatus.FAILED, AgentExecutionStatus.TIMED_OUT)
+        1 for r in results if r.execution_status is AgentExecutionStatus.FAILED
+    )
+    cancellation_count = sum(
+        1 for r in results if r.execution_status is AgentExecutionStatus.CANCELLED
+    )
+    timeout_count = sum(
+        1 for r in results if r.execution_status is AgentExecutionStatus.TIMED_OUT
     )
 
     verified_success = sum(
@@ -116,6 +126,8 @@ def _calculate_bucket_metrics(results: list[BenchmarkExecutionResult]) -> Benchm
         execution_count=execution_count,
         execution_success_count=exec_success,
         execution_failure_count=exec_failure,
+        cancellation_count=cancellation_count,
+        timeout_count=timeout_count,
         verification_sample_count=sample_count,
         verified_success_count=verified_success,
         verification_failure_count=verification_failure,

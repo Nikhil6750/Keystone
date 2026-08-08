@@ -12,6 +12,8 @@ it NEVER mutates production Stage 5 `AgentPassport`s or Stage 4B Router evidence
 from collections.abc import Iterable
 from datetime import UTC, datetime
 
+from app.contracts.enums import AgentExecutionStatus
+from app.contracts.errors import FailureCategory
 from app.engine.benchmark.aggregation import (
     BenchmarkAggregateMetrics,
     aggregate_benchmark_results,
@@ -19,9 +21,11 @@ from app.engine.benchmark.aggregation import (
 from app.engine.benchmark.errors import BenchmarkEngineError
 from app.engine.benchmark.executor import BenchmarkExecutor
 from app.engine.benchmark.models import (
+    BenchmarkExecutionObservation,
     BenchmarkExecutionResult,
     BenchmarkSuite,
 )
+from app.engine.verification.evaluators import ObservedOutcome
 from app.engine.verification.verifier import verify_one
 
 
@@ -57,11 +61,24 @@ class BenchmarkRunner:
             for agent_type in agent_types:
                 # Inner loop: repetitions (1 to repeat_count)
                 for rep in range(1, suite.repeat_count + 1):
-                    obs = executor.execute(
-                        agent_type=agent_type,
-                        case=case,
-                        repetition=rep,
-                    )
+                    try:
+                        obs = executor.execute(
+                            agent_type=agent_type,
+                            case=case,
+                            repetition=rep,
+                        )
+                    except Exception:
+                        # Wrap raw executor exceptions into a clean, safe failed observation
+                        # without leaking raw tracebacks, credentials, or private machine details.
+                        obs = BenchmarkExecutionObservation(
+                            agent_type=agent_type,
+                            execution_status=AgentExecutionStatus.FAILED,
+                            duration_ms=0.0,
+                            observed_outcome=ObservedOutcome(
+                                data={"error": "Benchmark executor raised an unhandled exception"}
+                            ),
+                            failure_category=FailureCategory.INTERNAL_ERROR,
+                        )
 
                     # Reuses Stage 4E verifier 100%
                     ver_result = verify_one(

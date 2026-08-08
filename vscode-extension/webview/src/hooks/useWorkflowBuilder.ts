@@ -1,4 +1,5 @@
-import { useState, useCallback } from 'react';
+import { useCallback } from 'react';
+import { useAppState } from './useAppState';
 
 export interface Suggestion {
   id: string;
@@ -54,39 +55,33 @@ export const SUGGESTIONS: Suggestion[] = [
 ];
 
 export function useWorkflowBuilder() {
-  const [prompt, setPrompt] = useState<string>('');
-  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const {
+    prompt,
+    setPrompt,
+    selectedTemplate,
+    setSelectedTemplate,
+    pushNotification,
+  } = useAppState();
 
-  const selectSuggestion = useCallback((suggestion: Suggestion) => {
-    setPrompt(suggestion.promptText);
-    setSelectedTemplate(suggestion.id);
-  }, []);
-
-  const handleExecute = useCallback(() => {
-    setToastMessage(
-      'Workflow execution is not available yet. Backend integration will be added in a future sprint.'
-    );
-  }, []);
-
-  const dismissToast = useCallback(() => {
-    setToastMessage(null);
-  }, []);
+  const selectSuggestion = useCallback(
+    (suggestion: Suggestion) => {
+      setPrompt(suggestion.promptText);
+      setSelectedTemplate(suggestion.id);
+    },
+    [setPrompt, setSelectedTemplate]
+  );
 
   const reset = useCallback(() => {
     setPrompt('');
     setSelectedTemplate(null);
-    setToastMessage(null);
-  }, []);
+  }, [setPrompt, setSelectedTemplate]);
 
   return {
     prompt,
     setPrompt,
     selectedTemplate,
     selectSuggestion,
-    handleExecute,
-    toastMessage,
-    dismissToast,
+    pushNotification,
     reset,
   };
 }

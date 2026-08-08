@@ -3,17 +3,16 @@ import {
   MOCK_KNOWLEDGE_DOCUMENTS,
   type KnowledgeDocument,
 } from '../mock/knowledge';
+import { useAppState } from './useAppState';
 
 export function useKnowledgeExplorer() {
+  const { selectedKnowledgeId, setSelectedKnowledgeId } = useAppState();
   const [documents] = useState<KnowledgeDocument[]>(MOCK_KNOWLEDGE_DOCUMENTS);
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(
-    null
-  );
 
   const selectedDocument = useMemo(
-    () => documents.find((doc) => doc.id === selectedDocumentId) || null,
-    [documents, selectedDocumentId]
+    () => documents.find((doc) => doc.id === selectedKnowledgeId) || null,
+    [documents, selectedKnowledgeId]
   );
 
   const filteredDocuments = useMemo(() => {
@@ -31,7 +30,7 @@ export function useKnowledgeExplorer() {
     searchQuery,
     setSearchQuery,
     selectedDocument,
-    setSelectedDocumentId,
+    setSelectedDocumentId: setSelectedKnowledgeId,
     filteredDocuments,
   };
 }

@@ -1,0 +1,14 @@
+{
+  "name": "shared-contracts",
+  "version": "0.1.0",
+  "description": "Shared TypeScript contracts for the Keystone AI Agent Orchestration Platform",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

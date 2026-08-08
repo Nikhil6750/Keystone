@@ -3,10 +3,11 @@
 Contains:
 1. `LearningEventRecord`: Raw execution history events (Source of Truth).
 2. `AgentPassportRecord`: Derived per-agent passport aggregate metrics.
-3. `AgentPassportBucketRecord`: Derived per-bucket metric tallies (task_type, repository, capability, etc.).
+3. `AgentPassportBucketRecord`: Derived per-bucket metric tallies
+   (task_type, repository, capability, etc.).
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
@@ -52,7 +53,7 @@ class LearningEventRecord(Base):
         DateTime(timezone=True),
         nullable=False,
         index=True,
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
     )
 
     __table_args__ = (
@@ -79,14 +80,18 @@ class AgentPassportRecord(Base):
     p95_latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     failure_categories: Mapped[dict[str, int] | None] = mapped_column(JSON, nullable=True)
     low_sample_size: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    last_succeeded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_succeeded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     known_cost_usd_average: Mapped[float | None] = mapped_column(Float, nullable=True)
     known_cost_sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
     )
 
 
@@ -104,7 +109,9 @@ class AgentPassportBucketRecord(Base):
     failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     verified_success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     verification_failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    verification_inconclusive_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    verification_inconclusive_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
     human_review_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     verification_sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     verified_success_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -117,11 +124,13 @@ class AgentPassportBucketRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
     )
 
     __table_args__ = (
-        UniqueConstraint("agent_type", "bucket_type", "bucket_key", name="uq_agent_passport_bucket"),
+        UniqueConstraint(
+            "agent_type", "bucket_type", "bucket_key", name="uq_agent_passport_bucket"
+        ),
         Index("idx_passport_bucket_query", "agent_type", "bucket_type"),
     )
 

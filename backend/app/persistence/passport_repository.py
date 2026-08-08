@@ -1,7 +1,8 @@
 """Agent Passport Repository for Stage 5 Derived Aggregate Metrics Persistence."""
 
-from datetime import datetime, timezone
-from typing import Sequence
+from collections.abc import Sequence
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -14,19 +15,21 @@ from app.persistence.models import AgentPassportBucketRecord, AgentPassportRecor
 
 def _make_tz_aware(dt: datetime | None) -> datetime | None:
     if dt is not None and dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
+        return dt.replace(tzinfo=UTC)
     return dt
 
 
 class AgentPassportRepository:
-    """Repository handling persistence, retrieval, and derived rebuilds of `LearningPassport` aggregate metrics."""
+    """Repository handling persistence, retrieval, and derived rebuilds
+    of `LearningPassport` aggregate metrics.
+    """
 
     def create_or_update_passport(
         self, session: Session, passport: LearningPassport
     ) -> tuple[AgentPassportRecord, list[AgentPassportBucketRecord]]:
         """Persist or update `LearningPassport` summary and bucket records."""
         agent_type = passport.passport.agent_type
-        updated_at = _make_tz_aware(passport.passport.updated_at) or datetime.now(timezone.utc)
+        updated_at = _make_tz_aware(passport.passport.updated_at) or datetime.now(UTC)
 
         # 1. Main Passport Summary Record
         summary = session.scalars(
@@ -128,8 +131,8 @@ class AgentPassportRepository:
         agent_type: str,
         bucket_type: str,
         bucket_key: str,
-        bucket: any,
-        verification: any,
+        bucket: Any,
+        verification: Any,
         updated_at: datetime,
     ) -> AgentPassportBucketRecord:
         rec = session.scalars(
@@ -153,15 +156,22 @@ class AgentPassportRepository:
         sample_count = bucket.execution_count
         success_rate = (success_count / sample_count) if sample_count > 0 else None
 
+        v_success = verification.verified_success_count if verification else 0
+        v_failure = verification.verification_failure_count if verification else 0
+        v_inconclusive = verification.verification_inconclusive_count if verification else 0
+        v_human = verification.human_review_count if verification else 0
+        v_samples = verification.verification_sample_count if verification else 0
+        v_rate = verification.verified_success_rate if verification else None
+
         rec.sample_count = sample_count
         rec.success_count = success_count
         rec.failure_count = failure_count
-        rec.verified_success_count = verification.verified_success_count if verification else 0
-        rec.verification_failure_count = verification.verification_failure_count if verification else 0
-        rec.verification_inconclusive_count = verification.verification_inconclusive_count if verification else 0
-        rec.human_review_count = verification.human_review_count if verification else 0
-        rec.verification_sample_count = verification.verification_sample_count if verification else 0
-        rec.verified_success_rate = verification.verified_success_rate if verification else None
+        rec.verified_success_count = v_success
+        rec.verification_failure_count = v_failure
+        rec.verification_inconclusive_count = v_inconclusive
+        rec.human_review_count = v_human
+        rec.verification_sample_count = v_samples
+        rec.verified_success_rate = v_rate
         rec.success_rate = success_rate
         rec.p50_latency = bucket.median_latency_ms
         rec.p95_latency = getattr(bucket, "p95_latency_ms", None)
@@ -212,7 +222,7 @@ class AgentPassportRepository:
         Source of Truth Rule: Query raw `learning_events` table for `agent_type`,
         run standard `rebuild_passport` pure function, and update stored aggregate tables.
         """
-        now = _make_tz_aware(updated_at) or datetime.now(timezone.utc)
+        now = _make_tz_aware(updated_at) or datetime.now(UTC)
         history_repo = ExecutionHistoryRepository()
         event_records = history_repo.query_by_agent(session, agent_type=agent_type, limit=10000)
 

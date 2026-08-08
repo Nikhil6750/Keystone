@@ -1,8 +1,7 @@
 """Comprehensive Unit and Integration Tests for Stage 5 Persistence Layer."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
-import pytest
 from sqlalchemy.orm import Session
 
 from app.contracts.enums import AgentCapability, AgentExecutionStatus, RuntimeKind
@@ -30,7 +29,7 @@ def _create_sample_event(
     capabilities: tuple[AgentCapability, ...] = (AgentCapability.CODE_GENERATION,),
     created_at: datetime | None = None,
 ) -> LearningEvent:
-    now = created_at or datetime.now(timezone.utc)
+    now = created_at or datetime.now(UTC)
     return LearningEvent(
         event_id=event_id,
         workflow_id=workflow_id,
@@ -59,7 +58,7 @@ def test_insert_and_retrieve_execution_event(db_session: Session) -> None:
     repo = ExecutionHistoryRepository()
     event = _create_sample_event(event_id="evt-1")
 
-    record = repo.record_event(db_session, event)
+    repo.record_event(db_session, event)
     db_session.commit()
 
     retrieved = repo.get_event_by_id(db_session, "evt-1")
@@ -137,16 +136,31 @@ def test_store_cancellation_info(db_session: Session) -> None:
 
 def test_query_execution_history_filters(db_session: Session) -> None:
     repo = ExecutionHistoryRepository()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     e1 = _create_sample_event(
-        event_id="evt-q1", workflow_id="wf-A", agent_type="claude_code", task_type="coding", repository_id="repo-1", created_at=now - timedelta(minutes=10)
+        event_id="evt-q1",
+        workflow_id="wf-A",
+        agent_type="claude_code",
+        task_type="coding",
+        repository_id="repo-1",
+        created_at=now - timedelta(minutes=10),
     )
     e2 = _create_sample_event(
-        event_id="evt-q2", workflow_id="wf-A", agent_type="codex", task_type="testing", repository_id="repo-1", created_at=now - timedelta(minutes=5)
+        event_id="evt-q2",
+        workflow_id="wf-A",
+        agent_type="codex",
+        task_type="testing",
+        repository_id="repo-1",
+        created_at=now - timedelta(minutes=5),
     )
     e3 = _create_sample_event(
-        event_id="evt-q3", workflow_id="wf-B", agent_type="claude_code", task_type="coding", repository_id="repo-2", created_at=now
+        event_id="evt-q3",
+        workflow_id="wf-B",
+        agent_type="claude_code",
+        task_type="coding",
+        repository_id="repo-2",
+        created_at=now,
     )
 
     for e in (e1, e2, e3):
@@ -171,7 +185,9 @@ def test_query_execution_history_filters(db_session: Session) -> None:
 
     # Query by time range
     time_events = repo.query_by_time_range(
-        db_session, start_time=now - timedelta(minutes=7), end_time=now + timedelta(minutes=1)
+        db_session,
+        start_time=now - timedelta(minutes=7),
+        end_time=now + timedelta(minutes=1),
     )
     assert len(time_events) == 2
     assert {r.event_id for r in time_events} == {"evt-q2", "evt-q3"}
@@ -200,7 +216,7 @@ def test_idempotent_event_recording(db_session: Session) -> None:
 
 def test_create_and_retrieve_agent_passport_aggregates(db_session: Session) -> None:
     passport_repo = AgentPassportRepository()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     e1 = _create_sample_event(event_id="p-e1", agent_type="claude_code", created_at=now)
     e2 = _create_sample_event(event_id="p-e2", agent_type="claude_code", created_at=now)
@@ -227,7 +243,7 @@ def test_create_and_retrieve_agent_passport_aggregates(db_session: Session) -> N
 
 def test_rebuild_aggregate_metrics_from_raw_events(db_session: Session) -> None:
     service = LearningPersistenceService()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Insert raw events via service (which automatically updates aggregates)
     e1 = _create_sample_event(
@@ -270,14 +286,29 @@ def test_rebuild_aggregate_metrics_from_raw_events(db_session: Session) -> None:
 
 def test_agent_and_workflow_isolation(db_session: Session) -> None:
     service = LearningPersistenceService()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Agent A events
-    ea1 = _create_sample_event(event_id="iso-a1", agent_type="claude_code", workflow_id="wf-1", created_at=now)
-    ea2 = _create_sample_event(event_id="iso-a2", agent_type="claude_code", workflow_id="wf-1", created_at=now)
+    ea1 = _create_sample_event(
+        event_id="iso-a1",
+        agent_type="claude_code",
+        workflow_id="wf-1",
+        created_at=now,
+    )
+    ea2 = _create_sample_event(
+        event_id="iso-a2",
+        agent_type="claude_code",
+        workflow_id="wf-1",
+        created_at=now,
+    )
 
     # Agent B events
-    eb1 = _create_sample_event(event_id="iso-b1", agent_type="codex", workflow_id="wf-2", created_at=now)
+    eb1 = _create_sample_event(
+        event_id="iso-b1",
+        agent_type="codex",
+        workflow_id="wf-2",
+        created_at=now,
+    )
 
     service.record_learning_event(db_session, ea1)
     service.record_learning_event(db_session, ea2)

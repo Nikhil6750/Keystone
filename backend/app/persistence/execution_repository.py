@@ -1,7 +1,7 @@
 """Execution History Repository for Stage 5 Raw Event Persistence."""
 
-from datetime import datetime, timezone
-from typing import Sequence
+from collections.abc import Sequence
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -20,19 +20,23 @@ class ExecutionHistoryRepository:
     def domain_to_record(event: LearningEvent) -> LearningEventRecord:
         """Convert domain `LearningEvent` dataclass to ORM `LearningEventRecord`."""
         capabilities_list = [c.value for c in event.capabilities] if event.capabilities else None
+        v_status = event.verification_status.value if event.verification_status else None
+        f_category = event.failure_category.value if event.failure_category else None
+        r_kind = event.runtime_kind.value if event.runtime_kind else None
+
         return LearningEventRecord(
             event_id=event.event_id,
             workflow_id=event.workflow_id,
             step_id=event.step_id,
             attempt_number=event.attempt_number,
             agent_type=event.agent_type,
-            runtime_kind=event.runtime_kind.value if event.runtime_kind else None,
+            runtime_kind=r_kind,
             task_type=event.task_type,
             repository_id=event.repository_id,
             capabilities=capabilities_list,
             execution_status=event.execution_status.value,
-            failure_category=event.failure_category.value if event.failure_category else None,
-            verification_status=event.verification_status.value if event.verification_status else None,
+            failure_category=f_category,
+            verification_status=v_status,
             duration_ms=event.duration_ms,
             retry_count=max(0, event.attempt_number - 1),
             cancelled=(event.execution_status == AgentExecutionStatus.CANCELLED),
@@ -49,7 +53,12 @@ class ExecutionHistoryRepository:
 
         created_at = record.created_at
         if created_at and created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
+            created_at = created_at.replace(tzinfo=UTC)
+
+        r_kind = RuntimeKind(record.runtime_kind) if record.runtime_kind else None
+        f_cat = FailureCategory(record.failure_category) if record.failure_category else None
+        v_raw = record.verification_status
+        v_stat = VerificationStatus(v_raw) if v_raw else None
 
         return LearningEvent(
             event_id=record.event_id,
@@ -59,13 +68,13 @@ class ExecutionHistoryRepository:
             created_at=created_at,
             attempt_number=record.attempt_number,
             step_id=record.step_id,
-            runtime_kind=RuntimeKind(record.runtime_kind) if record.runtime_kind else None,
+            runtime_kind=r_kind,
             task_type=record.task_type,
             repository_id=record.repository_id,
             capabilities=caps,
-            failure_category=FailureCategory(record.failure_category) if record.failure_category else None,
+            failure_category=f_cat,
             duration_ms=record.duration_ms,
-            verification_status=VerificationStatus(record.verification_status) if record.verification_status else None,
+            verification_status=v_stat,
             cost_usd=record.real_cost,
         )
 

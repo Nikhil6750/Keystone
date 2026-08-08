@@ -1,0 +1,50 @@
+{
+  "$defs": {
+    "BenchmarkEvaluatorType": {
+      "description": "Objective evaluators a benchmark task may use. No subjective rankings.",
+      "enum": [
+        "exact_match",
+        "json_schema",
+        "regex",
+        "exit_code",
+        "unit_test",
+        "build",
+        "lint",
+        "type_check",
+        "file_diff",
+        "human_reviewed"
+      ],
+      "title": "BenchmarkEvaluatorType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "What \"done\" means for one task, for the future Verifier to check\nagainst the executed step's actual result.",
+  "properties": {
+    "criteria": {
+      "additionalProperties": true,
+      "title": "Criteria",
+      "type": "object"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "evaluator_type": {
+      "$ref": "#/$defs/BenchmarkEvaluatorType"
+    }
+  },
+  "required": [
+    "evaluator_type"
+  ],
+  "title": "ExpectedOutcome",
+  "type": "object"
+}

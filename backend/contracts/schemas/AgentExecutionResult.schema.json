@@ -1,0 +1,199 @@
+{
+  "$defs": {
+    "AgentExecutionStatus": {
+      "description": "Terminal outcome of one `AgentAdapter.execute()` call.",
+      "enum": [
+        "succeeded",
+        "failed",
+        "cancelled",
+        "timed_out"
+      ],
+      "title": "AgentExecutionStatus",
+      "type": "string"
+    },
+    "AgentUsage": {
+      "additionalProperties": false,
+      "description": "Optional token/cost usage, populated only when a provider reports it.",
+      "properties": {
+        "cost_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cost Usd"
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Tokens"
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Tokens"
+        },
+        "total_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Tokens"
+        }
+      },
+      "title": "AgentUsage",
+      "type": "object"
+    },
+    "FailureCategory": {
+      "description": "A coarse, stable classification of why an agent execution failed.",
+      "enum": [
+        "timeout",
+        "cancelled",
+        "authentication_failure",
+        "validation_failure",
+        "rate_limited",
+        "circuit_open",
+        "provider_error",
+        "network_error",
+        "resource_exhausted",
+        "internal_error",
+        "unknown"
+      ],
+      "title": "FailureCategory",
+      "type": "string"
+    }
+  },
+  "description": "The outcome of one `AgentAdapter.execute()` call, provider-agnostic.",
+  "properties": {
+    "agent_id": {
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "agent_type": {
+      "title": "Agent Type",
+      "type": "string"
+    },
+    "attempt_number": {
+      "default": 1,
+      "title": "Attempt Number",
+      "type": "integer"
+    },
+    "duration_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Duration Ms"
+    },
+    "error_message": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Message"
+    },
+    "execution_id": {
+      "title": "Execution Id",
+      "type": "string"
+    },
+    "failure_category": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FailureCategory"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "metadata": {
+      "additionalProperties": true,
+      "title": "Metadata",
+      "type": "object"
+    },
+    "output_payload": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Output Payload"
+    },
+    "provenance": {
+      "additionalProperties": true,
+      "title": "Provenance",
+      "type": "object"
+    },
+    "status": {
+      "$ref": "#/$defs/AgentExecutionStatus"
+    },
+    "step_id": {
+      "title": "Step Id",
+      "type": "string"
+    },
+    "usage": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AgentUsage"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "workflow_id": {
+      "title": "Workflow Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "agent_id",
+    "agent_type",
+    "execution_id",
+    "workflow_id",
+    "step_id",
+    "status"
+  ],
+  "title": "AgentExecutionResult",
+  "type": "object"
+}

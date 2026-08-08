@@ -1,0 +1,257 @@
+{
+  "$defs": {
+    "AgentCapability": {
+      "description": "Capability tags an agent adapter can declare and a task can require.\n\nMost values describe *task-domain* capability (what kind of work the\nruntime can do). `RAW_COMPLETION`, `STRUCTURED_OUTPUT`, and\n`TOOL_CALLING` describe *interaction-mode* capability instead (how the\nruntime can be talked to) \u2014 kept in this same flat tag set rather than a\nsecond enum, so a task's `required_capabilities` list can freely mix\nboth kinds without the Router needing to reconcile two vocabularies.",
+      "enum": [
+        "code_generation",
+        "code_review",
+        "test_generation",
+        "test_execution",
+        "debugging",
+        "refactoring",
+        "documentation",
+        "planning",
+        "general_reasoning",
+        "file_editing",
+        "shell_execution",
+        "raw_completion",
+        "structured_output",
+        "tool_calling"
+      ],
+      "title": "AgentCapability",
+      "type": "string"
+    },
+    "KnowledgeSearchResult": {
+      "description": "One search hit against a vault's index.",
+      "properties": {
+        "document_id": {
+          "title": "Document Id",
+          "type": "string"
+        },
+        "score": {
+          "title": "Score",
+          "type": "number"
+        },
+        "snippet": {
+          "title": "Snippet",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "vault_id": {
+          "title": "Vault Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "document_id",
+        "vault_id",
+        "title",
+        "snippet",
+        "score"
+      ],
+      "title": "KnowledgeSearchResult",
+      "type": "object"
+    },
+    "RepositoryMetadata": {
+      "additionalProperties": false,
+      "description": "Non-sensitive repository context passed to an agent execution.\n\nNever carries an absolute filesystem path or credentials \u2014 only\nidentifying and descriptive metadata a routing/passport signal or a\nprovider prompt might use.",
+      "properties": {
+        "commit_sha": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Commit Sha"
+        },
+        "default_branch": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Default Branch"
+        },
+        "languages": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Languages",
+          "type": "array"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "repository_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Repository Id"
+        }
+      },
+      "title": "RepositoryMetadata",
+      "type": "object"
+    },
+    "RoutingConstraints": {
+      "additionalProperties": false,
+      "description": "Structured, explainable routing constraints.\n\nReplaces an earlier schema-less `dict[str, Any]`: every recognized\nconstraint now has a typed, validated, documented shape instead of an\nundocumented key vocabulary a caller had to guess at. Contains no\nprovider-specific settings \u2014 provider detail belongs in\n`AgentExecutionRequest.metadata`, never here.",
+      "properties": {
+        "allow_parallel": {
+          "default": false,
+          "title": "Allow Parallel",
+          "type": "boolean"
+        },
+        "consensus_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Consensus Size"
+        },
+        "excluded_agent_types": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Excluded Agent Types",
+          "type": "array"
+        },
+        "max_cost_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Cost Usd"
+        },
+        "max_latency_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Latency Ms"
+        },
+        "minimum_reliability": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Minimum Reliability"
+        },
+        "preferred_agent_types": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Preferred Agent Types",
+          "type": "array"
+        },
+        "required_capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Required Capabilities",
+          "type": "array"
+        }
+      },
+      "title": "RoutingConstraints",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A request for the Planner to decompose one goal into a `WorkflowPlan`.",
+  "properties": {
+    "available_capabilities": {
+      "items": {
+        "$ref": "#/$defs/AgentCapability"
+      },
+      "title": "Available Capabilities",
+      "type": "array"
+    },
+    "constraints": {
+      "$ref": "#/$defs/RoutingConstraints"
+    },
+    "goal": {
+      "title": "Goal",
+      "type": "string"
+    },
+    "knowledge_context": {
+      "items": {
+        "$ref": "#/$defs/KnowledgeSearchResult"
+      },
+      "title": "Knowledge Context",
+      "type": "array"
+    },
+    "metadata": {
+      "additionalProperties": true,
+      "title": "Metadata",
+      "type": "object"
+    },
+    "repository": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RepositoryMetadata"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "goal"
+  ],
+  "title": "PlanningRequest",
+  "type": "object"
+}

@@ -1,0 +1,80 @@
+{
+  "description": "One indexed Markdown document within a registered vault.",
+  "properties": {
+    "backlinks": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Backlinks",
+      "type": "array"
+    },
+    "content_hash": {
+      "title": "Content Hash",
+      "type": "string"
+    },
+    "document_id": {
+      "title": "Document Id",
+      "type": "string"
+    },
+    "frontmatter": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Frontmatter",
+      "type": "object"
+    },
+    "headings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Headings",
+      "type": "array"
+    },
+    "links": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Links",
+      "type": "array"
+    },
+    "modified_at": {
+      "format": "date-time",
+      "title": "Modified At",
+      "type": "string"
+    },
+    "relative_path": {
+      "title": "Relative Path",
+      "type": "string"
+    },
+    "size_bytes": {
+      "title": "Size Bytes",
+      "type": "integer"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "vault_id": {
+      "title": "Vault Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "document_id",
+    "vault_id",
+    "title",
+    "relative_path",
+    "content_hash",
+    "size_bytes",
+    "modified_at"
+  ],
+  "title": "KnowledgeDocument",
+  "type": "object"
+}

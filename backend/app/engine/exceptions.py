@@ -20,3 +20,17 @@ class InvalidWorkflowStateError(Exception):
         super().__init__(
             f"workflow '{workflow_id}' cannot start execution from status '{current_status.value}'"
         )
+
+
+class WorkflowResumeConflictError(Exception):
+    """Raised when a second resume is attempted while one is already in progress.
+
+    Detected via an optimistic check on `Workflow.version`: the resuming
+    caller's atomic claim only succeeds if `version` still matches what it
+    last read, so two concurrent `resume_workflow` calls on the same
+    workflow can never both proceed.
+    """
+
+    def __init__(self, workflow_id: str) -> None:
+        self.workflow_id = workflow_id
+        super().__init__(f"workflow '{workflow_id}' is already being resumed")

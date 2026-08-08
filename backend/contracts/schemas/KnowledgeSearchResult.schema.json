@@ -1,0 +1,41 @@
+{
+  "description": "One search hit against a vault's index.",
+  "properties": {
+    "document_id": {
+      "title": "Document Id",
+      "type": "string"
+    },
+    "score": {
+      "title": "Score",
+      "type": "number"
+    },
+    "snippet": {
+      "title": "Snippet",
+      "type": "string"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "vault_id": {
+      "title": "Vault Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "document_id",
+    "vault_id",
+    "title",
+    "snippet",
+    "score"
+  ],
+  "title": "KnowledgeSearchResult",
+  "type": "object"
+}

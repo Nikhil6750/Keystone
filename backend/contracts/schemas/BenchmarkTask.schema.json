@@ -1,0 +1,56 @@
+{
+  "$defs": {
+    "BenchmarkEvaluatorType": {
+      "description": "Objective evaluators a benchmark task may use. No subjective rankings.",
+      "enum": [
+        "exact_match",
+        "json_schema",
+        "regex",
+        "exit_code",
+        "unit_test",
+        "build",
+        "lint",
+        "type_check",
+        "file_diff",
+        "human_reviewed"
+      ],
+      "title": "BenchmarkEvaluatorType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One task within a benchmark definition.",
+  "properties": {
+    "evaluator_type": {
+      "$ref": "#/$defs/BenchmarkEvaluatorType"
+    },
+    "expected": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expected"
+    },
+    "input_payload": {
+      "additionalProperties": true,
+      "title": "Input Payload",
+      "type": "object"
+    },
+    "task_id": {
+      "title": "Task Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_id",
+    "evaluator_type"
+  ],
+  "title": "BenchmarkTask",
+  "type": "object"
+}

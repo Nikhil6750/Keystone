@@ -1,0 +1,117 @@
+{
+  "$defs": {
+    "BenchmarkEvaluatorType": {
+      "description": "Objective evaluators a benchmark task may use. No subjective rankings.",
+      "enum": [
+        "exact_match",
+        "json_schema",
+        "regex",
+        "exit_code",
+        "unit_test",
+        "build",
+        "lint",
+        "type_check",
+        "file_diff",
+        "human_reviewed"
+      ],
+      "title": "BenchmarkEvaluatorType",
+      "type": "string"
+    },
+    "BenchmarkTask": {
+      "additionalProperties": false,
+      "description": "One task within a benchmark definition.",
+      "properties": {
+        "evaluator_type": {
+          "$ref": "#/$defs/BenchmarkEvaluatorType"
+        },
+        "expected": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected"
+        },
+        "input_payload": {
+          "additionalProperties": true,
+          "title": "Input Payload",
+          "type": "object"
+        },
+        "task_id": {
+          "title": "Task Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "evaluator_type"
+      ],
+      "title": "BenchmarkTask",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A reproducible comparison of candidate agents across a set of tasks.",
+  "properties": {
+    "benchmark_id": {
+      "title": "Benchmark Id",
+      "type": "string"
+    },
+    "candidate_agent_types": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Candidate Agent Types",
+      "type": "array"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "repeat_count": {
+      "default": 1,
+      "title": "Repeat Count",
+      "type": "integer"
+    },
+    "tasks": {
+      "items": {
+        "$ref": "#/$defs/BenchmarkTask"
+      },
+      "title": "Tasks",
+      "type": "array"
+    },
+    "timeout_seconds": {
+      "title": "Timeout Seconds",
+      "type": "number"
+    },
+    "warm_up": {
+      "default": false,
+      "title": "Warm Up",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "benchmark_id",
+    "name",
+    "timeout_seconds"
+  ],
+  "title": "BenchmarkDefinition",
+  "type": "object"
+}

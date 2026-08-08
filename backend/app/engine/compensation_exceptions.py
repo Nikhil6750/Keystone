@@ -55,3 +55,21 @@ class InvalidCompensationStateError(CompensationError):
             error_code="INVALID_COMPENSATION_STATE",
             retryable=False,
         )
+
+
+class CompensationResumeConflictError(CompensationError):
+    """Raised when a second compensation-resume is attempted while one is
+    already in progress.
+
+    Detected via an atomic optimistic check on `Workflow.version`, exactly
+    like `WorkflowResumeConflictError` for execution resume — two concurrent
+    `resume_compensation` calls on the same workflow can never both proceed.
+    """
+
+    def __init__(self, workflow_id: str) -> None:
+        self.workflow_id = workflow_id
+        super().__init__(
+            f"workflow '{workflow_id}' is already being resumed for compensation",
+            error_code="COMPENSATION_RESUME_CONFLICT",
+            retryable=False,
+        )

@@ -1,0 +1,37 @@
+{
+  "additionalProperties": false,
+  "description": "How confident Keystone is in a decision, and why.",
+  "properties": {
+    "basis": {
+      "title": "Basis",
+      "type": "string"
+    },
+    "low_sample_size": {
+      "default": false,
+      "title": "Low Sample Size",
+      "type": "boolean"
+    },
+    "sample_size": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sample Size"
+    },
+    "value": {
+      "title": "Value",
+      "type": "number"
+    }
+  },
+  "required": [
+    "value",
+    "basis"
+  ],
+  "title": "Confidence",
+  "type": "object"
+}

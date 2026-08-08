@@ -1,0 +1,200 @@
+{
+  "$defs": {
+    "RoutingCandidateScore": {
+      "description": "One candidate agent's evaluated fitness for a routing request.\n\nMissing historical data must never be silently treated as perfect\nperformance \u2014 callers should leave the relevant score field `None` and\nset `low_sample_size=True` rather than defaulting to a high score.",
+      "properties": {
+        "agent_type": {
+          "title": "Agent Type",
+          "type": "string"
+        },
+        "capability_match": {
+          "title": "Capability Match",
+          "type": "boolean"
+        },
+        "composite_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Composite Score"
+        },
+        "cost_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cost Score"
+        },
+        "eligible": {
+          "title": "Eligible",
+          "type": "boolean"
+        },
+        "evidence": {
+          "additionalProperties": true,
+          "title": "Evidence",
+          "type": "object"
+        },
+        "excluded_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Excluded Reason"
+        },
+        "latency_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Latency Score"
+        },
+        "low_sample_size": {
+          "default": false,
+          "title": "Low Sample Size",
+          "type": "boolean"
+        },
+        "reliability_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reliability Score"
+        },
+        "repository_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Repository Score"
+        },
+        "sample_size": {
+          "default": 0,
+          "title": "Sample Size",
+          "type": "integer"
+        },
+        "task_type_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task Type Score"
+        }
+      },
+      "required": [
+        "agent_type",
+        "eligible",
+        "capability_match"
+      ],
+      "title": "RoutingCandidateScore",
+      "type": "object"
+    }
+  },
+  "description": "The outcome of one routing evaluation, always explainable.\n\n`selected_agent_types` is an additive field (Stage 4B) alongside the\noriginal `selected_agent_type`, kept for backward compatibility: it\ncarries the full ordered selected set for parallel/consensus routing\n(`RoutingConstraints.allow_parallel`), while `selected_agent_type`\nremains the single deterministic primary \u2014 the first entry of\n`selected_agent_types` whenever both are populated. Single-selection\ndecisions populate both with one matching entry; a decision with no\nselection (no eligible candidates) leaves both empty/`None`.",
+  "properties": {
+    "candidates": {
+      "items": {
+        "$ref": "#/$defs/RoutingCandidateScore"
+      },
+      "title": "Candidates",
+      "type": "array"
+    },
+    "confidence": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Confidence"
+    },
+    "decided_at": {
+      "format": "date-time",
+      "title": "Decided At",
+      "type": "string"
+    },
+    "explanation": {
+      "title": "Explanation",
+      "type": "string"
+    },
+    "fallback_order": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Fallback Order",
+      "type": "array"
+    },
+    "manual_override": {
+      "default": false,
+      "title": "Manual Override",
+      "type": "boolean"
+    },
+    "selected_agent_type": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Selected Agent Type"
+    },
+    "selected_agent_types": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Selected Agent Types",
+      "type": "array"
+    },
+    "task_type": {
+      "title": "Task Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_type",
+    "selected_agent_type",
+    "explanation",
+    "decided_at"
+  ],
+  "title": "RoutingDecision",
+  "type": "object"
+}

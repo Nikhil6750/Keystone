@@ -117,6 +117,50 @@ synchronously and sequentially in position order, given a database session and a
   actually wait), transitions back to `RUNNING`, and creates the next attempt. If the
   failure itself opens the circuit, no further retry is attempted for that step
   regardless of attempts remaining.
+
+`WorkflowEngine.resume_workflow(workflow_id)` (Stage 3) recovers a workflow left
+`RUNNING` by a process interruption — a pure extension of the class above, reusing
+`_execute_step` via a shared `_run_to_completion` helper (extracted from
+`execute_workflow`'s loop with no behavior change; the full existing test suite passed
+unchanged before and after the extraction) rather than a second execution path:
+
+- Requires `RUNNING` status; raises the existing `InvalidWorkflowStateError` otherwise
+  and `WorkflowNotFoundError` if the workflow doesn't exist — no new API-facing error
+  shapes.
+- Claims the workflow atomically via `workflow_service.claim_workflow_for_resume`, a
+  single conditional `UPDATE ... WHERE version = :expected_version` (using the
+  `Workflow.version` column that already existed for this purpose but wasn't yet used
+  as an optimistic-concurrency guard) — a second concurrent resume attempt loses the
+  race and gets `WorkflowResumeConflictError` rather than double-executing the workflow.
+- Already-`SUCCEEDED` steps are never re-run: their persisted `output_payload` seeds
+  the resumed `ExecutionContext` exactly as if they had just completed.
+- The one step still `RUNNING` at interruption time (if any) has its dangling
+  `StepAttempt` explicitly marked `FAILED` with `error_type="EXECUTION_INTERRUPTED"`
+  (never assumed to have silently succeeded), is transitioned `RUNNING → RETRYING`, and
+  is then re-attempted with a fresh `StepAttempt` — consuming one unit of its
+  `max_attempts` budget, same as any other retry.
+- Emits a new `AuditEventType.WORKFLOW_RESUMED` event (additive to the enum, no DB
+  migration — the column is un-constrained `VARCHAR`) before continuing; the resumed
+  run's events extend the same hash-linked chain, verified by
+  `tests/test_engine_resume.py::test_resume_preserves_audit_chain_integrity`.
+
+### `engine/workflow/` — Stage 3 additions (retry and idempotency for the graph scheduler)
+Per the Stage 2 scheduler's own docstring promise, Stage 3 adds retry/backoff/circuit-
+breaker behavior and duplicate-execution protection as decorators around the additive
+`GraphScheduler` from Stage 2, without changing the scheduler itself:
+
+- `retry_runner.py` — `RetryingStepRunner` wraps any `StepRunner`, reusing
+  `RetryPolicy.compute_delay()` (its math, not its blocking `time.sleep`-based
+  `Sleeper`, replaced here by `asyncio.sleep`) and the existing per-agent-type
+  `CircuitBreakerRegistry` — the same failure-classification shape as the live engine's
+  retry loop above, driven by the Stage 1 `FailureCategory` taxonomy via
+  `classify_legacy_error_type`.
+- `idempotency.py` — `IdempotentExecutionGuard[T]` ensures at most one execution runs
+  per idempotency key at a time; a duplicate call for an in-flight key awaits and
+  shares that call's result (success or failure) instead of starting a second
+  execution, and a duplicate call for an already-completed key returns the cached
+  result immediately. In-memory only, per-process — the same persistence-deferral
+  posture as the rest of this additive package.
 - On any other step failure — non-retryable, retries exhausted, or a missing executor
   (`ExecutorNotRegisteredError`) — persists the step/attempt/workflow as `FAILED` with a
   safe error message, and stops; later steps are left `PENDING`. A missing executor or
@@ -215,6 +259,66 @@ effects (e.g. a partially-refunded charge) is indistinguishable from a fully suc
 one at this layer. Provider-backed compensation handlers (calling a real external
 system to undo a step) are out of scope for this prototype; only the demo handler and
 the test-only fakes exist today.
+
+`CompensationService.resume_compensation(workflow_id)` recovers a workflow left
+`COMPENSATING` by a process interruption — the same gap `WorkflowEngine.resume_workflow`
+closes for execution, closed here for compensation. Requires `COMPENSATING` status;
+claims the workflow via the same atomic `Workflow.version` check as execution resume
+(`workflow_service.claim_workflow_for_compensation_resume`), so two concurrent
+compensation-resumes can never both proceed. A step already `COMPENSATED` is never
+re-compensated; the one step (if any) whose handler was in flight when the process was
+interrupted has its dangling `CompensationAttempt` marked `FAILED` first — never assumed
+to have silently succeeded — then re-attempted with a fresh attempt. Remaining eligible
+steps continue in the same reverse-position order a fresh run would use. The returned
+summary is rebuilt from current persisted step/attempt state, not from any in-memory
+list from the interrupted run, which does not survive a process restart. Emits a new
+`WORKFLOW_COMPENSATION_RESUMED` audit event, additive to the enum (unconstrained
+`VARCHAR` column, no migration), extending the same hash-linked chain.
+
+### `engine/workflow/` — DAG graph and concurrent scheduler
+An additive, dependency-aware execution capability alongside the live sequential
+`WorkflowEngine` above — not a replacement for it. **Implementation status:
+implemented as a standalone, fully-tested capability; not yet wired into the live
+`/workflows` API or the persisted `Workflow`/`WorkflowStep` models** (that wiring
+needs a schema migration for step dependencies/new statuses and is a breaking change
+to `POST /workflows/{id}/execute`'s synchronous contract — both require explicit
+sign-off before proceeding, per the build plan's manual checkpoints).
+
+- `graph.py` — `WorkflowGraph.from_definition()` builds an adjacency view of a Stage 1
+  `WorkflowDefinition`/`WorkflowStepDefinition` graph, detects cycles (the one
+  structural check the contract layer doesn't already perform — duplicate keys,
+  unknown dependencies, and self-dependencies are rejected by the contract's own
+  validators), and provides deterministic `ready_steps()`, `transitive_dependents()`,
+  and `topological_order()` (ties broken by declaration order).
+- `scheduler.py` — `GraphScheduler.run()` executes one workflow's DAG to completion:
+  independent steps run concurrently under two configurable bounds
+  (`max_concurrent_steps_per_workflow`, and `max_concurrent_per_agent_type` shared
+  across every `run()` call on one scheduler instance); a failed step skips its
+  transitive dependents without aborting unrelated branches; cancellation
+  (`cancellation.py::CancellationToken`, one per run, never shared) stops scheduling
+  new work and cancels in-flight steps cooperatively rather than waiting for them to
+  finish naturally; each step has a timeout (`WorkflowStepDefinition.timeout_seconds`
+  or a scheduler-wide default) enforced independently of the runner. The core loop is
+  driven entirely by `asyncio.wait(..., return_when=FIRST_COMPLETED)` — no busy-wait,
+  no fixed-interval polling. State is local to each `run()` call, so two concurrent
+  workflows (even sharing one `GraphScheduler` instance) never observe or affect each
+  other's cancellation or failure.
+- `runner.py` — the `StepRunner` protocol the scheduler delegates actual step
+  execution to, independent of both the live `AgentExecutor` and the Stage 1
+  `AgentAdapter` contract so a later stage can bridge to either without scheduler
+  changes. Retries are explicitly out of scope here (Stage 3 adds retry as a
+  `StepRunner` decorator); each step runs at most once this stage.
+- `events.py` — the `StateSink` protocol the scheduler emits a `WorkflowExecutionEvent`
+  to for every transition — the "restart-safe persisted state preparation" seam. No
+  implementation here writes to a database; `tests/support/graph_fakes.py`'s
+  `RecordingStateSink` is the only implementation, used to assert event ordering.
+- `state_machine.py` — a validated transition table (`transition_graph_workflow`,
+  `transition_graph_step`) for the in-memory `GraphWorkflowStatus`/`GraphStepStatus`
+  enums (`status.py`), covering the fuller status vocabulary (`ready`, `cancelling`,
+  `planning`, ...) than the persisted `WorkflowStatus`/`StepStatus` enums, which are
+  unchanged. Mirrors `engine/state_machine.py`'s pattern but is independently testable
+  rather than wired into the scheduler's per-step bookkeeping, since the scheduler only
+  ever produces valid terminal outcomes by construction.
 
 ### `adapters/`
 Local CLI integration layers between the orchestration engine and individual coding
@@ -404,6 +508,47 @@ Audit events are appended immediately after the state transition that produced t
 commits — never before, and never for a transition that didn't actually commit — but
 this is **best-effort sequential coupling, not single-transaction atomicity**: the state
 transition and its audit event are two separate commits.
+
+### `contracts/`
+Canonical, provider-neutral Pydantic v2 domain contracts shared across the engine, API,
+CLI and extension clients — the stable vNext shapes for workflow graphs, agent adapters,
+routing, agent passports, knowledge and benchmarking.
+**Implementation status: contracts defined (this stage); consuming subsystems land in
+later stages.** `contracts/adapter.py` (`AgentAdapter` protocol, `AgentDescriptor`,
+`AgentExecutionRequest`/`AgentExecutionResult`, `AgentUsage`, `RepositoryMetadata`),
+`contracts/workflow.py` (`WorkflowDefinition`/`WorkflowStepDefinition` — DAG-aware,
+additive to the live position-ordered `WorkflowCreate`/`WorkflowStepCreate` — and
+`WorkflowExecutionEvent`), `contracts/routing.py` (`RoutingRequest`/
+`RoutingCandidateScore`/`RoutingDecision`), `contracts/passports.py` (`AgentPassport`),
+`contracts/knowledge.py` (`KnowledgeDocument`/`KnowledgeSearchResult`),
+`contracts/benchmark.py` (`BenchmarkDefinition`/`BenchmarkTask`/`BenchmarkResult`),
+`contracts/errors.py` (the `FailureCategory` taxonomy and `classify_legacy_error_type`
+bridge from existing `StepExecutionError.error_type` strings), and
+`contracts/schema_export.py` (the `CONTRACT_MODELS` registry and JSON Schema generator
+behind `scripts/export_contracts.py`, whose output is committed under
+`backend/contracts/schemas/`). See [`contracts.md`](./contracts.md) for the ownership
+and dependency-direction model. This package is purely additive: `schemas/`,
+`models/enums.py`, and the live engine/API behavior described above are unchanged.
+
+**Stage 4A** adds the intelligence layer's typed foundation, contracts only —
+no Planner, Router, Verifier, or Explainability logic exists yet:
+`contracts/planning.py` (`TaskSpec` — deliberately no `agent_type`, the
+Planner decides *what* work exists, never *who* performs it — `WorkflowPlan`,
+`ExpectedOutcome`, `PlanningRequest`), `contracts/verification.py`
+(`VerificationResult`/`VerificationEvidence`/`VerificationStatus`, reusing
+`BenchmarkEvaluatorType` rather than a second objective-evaluator
+taxonomy), and `contracts/explainability.py` (`DecisionTrace`,
+`EvidenceItem`, `ScoreContribution`, `ExclusionReason`, `Confidence`,
+`CounterfactualCondition`, `RoutingExplanation` — a read-only lens over
+existing decisions, alongside the tamper-evident `AuditEvent` chain, not a
+replacement for it). `AgentDescriptor` gained an additive `runtime_kind`
+field (`RuntimeKind`: `AGENT_CLI`/`MODEL_API`/`LOCAL_MODEL`/`HYBRID`,
+defaulting to `AGENT_CLI` for backward compatibility) and `AgentCapability`
+gained three additive interaction-mode tags (`RAW_COMPLETION`,
+`STRUCTURED_OUTPUT`, `TOOL_CALLING`) — the same `AgentAdapter` contract
+serves both agent-CLI and model-API runtimes; see
+[`contracts.md`](./contracts.md#intelligence-layer-architecture-stage-4a) for
+the full component breakdown.
 
 ### Known limitations (by design, for this prototype)
 

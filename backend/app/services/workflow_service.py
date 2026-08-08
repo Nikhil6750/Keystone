@@ -1,9 +1,9 @@
 """Workflow persistence and state-transition operations."""
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import select
+from sqlalchemy import CursorResult, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
@@ -92,6 +92,62 @@ def transition_workflow(db: Session, workflow_id: str, target: WorkflowStatus) -
         db.rollback()
         raise
     return workflow
+
+
+def _claim_workflow(
+    db: Session, workflow_id: str, *, expected_version: int, required_status: WorkflowStatus
+) -> bool:
+    """Atomically bump `version` iff the workflow is still `required_status` at
+    `expected_version`. Shared by every "claim this workflow for resume"
+    operation — see `claim_workflow_for_resume` and
+    `claim_workflow_for_compensation_resume` for the public, status-specific
+    entry points and their exact semantics.
+    """
+    result = cast(
+        "CursorResult[Any]",
+        db.execute(
+            update(Workflow)
+            .where(
+                Workflow.id == workflow_id,
+                Workflow.version == expected_version,
+                Workflow.status == required_status,
+            )
+            .values(version=expected_version + 1, updated_at=datetime.now(UTC))
+        ),
+    )
+    db.commit()
+    return bool(result.rowcount == 1)
+
+
+def claim_workflow_for_resume(db: Session, workflow_id: str, *, expected_version: int) -> bool:
+    """Atomically bump `version` iff the workflow is still `RUNNING` at `expected_version`.
+
+    Returns `True` if this caller won the claim, `False` if another writer
+    (most importantly, a concurrent `resume_workflow` call) already changed
+    the row since the caller read `expected_version` — the caller must treat
+    `False` as "already being resumed/changed" and abort rather than
+    proceeding. Implemented as a single conditional `UPDATE` rather than
+    `SELECT` then `UPDATE`, so the check and the claim are one atomic
+    operation even across two separate database connections.
+    """
+    return _claim_workflow(
+        db, workflow_id, expected_version=expected_version, required_status=WorkflowStatus.RUNNING
+    )
+
+
+def claim_workflow_for_compensation_resume(
+    db: Session, workflow_id: str, *, expected_version: int
+) -> bool:
+    """Atomically bump `version` iff the workflow is still `COMPENSATING` at
+    `expected_version`. Same semantics as `claim_workflow_for_resume`, for
+    the compensation-recovery path instead of the execution one.
+    """
+    return _claim_workflow(
+        db,
+        workflow_id,
+        expected_version=expected_version,
+        required_status=WorkflowStatus.COMPENSATING,
+    )
 
 
 def transition_step(db: Session, step_id: str, target: StepStatus) -> WorkflowStep:

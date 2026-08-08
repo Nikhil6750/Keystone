@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.adapters.types import CLIProfile, create_cli_profile
@@ -27,7 +27,10 @@ class Settings(BaseSettings):
     environment: str = "development"
     log_level: str = "INFO"
 
-    database_url: str = "sqlite:///./keystone.db"
+    database_url: str = Field(
+        default="sqlite:///./keystone.db",
+        validation_alias=AliasChoices("KEYSTONE_DATABASE_URL", "DATABASE_URL", "database_url"),
+    )
 
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 

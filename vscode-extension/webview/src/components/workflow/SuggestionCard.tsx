@@ -8,7 +8,7 @@ import {
   CheckSquare,
   Sparkles,
 } from 'lucide-react';
-import type { Suggestion } from '../../hooks/useWorkflowBuilder';
+import type { Suggestion } from '../../api/MockProvider';
 
 const ICON_MAP: Record<string, React.ElementType> = {
   Server,

@@ -1,6 +1,6 @@
 import React from 'react';
 import { WorkspaceNode } from './WorkspaceNode';
-import type { WorkspaceNodeItem } from '../../hooks/useWorkspaceExplorer';
+import type { WorkspaceNodeItem } from '../../api/MockProvider';
 
 interface WorkspaceTreeProps {
   nodes: WorkspaceNodeItem[];

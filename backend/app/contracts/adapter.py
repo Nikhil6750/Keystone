@@ -106,9 +106,24 @@ class AgentExecutionResult(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _failed_requires_category(self) -> "AgentExecutionResult":
+    def _status_failure_category_consistency(self) -> "AgentExecutionResult":
+        """Enforce the exact `status` <-> `failure_category` pairing. Never
+        rewrites the input to make it consistent — an inconsistent
+        combination is a caller bug and must fail loudly."""
+        if self.status is AgentExecutionStatus.SUCCEEDED and self.failure_category is not None:
+            raise ValueError("failure_category must be None when status is SUCCEEDED")
         if self.status is AgentExecutionStatus.FAILED and self.failure_category is None:
             raise ValueError("failure_category is required when status is FAILED")
+        if (
+            self.status is AgentExecutionStatus.CANCELLED
+            and self.failure_category is not FailureCategory.CANCELLED
+        ):
+            raise ValueError("failure_category must be CANCELLED when status is CANCELLED")
+        if (
+            self.status is AgentExecutionStatus.TIMED_OUT
+            and self.failure_category is not FailureCategory.TIMEOUT
+        ):
+            raise ValueError("failure_category must be TIMEOUT when status is TIMED_OUT")
         return self
 
 

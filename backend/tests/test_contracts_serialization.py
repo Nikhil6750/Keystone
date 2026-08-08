@@ -21,7 +21,12 @@ from app.contracts.benchmark import BenchmarkDefinition, BenchmarkResult, Benchm
 from app.contracts.enums import AgentExecutionStatus, BenchmarkEvaluatorType
 from app.contracts.knowledge import KnowledgeDocument, KnowledgeSearchResult
 from app.contracts.passports import AgentPassport, AgentPassportMetricBucket
-from app.contracts.routing import RoutingCandidateScore, RoutingDecision, RoutingRequest
+from app.contracts.routing import (
+    RoutingCandidateScore,
+    RoutingConstraints,
+    RoutingDecision,
+    RoutingRequest,
+)
 from app.contracts.schema_export import CONTRACT_MODELS
 from app.contracts.workflow import (
     WorkflowDefinition,
@@ -65,6 +70,7 @@ _SAMPLES: list[BaseModel] = [
         timestamp=_NOW,
     ),
     RoutingRequest(task_type="code_generation"),
+    RoutingConstraints(excluded_agent_types=["codex"], max_cost_usd=1.0),
     RoutingCandidateScore(agent_type="demo", eligible=True, capability_match=True),
     RoutingDecision(
         task_type="code_generation",

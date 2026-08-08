@@ -58,6 +58,82 @@ This stage does not change any currently-shipping behavior:
   greenfield, defined ahead of the logic that will produce and consume them
   in Stages 4 through 7.
 
+## Execution interface architecture
+
+Three distinct "run one step" interfaces exist in the backend today. They
+are **not yet bridged to each other** — this section documents what each one
+is and the intended future direction, not a claim that the bridge exists.
+
+- **`AgentExecutor`** (`app/engine/executor.py`) — the existing, synchronous
+  interface. This is what the live `WorkflowEngine` actually calls today,
+  via `LocalCLIAdapter` and the concrete provider adapters in
+  `app/adapters/`. Unchanged by this stage and remains fully supported.
+- **`AgentAdapter`** (`app/contracts/adapter.py`, this stage) — the
+  provider-neutral, asynchronous interface Developer 3's connectors are
+  expected to implement going forward. Talks in `AgentExecutionRequest`/
+  `AgentExecutionResult`, not `StepExecutionRequest`/`dict`.
+- **`StepRunner`** (`app/engine/workflow/runner.py`, Stage 2) — a separate,
+  narrower asynchronous interface consumed only by the additive
+  `GraphScheduler` (also Stage 2). Not implemented or modified by this
+  stage's fix pass.
+
+None of these three currently convert into one another. The intended target
+direction — **not implemented yet, and out of scope for this fix pass** — is:
+
+```
+Provider Connector
+        |
+        v
+   AgentAdapter
+        |
+        v
+Execution Bridge     <-- does not exist yet
+        |
+        v
+   StepRunner
+        |
+        v
+  GraphScheduler
+```
+
+`AgentExecutor` is not shown in that chain because it is not being replaced
+by it — it remains the interface the live, synchronous `WorkflowEngine` uses
+until a deliberate, separately-approved migration/integration decision is
+made. Building the "Execution Bridge" box, wiring `AgentAdapter`
+implementations into `GraphScheduler`, or retiring `AgentExecutor` are all
+future work requiring their own explicit sign-off — none of that happens as
+part of this contract-invariant fix pass.
+
+## Allowed metadata and provenance content
+
+`AgentDescriptor.metadata`, `AgentExecutionRequest.metadata`,
+`AgentExecutionResult.metadata`, and `AgentExecutionResult.provenance` are
+intentionally open `dict[str, Any]` extension points — but "open" does not
+mean "anything goes." Treat them the same way regardless of which one you're
+populating:
+
+**Allowed:**
+- A provider or model identifier (e.g. `"model": "claude-opus-4"`)
+- Capability or version information (e.g. `"cli_version": "1.4.2"`)
+- Execution characteristics (e.g. `"retry_count": 2`, `"warm_start": true`)
+- Non-sensitive configuration identifiers (e.g. a named profile or preset ID)
+- For `provenance` specifically: execution ID, workflow ID, step ID,
+  timestamps, version/hash identifiers, and evidence references (e.g. an
+  audit-event ID or a content hash) — the "how do we know this happened"
+  trail, not secrets.
+
+**Never allowed, in any of these fields:**
+- Credentials, API keys, or access tokens
+- Provider session identifiers or cookies
+- Secrets of any kind
+- Private absolute filesystem paths
+- Full private file contents
+
+This is the same rule already enforced structurally for named fields
+(`RepositoryMetadata` has no path field; no contract has a credential-shaped
+field name) — these open `dict[str, Any]` fields don't have a name-based
+guard, so treat this list as the contract for what may go inside them.
+
 ## Contract catalog
 
 | Contract | Module | Purpose |
@@ -73,6 +149,7 @@ This stage does not change any currently-shipping behavior:
 | `WorkflowExecutionEvent` | `app/contracts/workflow.py` | One timeline event, for audit/SSE |
 | `WorkflowStatus` / `WorkflowStepStatus` | re-exported from `app.models.enums` | Persisted state enums |
 | `RoutingRequest` | `app/contracts/routing.py` | A request to select an agent |
+| `RoutingConstraints` | `app/contracts/routing.py` | Typed, validated routing constraints |
 | `RoutingCandidateScore` | `app/contracts/routing.py` | One candidate's evaluated fitness |
 | `RoutingDecision` | `app/contracts/routing.py` | An explainable routing outcome |
 | `AgentPassport` | `app/contracts/passports.py` | Objective, outcome-based evidence profile |
@@ -87,17 +164,39 @@ This stage does not change any currently-shipping behavior:
 
 ## Explainability and evidence rules encoded in the contracts
 
-- `AgentExecutionResult` requires a `failure_category` whenever `status` is
-  `FAILED` — every failure must be classifiable, not just a free-text message.
+- `AgentExecutionResult.status` and `.failure_category` are validated as one
+  consistent pair, not two independent fields: `SUCCEEDED` forbids a
+  `failure_category`; `FAILED` requires one; `CANCELLED` requires exactly
+  `FailureCategory.CANCELLED`; `TIMED_OUT` requires exactly
+  `FailureCategory.TIMEOUT`. A mismatched combination is rejected outright —
+  never silently coerced into consistency.
+- `BenchmarkResult.success`/`.failure_category` follow the same rule:
+  `success=True` forbids a category, `success=False` requires one.
+- `RoutingCandidateScore.eligible`/`.excluded_reason` are validated together:
+  `eligible=True` forbids a reason; `eligible=False` requires a non-blank one.
+  An excluded candidate with no stated reason, or an eligible one carrying a
+  stray exclusion reason, is rejected rather than passed through.
+- `RoutingDecision.manual_override=True` requires a non-blank
+  `selected_agent_type` — a "manual override" that selected nothing is a
+  contradiction, not a valid decision.
 - `RoutingDecision.explanation` must be non-blank — routing is never a black
   box (see rule 20 in the build plan).
 - `RoutingCandidateScore` and `AgentPassport` leave score/latency fields
   `None` rather than defaulting to a high score when historical data is
   missing, and carry an explicit `low_sample_size` flag — missing data is
   never silently treated as perfect performance.
+- `RoutingRequest.constraints` is a typed, validated `RoutingConstraints`
+  model, not a schema-less `dict[str, Any]` — every recognized constraint
+  (capability/agent-type filters, cost/latency/reliability thresholds,
+  parallel/consensus execution) has a documented shape and validated bounds;
+  `consensus_size` is only accepted when `allow_parallel=True`. It carries no
+  provider-specific settings — those stay in `AgentExecutionRequest.metadata`.
 - No contract in this catalog defines a credential, token, password, or
   session field (enforced by
   `tests/test_contracts_serialization.py::test_no_contract_model_defines_a_credential_shaped_field`).
+- None of the validators above ever rewrite an inconsistent input to make it
+  valid — an inconsistent combination is always a rejected `ValidationError`,
+  never a silent correction.
 
 ## Generated JSON Schema
 
@@ -125,6 +224,8 @@ before the corresponding backend logic exists.
 Implement new connectors against the `AgentAdapter` protocol in
 `app/contracts/adapter.py`. The current live connectors in
 `backend/app/adapters/` implement the older synchronous `AgentExecutor`
-protocol and are unaffected by this stage; note this repo currently has no
+protocol and are unaffected by this stage; see "Execution interface
+architecture" above for how `AgentAdapter`, `StepRunner`, and `AgentExecutor`
+relate (and don't yet bridge to each other). Note this repo currently has no
 separate `cli/`/`extension/` split — see the Stage 1 completion report for
 that ownership-boundary discrepancy.

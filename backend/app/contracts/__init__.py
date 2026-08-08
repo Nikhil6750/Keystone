@@ -35,7 +35,12 @@ from app.contracts.errors import (
 )
 from app.contracts.knowledge import KnowledgeDocument, KnowledgeSearchResult
 from app.contracts.passports import AgentPassport, AgentPassportMetricBucket
-from app.contracts.routing import RoutingCandidateScore, RoutingDecision, RoutingRequest
+from app.contracts.routing import (
+    RoutingCandidateScore,
+    RoutingConstraints,
+    RoutingDecision,
+    RoutingRequest,
+)
 from app.contracts.workflow import (
     WorkflowDefinition,
     WorkflowExecutionEvent,
@@ -65,6 +70,7 @@ __all__ = [
     "AgentPassport",
     "AgentPassportMetricBucket",
     "RoutingCandidateScore",
+    "RoutingConstraints",
     "RoutingDecision",
     "RoutingRequest",
     "WorkflowDefinition",

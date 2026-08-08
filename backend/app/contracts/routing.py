@@ -3,16 +3,89 @@
 Data shapes only — Stage 4 implements the classifier, scorer and router
 logic that produces these. Every `RoutingDecision` carries a human-readable
 `explanation` because routing decisions must never be a black box (see
-`docs/contracts.md`).
+`docs/contracts.md`). `RoutingConstraints` gives `RoutingRequest.constraints`
+a typed, validated shape instead of a schema-less `dict[str, Any]`, so every
+recognized constraint is documented and every combination is either valid or
+rejected outright — never silently coerced.
 """
 
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.contracts.adapter import RepositoryMetadata
 from app.contracts.enums import AgentCapability
+
+
+class RoutingConstraints(BaseModel):
+    """Structured, explainable routing constraints.
+
+    Replaces an earlier schema-less `dict[str, Any]`: every recognized
+    constraint now has a typed, validated, documented shape instead of an
+    undocumented key vocabulary a caller had to guess at. Contains no
+    provider-specific settings — provider detail belongs in
+    `AgentExecutionRequest.metadata`, never here.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    required_capabilities: list[str] = Field(default_factory=list)
+    excluded_agent_types: list[str] = Field(default_factory=list)
+    preferred_agent_types: list[str] = Field(default_factory=list)
+    max_cost_usd: float | None = None
+    max_latency_ms: float | None = None
+    minimum_reliability: float | None = None
+    allow_parallel: bool = False
+    consensus_size: int | None = None
+
+    @field_validator("required_capabilities", "excluded_agent_types", "preferred_agent_types")
+    @classmethod
+    def _entries_not_blank(cls, value: list[str]) -> list[str]:
+        if any(not entry.strip() for entry in value):
+            raise ValueError("entries must not be blank")
+        return value
+
+    @field_validator("required_capabilities", "excluded_agent_types", "preferred_agent_types")
+    @classmethod
+    def _entries_no_duplicates(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("duplicate entries are not allowed")
+        return value
+
+    @field_validator("max_cost_usd")
+    @classmethod
+    def _max_cost_nonnegative(cls, value: float | None) -> float | None:
+        if value is not None and value < 0:
+            raise ValueError("max_cost_usd must not be negative")
+        return value
+
+    @field_validator("max_latency_ms")
+    @classmethod
+    def _max_latency_positive(cls, value: float | None) -> float | None:
+        if value is not None and value <= 0:
+            raise ValueError("max_latency_ms must be positive")
+        return value
+
+    @field_validator("minimum_reliability")
+    @classmethod
+    def _minimum_reliability_bounded(cls, value: float | None) -> float | None:
+        if value is not None and not 0.0 <= value <= 1.0:
+            raise ValueError("minimum_reliability must be between 0 and 1")
+        return value
+
+    @field_validator("consensus_size")
+    @classmethod
+    def _consensus_size_valid(cls, value: int | None) -> int | None:
+        if value is not None and value < 2:
+            raise ValueError("consensus_size must be at least 2")
+        return value
+
+    @model_validator(mode="after")
+    def _consensus_requires_parallel(self) -> "RoutingConstraints":
+        if self.consensus_size is not None and not self.allow_parallel:
+            raise ValueError("consensus_size is only allowed when allow_parallel is True")
+        return self
 
 
 class RoutingRequest(BaseModel):
@@ -25,7 +98,7 @@ class RoutingRequest(BaseModel):
     required_capabilities: list[AgentCapability] = Field(default_factory=list)
     candidate_agent_types: list[str] | None = None
     manual_override_agent_type: str | None = None
-    constraints: dict[str, Any] = Field(default_factory=dict)
+    constraints: RoutingConstraints = Field(default_factory=RoutingConstraints)
 
     @field_validator("task_type")
     @classmethod
@@ -59,6 +132,19 @@ class RoutingCandidateScore(BaseModel):
     low_sample_size: bool = False
     evidence: dict[str, Any] = Field(default_factory=dict)
 
+    @model_validator(mode="after")
+    def _eligibility_consistency(self) -> "RoutingCandidateScore":
+        """Enforce the `eligible` <-> `excluded_reason` pairing. Never rewrites
+        the input to make it consistent — an inconsistent combination is a
+        caller bug and must fail loudly."""
+        if self.eligible and self.excluded_reason is not None:
+            raise ValueError("excluded_reason must be None when eligible is True")
+        if not self.eligible and not (self.excluded_reason and self.excluded_reason.strip()):
+            raise ValueError(
+                "excluded_reason is required and must not be blank when eligible is False"
+            )
+        return self
+
 
 class RoutingDecision(BaseModel):
     """The outcome of one routing evaluation, always explainable."""
@@ -81,5 +167,15 @@ class RoutingDecision(BaseModel):
             raise ValueError("explanation must not be empty")
         return value
 
+    @model_validator(mode="after")
+    def _manual_override_requires_selection(self) -> "RoutingDecision":
+        """A manual override with no selected agent is a contradiction — never
+        silently accepted or rewritten."""
+        if self.manual_override and not (
+            self.selected_agent_type and self.selected_agent_type.strip()
+        ):
+            raise ValueError("selected_agent_type is required when manual_override is True")
+        return self
 
-__all__ = ["RoutingCandidateScore", "RoutingDecision", "RoutingRequest"]
+
+__all__ = ["RoutingCandidateScore", "RoutingConstraints", "RoutingDecision", "RoutingRequest"]

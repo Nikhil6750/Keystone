@@ -72,6 +72,36 @@ def test_failed_result_preserves_failure_category() -> None:
     assert result.failure_category is FailureCategory.TIMEOUT
 
 
+def _result(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "benchmark_id": "bench-1",
+        "run_id": "run-1",
+        "agent_type": "demo",
+        "task_id": "task-1",
+        "duration_ms": 1.0,
+        "created_at": datetime.now(UTC),
+    }
+    base.update(overrides)
+    return base
+
+
+def test_successful_result_with_failure_category_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        BenchmarkResult.model_validate(
+            _result(success=True, failure_category=FailureCategory.TIMEOUT)
+        )
+
+
+def test_failed_result_without_failure_category_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        BenchmarkResult.model_validate(_result(success=False))
+
+
+def test_successful_result_without_failure_category_is_accepted() -> None:
+    result = BenchmarkResult.model_validate(_result(success=True))
+    assert result.failure_category is None
+
+
 def test_warm_up_runs_are_distinguishable_from_measured_runs() -> None:
     result = BenchmarkResult.model_validate(
         {

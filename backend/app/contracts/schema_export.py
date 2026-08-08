@@ -22,7 +22,12 @@ from app.contracts.adapter import (
 from app.contracts.benchmark import BenchmarkDefinition, BenchmarkResult, BenchmarkTask
 from app.contracts.knowledge import KnowledgeDocument, KnowledgeSearchResult
 from app.contracts.passports import AgentPassport, AgentPassportMetricBucket
-from app.contracts.routing import RoutingCandidateScore, RoutingDecision, RoutingRequest
+from app.contracts.routing import (
+    RoutingCandidateScore,
+    RoutingConstraints,
+    RoutingDecision,
+    RoutingRequest,
+)
 from app.contracts.workflow import (
     WorkflowDefinition,
     WorkflowExecutionEvent,
@@ -43,6 +48,7 @@ CONTRACT_MODELS: dict[str, type[BaseModel]] = {
     "WorkflowStepDefinition": WorkflowStepDefinition,
     "WorkflowExecutionEvent": WorkflowExecutionEvent,
     "RoutingRequest": RoutingRequest,
+    "RoutingConstraints": RoutingConstraints,
     "RoutingCandidateScore": RoutingCandidateScore,
     "RoutingDecision": RoutingDecision,
     "AgentPassport": AgentPassport,

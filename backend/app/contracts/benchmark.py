@@ -10,7 +10,7 @@ subjective model ranking.
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.contracts.adapter import AgentUsage
 from app.contracts.enums import BenchmarkEvaluatorType
@@ -103,6 +103,17 @@ class BenchmarkResult(BaseModel):
     usage: AgentUsage | None = None
     environment: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
+
+    @model_validator(mode="after")
+    def _success_failure_category_consistency(self) -> "BenchmarkResult":
+        """Enforce the `success` <-> `failure_category` pairing. Never rewrites
+        the input to make it consistent — an inconsistent combination is a
+        caller bug and must fail loudly."""
+        if self.success and self.failure_category is not None:
+            raise ValueError("failure_category must be None when success is True")
+        if not self.success and self.failure_category is None:
+            raise ValueError("failure_category is required when success is False")
+        return self
 
 
 __all__ = ["BenchmarkDefinition", "BenchmarkResult", "BenchmarkTask"]

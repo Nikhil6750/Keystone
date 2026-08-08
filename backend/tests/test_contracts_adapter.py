@@ -12,6 +12,7 @@ from app.contracts.adapter import (
     AgentExecutionResult,
 )
 from app.contracts.enums import AgentCapability, AgentExecutionStatus, AgentStatus
+from app.contracts.errors import FailureCategory
 
 
 def _request(**overrides: Any) -> dict[str, Any]:
@@ -78,6 +79,82 @@ def test_execution_result_succeeded_does_not_require_failure_category() -> None:
     )
     assert result.failure_category is None
     assert result.output_payload == {"ok": True}
+
+
+def _result(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "agent_id": "claude_code-1",
+        "agent_type": "claude_code",
+        "execution_id": "exec-1",
+        "workflow_id": "wf-1",
+        "step_id": "step-1",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_execution_result_succeeded_with_failure_category_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        AgentExecutionResult.model_validate(
+            _result(status=AgentExecutionStatus.SUCCEEDED, failure_category=FailureCategory.TIMEOUT)
+        )
+
+
+def test_execution_result_cancelled_requires_cancelled_category() -> None:
+    with pytest.raises(ValidationError):
+        AgentExecutionResult.model_validate(_result(status=AgentExecutionStatus.CANCELLED))
+
+
+def test_execution_result_cancelled_with_wrong_category_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        AgentExecutionResult.model_validate(
+            _result(
+                status=AgentExecutionStatus.CANCELLED,
+                failure_category=FailureCategory.PROVIDER_ERROR,
+            )
+        )
+
+
+def test_execution_result_cancelled_with_matching_category_is_accepted() -> None:
+    result = AgentExecutionResult.model_validate(
+        _result(status=AgentExecutionStatus.CANCELLED, failure_category=FailureCategory.CANCELLED)
+    )
+    assert result.status is AgentExecutionStatus.CANCELLED
+
+
+def test_execution_result_timed_out_requires_timeout_category() -> None:
+    with pytest.raises(ValidationError):
+        AgentExecutionResult.model_validate(_result(status=AgentExecutionStatus.TIMED_OUT))
+
+
+def test_execution_result_timed_out_with_wrong_category_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        AgentExecutionResult.model_validate(
+            _result(
+                status=AgentExecutionStatus.TIMED_OUT,
+                failure_category=FailureCategory.NETWORK_ERROR,
+            )
+        )
+
+
+def test_execution_result_timed_out_with_matching_category_is_accepted() -> None:
+    result = AgentExecutionResult.model_validate(
+        _result(status=AgentExecutionStatus.TIMED_OUT, failure_category=FailureCategory.TIMEOUT)
+    )
+    assert result.status is AgentExecutionStatus.TIMED_OUT
+
+
+def test_execution_result_never_silently_rewrites_a_mismatched_category() -> None:
+    """A mismatched category must raise, not get silently coerced to match
+    the status — validation failure is the only allowed outcome here."""
+    with pytest.raises(ValidationError) as exc_info:
+        AgentExecutionResult.model_validate(
+            _result(
+                status=AgentExecutionStatus.CANCELLED,
+                failure_category=FailureCategory.INTERNAL_ERROR,
+            )
+        )
+    assert "CANCELLED" in str(exc_info.value)
 
 
 def test_execution_result_contains_no_credential_fields() -> None:

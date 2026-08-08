@@ -59,6 +59,7 @@ def test_adaptive_retrieval_does_not_touch_router() -> None:
             task_type="fix",
             repository_id="org/repo",
             execution_status=AgentExecutionStatus.SUCCEEDED,
+            execution_id=f"execution-{i}",
         )
         for i in range(6)
     ]
@@ -88,6 +89,7 @@ def test_adaptive_retrieval_does_not_touch_production_passport_evidence_provider
             verification_status=VerificationStatus.PASSED,
             task_type="fix",
             execution_status=AgentExecutionStatus.SUCCEEDED,
+            execution_id=f"execution-{i}",
         )
         for i in range(6)
     ]

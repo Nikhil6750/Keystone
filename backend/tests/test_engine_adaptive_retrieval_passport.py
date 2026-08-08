@@ -26,6 +26,7 @@ def _feedback(
     repository_id: str | None = "org/repo",
     agent_type: str | None = None,
     chunk_content_hashes: tuple[str, ...] = (),
+    execution_id: str | None = None,
 ) -> RetrievalFeedback:
     return RetrievalFeedback(
         retrieval_id=retrieval_id,
@@ -35,6 +36,7 @@ def _feedback(
         repository_id=repository_id,
         agent_type=agent_type,
         execution_status=AgentExecutionStatus.SUCCEEDED,
+        execution_id=execution_id or f"execution-for-{retrieval_id}",
         chunk_content_hashes=chunk_content_hashes,
         created_at=_CREATED_AT,
     )
@@ -60,6 +62,30 @@ def test_passport_counts_and_rate() -> None:
     assert v.verified_success_rate == 0.25
     assert passport.overall.retrieval_count == 4
     assert passport.overall.selected_count == 4
+
+
+def test_two_independent_executions_of_same_retrieval_both_count_as_samples() -> None:
+    """Stage 7.5 hardening: two independent production executions (A and
+    B) that reused the same retrieval configuration and both verified
+    successfully must count as two verification samples, not collapse into
+    one via feedback_id deduplication."""
+    same_retrieval_id = "retrieval::shared-config"
+    feedback = [
+        _feedback(
+            retrieval_id=same_retrieval_id,
+            verification_status=VerificationStatus.PASSED,
+            execution_id="execution-A",
+        ),
+        _feedback(
+            retrieval_id=same_retrieval_id,
+            verification_status=VerificationStatus.PASSED,
+            execution_id="execution-B",
+        ),
+    ]
+    assert feedback[0].feedback_id != feedback[1].feedback_id  # genuinely distinct records
+    passport = rebuild_retrieval_passport(feedback, chunk_id="chunk-1")
+    assert passport.overall.verification.verification_sample_count == 2
+    assert passport.overall.verification.verified_success_count == 2
 
 
 def test_passport_zero_samples_has_none_rate_never_zero() -> None:

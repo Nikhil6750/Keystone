@@ -45,6 +45,7 @@ def _feedback_for(
             task_type=task_type,
             repository_id=repository_id,
             execution_status=AgentExecutionStatus.SUCCEEDED,
+            execution_id=f"execution-{chunk_id}-{i}",
         )
         for i in range(n)
     ]
@@ -289,6 +290,7 @@ def test_production_evidence_used_over_benchmark_when_both_sufficient() -> None:
             repository_id="org/repo",
             execution_status=AgentExecutionStatus.SUCCEEDED,
             evidence_source=EvidenceSource.PRODUCTION,
+            execution_id=f"execution-prod-{i}",
         )
         for i in range(6)
     ]

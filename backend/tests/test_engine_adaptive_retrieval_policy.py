@@ -20,6 +20,7 @@ _CREATED_AT = datetime(2026, 1, 1, tzinfo=UTC)
 def _feedback(
     *, retrieval_id: str, evidence_source: EvidenceSource, campaign_id: str | None = None
 ) -> RetrievalFeedback:
+    is_production = evidence_source is EvidenceSource.PRODUCTION
     return RetrievalFeedback(
         retrieval_id=retrieval_id,
         chunk_ids=("chunk-1",),
@@ -28,6 +29,7 @@ def _feedback(
         execution_status=AgentExecutionStatus.SUCCEEDED,
         evidence_source=evidence_source,
         campaign_id=campaign_id,
+        execution_id=f"execution-for-{retrieval_id}" if is_production else None,
         created_at=_CREATED_AT,
     )
 

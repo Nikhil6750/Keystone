@@ -29,6 +29,7 @@ def _feedback(**overrides) -> RetrievalFeedback:
         task_type="fix",
         repository_id="org/repo",
         execution_status=AgentExecutionStatus.SUCCEEDED,
+        execution_id="execution-1",
         created_at=_CREATED_AT,
     )
     defaults.update(overrides)
@@ -129,9 +130,12 @@ def test_benchmark_evidence_requires_non_blank_campaign_id() -> None:
 
 
 def test_valid_benchmark_feedback_with_campaign_id() -> None:
-    fb = _feedback(evidence_source=EvidenceSource.BENCHMARK, campaign_id="campaign-42")
+    fb = _feedback(
+        evidence_source=EvidenceSource.BENCHMARK, campaign_id="campaign-42", execution_id=None
+    )
     assert fb.evidence_source is EvidenceSource.BENCHMARK
     assert fb.campaign_id == "campaign-42"
+    assert fb.execution_id is None
 
 
 # --- content_hash_for -----------------------------------------------------------------------
@@ -174,6 +178,79 @@ def test_feedback_id_differs_by_retrieval_id() -> None:
     assert fb1.feedback_id != fb2.feedback_id
 
 
+# --- execution identity (Stage 7.5 hardening) ------------------------------------------------
+
+
+def test_blank_production_execution_id_rejected() -> None:
+    with pytest.raises(MalformedRetrievalFeedbackError, match="execution_id"):
+        _feedback(execution_id="   ")
+
+
+def test_missing_production_execution_id_rejected() -> None:
+    with pytest.raises(MalformedRetrievalFeedbackError, match="execution_id"):
+        _feedback(execution_id=None)
+
+
+def test_same_production_execution_reprocessed_yields_same_feedback_id() -> None:
+    """Reprocessing execution A (identical retrieval_id, execution_id, and
+    observable outcome) must be idempotent."""
+    fb1 = _feedback(execution_id="execution-A")
+    fb2 = _feedback(execution_id="execution-A")
+    assert fb1.feedback_id == fb2.feedback_id
+
+
+def test_different_execution_id_same_retrieval_and_outcome_yields_different_feedback_id() -> None:
+    """Two independent production executions (A and B) that happen to reuse
+    the same retrieval configuration and reach the same verified outcome
+    must still be two distinct feedback identities."""
+    fb_a = _feedback(execution_id="execution-A")
+    fb_b = _feedback(execution_id="execution-B")
+    assert fb_a.retrieval_id == fb_b.retrieval_id  # same semantic retrieval
+    assert fb_a.verification_status == fb_b.verification_status  # same outcome
+    assert fb_a.feedback_id != fb_b.feedback_id  # but different executions
+
+
+def test_execution_id_not_affected_by_created_at() -> None:
+    fb1 = _feedback(execution_id="execution-A", created_at=datetime(2020, 1, 1, tzinfo=UTC))
+    fb2 = _feedback(execution_id="execution-A", created_at=datetime(2099, 12, 31, tzinfo=UTC))
+    assert fb1.feedback_id == fb2.feedback_id
+
+
+def test_benchmark_feedback_id_still_uses_campaign_id_not_execution_id() -> None:
+    """Benchmark feedback_id computation is unchanged by this fix: it keys
+    on campaign_id, and execution_id (forbidden for benchmark) never enters
+    the formula."""
+    fb1 = _feedback(
+        evidence_source=EvidenceSource.BENCHMARK, campaign_id="campaign-1", execution_id=None
+    )
+    fb2 = _feedback(
+        evidence_source=EvidenceSource.BENCHMARK, campaign_id="campaign-1", execution_id=None
+    )
+    fb_other_campaign = _feedback(
+        evidence_source=EvidenceSource.BENCHMARK, campaign_id="campaign-2", execution_id=None
+    )
+    assert fb1.feedback_id == fb2.feedback_id  # same campaign -> same identity
+    assert fb1.feedback_id != fb_other_campaign.feedback_id  # different campaign -> different
+
+
+def test_benchmark_feedback_id_matches_pre_hardening_format() -> None:
+    """Golden-value regression: benchmark feedback_id must be byte-identical
+    to the formula used before this fix (campaign_id in the discriminator
+    slot, execution_id never present)."""
+    fb = _feedback(
+        retrieval_id="retrieval::fp1::fix::org/repo::c1,c2",
+        verification_status=VerificationStatus.PASSED,
+        evidence_source=EvidenceSource.BENCHMARK,
+        campaign_id="campaign-1",
+        execution_id=None,
+    )
+    expected = (
+        "feedback::retrieval::fp1::fix::org/repo::c1,c2::passed::succeeded::benchmark::"
+        "campaign-1"
+    )
+    assert fb.feedback_id == expected
+
+
 # --- repository -----------------------------------------------------------------------------
 
 
@@ -202,6 +279,7 @@ def test_repository_rejects_conflicting_readd() -> None:
         task_type="doc_gen",  # but different task_type -> different content, same feedback_id
         repository_id="org/repo",
         execution_status=AgentExecutionStatus.SUCCEEDED,
+        execution_id=fb_passed.execution_id,  # same execution_id too -> same feedback_id
     )
     repo.add(fb_passed)
     with pytest.raises(RetrievalFeedbackConflictError):

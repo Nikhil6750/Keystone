@@ -44,6 +44,7 @@ from app.engine.learning.aggregation import (
     count_failure_categories,
     group_and_bucket,
     group_by_capability_and_bucket,
+    group_by_repository_task_type_and_bucket,
     percentile,
 )
 from app.engine.learning.events import LearningEvent
@@ -61,9 +62,15 @@ class LearningPassport:
     `passport`'s own top-level counts in `AgentPassportMetricBucket` shape,
     for direct use as `RoutingEvidenceProvider.overall_metrics` evidence.
 
-    `capability_buckets` and every bucket's `.verification` (plus
-    `overall_verification`) exist only here: `AgentPassport` has no
-    capability dimension and no verified-success fields yet.
+    `capability_buckets`, `repository_task_type_buckets`, and every
+    bucket's `.verification` (plus `overall_verification`) exist only
+    here: `AgentPassport` has no capability dimension, no joint
+    repository+task-type dimension, and no verified-success fields yet.
+    `repository_task_type_buckets` (added for Stage 5B's evidence
+    hierarchy) is real aggregation over the same raw events as every other
+    dimension -- grouped by `(repository_id, task_type)` -- never a
+    fabricated blend of the separate `repository_buckets`/
+    `task_type_buckets`.
     """
 
     passport: AgentPassport
@@ -72,6 +79,9 @@ class LearningPassport:
     task_type_buckets: dict[str, LearningBucket] = field(default_factory=dict)
     repository_buckets: dict[str, LearningBucket] = field(default_factory=dict)
     capability_buckets: dict[str, LearningBucket] = field(default_factory=dict)
+    repository_task_type_buckets: dict[tuple[str, str], LearningBucket] = field(
+        default_factory=dict
+    )
     known_cost_usd_average: float | None = None
     known_cost_sample_count: int = 0
 
@@ -131,6 +141,7 @@ def rebuild_passport(
     task_type_buckets = group_and_bucket(relevant, key=lambda event: event.task_type)
     repository_buckets = group_and_bucket(relevant, key=lambda event: event.repository_id)
     capability_buckets = group_by_capability_and_bucket(relevant)
+    repository_task_type_buckets = group_by_repository_task_type_and_bucket(relevant)
 
     known_cost_usd_average, known_cost_sample_count = _known_cost_average(relevant)
 
@@ -159,6 +170,7 @@ def rebuild_passport(
         task_type_buckets=task_type_buckets,
         repository_buckets=repository_buckets,
         capability_buckets=capability_buckets,
+        repository_task_type_buckets=repository_task_type_buckets,
         known_cost_usd_average=known_cost_usd_average,
         known_cost_sample_count=known_cost_sample_count,
     )

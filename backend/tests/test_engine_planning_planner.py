@@ -79,8 +79,12 @@ def test_task_spec_to_routing_request_compatibility(planner: Planner) -> None:
         assert routing_req.manual_override_agent_type is None
 
 
-def test_20_run_determinism(planner: Planner) -> None:
-    """Verify 20 repeated runs on the same PlanningRequest produce identical WorkflowPlans."""
+def test_20_run_semantic_determinism(planner: Planner) -> None:
+    """Verify 20 repeated runs on the same PlanningRequest produce identical semantic WorkflowPlans.
+
+    Excludes operational creation timestamp `created_at` from comparison while asserting
+    exact equality of plan_id, goal, tasks, dependencies, capabilities, and metadata.
+    """
     req = PlanningRequest(
         goal="Refactor database connection pool to eliminate memory leaks",
         repository=RepositoryMetadata(name="keystone-backend"),
@@ -94,11 +98,15 @@ def test_20_run_determinism(planner: Planner) -> None:
     )
 
     baseline_plan = planner.plan(req)
+    baseline_semantic = baseline_plan.model_dump(exclude={"created_at"})
 
     for i in range(20):
         run_plan = planner.plan(req)
-        assert run_plan.plan_id == baseline_plan.plan_id, f"Failed determinism on run {i}"
-        assert run_plan.model_dump() == baseline_plan.model_dump(), f"Model mismatch on run {i}"
+        assert run_plan.plan_id == baseline_plan.plan_id, f"Failed plan_id determinism on run {i}"
+        assert (
+            run_plan.model_dump(exclude={"created_at"}) == baseline_semantic
+        ), f"Semantic plan mismatch on run {i}"
+        assert run_plan.created_at is not None
 
 
 def test_knowledge_context_handling_privacy(planner: Planner) -> None:

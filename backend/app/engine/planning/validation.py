@@ -6,7 +6,7 @@ detection at the contract level. This module provides a thin helper for checking
 `WorkflowPlan` instantiation if needed.
 """
 
-from datetime import UTC
+from datetime import UTC, datetime
 
 from app.contracts.planning import TaskSpec, WorkflowPlan
 
@@ -25,14 +25,11 @@ def validate_task_graph(tasks: list[TaskSpec]) -> None:
 
     # Delegate structural validation directly to WorkflowPlan model validation
     try:
-        # Create temporary dummy WorkflowPlan to leverage contract validation
-        from datetime import datetime
-
         WorkflowPlan(
             plan_id="dummy_val_id",
             goal="dummy validation goal",
             tasks=tasks,
-            created_at=datetime(1970, 1, 1, tzinfo=UTC),
+            created_at=datetime.now(UTC),
         )
     except ValueError as exc:
         raise PlannerValidationError(str(exc)) from exc

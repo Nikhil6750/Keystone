@@ -24,8 +24,9 @@ class Planner:
     def plan(self, request: PlanningRequest) -> WorkflowPlan:
         """Decompose a PlanningRequest into a deterministic WorkflowPlan.
 
-        Produces identical output for identical input (same plan_id, same tasks,
+        Produces identical semantic output for identical input (same plan_id, same tasks,
         same ordering, same capabilities, same dependencies, same expected outcomes).
+        `created_at` records the operational creation time in UTC.
         """
         # 1. Deterministic Goal Classification & Complexity Assessment
         classification = self.classifier.classify(request.goal)
@@ -50,6 +51,7 @@ class Planner:
         # 5. Validate Task Graph (Delegated to WorkflowPlan contract source of truth)
         validate_task_graph(tasks)
 
+        # 6. Safe Metadata Provenance Assembly (no sensitive paths or content)
         tmpl_suffix = classification.complexity_tier.value.lower()
         plan_metadata: dict[str, Any] = {
             "plan_category": classification.category.value,
@@ -68,7 +70,7 @@ class Planner:
                 if k not in plan_metadata:
                     plan_metadata[k] = v
 
-        # 7. Compute Deterministic plan_id and Timestamp
+        # 7. Compute Deterministic plan_id and Operational Timestamp
         repo_name = (
             request.repository.name
             if request.repository and request.repository.name
@@ -82,8 +84,8 @@ class Planner:
             tasks=[t.key for t in tasks],
         )
 
-        # Fixed UTC epoch timestamp ensures 100% bit-for-bit determinism across plan invocations
-        created_at = datetime(1970, 1, 1, 0, 0, 0, tzinfo=UTC)
+        # Operational timestamp representing plan generation time in UTC
+        created_at = datetime.now(UTC)
 
         return WorkflowPlan(
             plan_id=plan_id,

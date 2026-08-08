@@ -1,0 +1,59 @@
+{
+  "name": "keystone-vscode-extension",
+  "displayName": "Keystone AI Orchestrator",
+  "description": "Keystone AI Agent Orchestration Platform - VS Code Extension Foundation",
+  "version": "0.1.0",
+  "publisher": "keystone-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:keystone.openWorkspace",
+    "onView:keystone.sidebarView"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "keystone-activitybar",
+          "title": "Keystone",
+          "icon": "$(layers)"
+        }
+      ]
+    },
+    "views": {
+      "keystone-activitybar": [
+        {
+          "type": "webview",
+          "id": "keystone.sidebarView",
+          "name": "Keystone Explorer"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "keystone.openWorkspace",
+        "title": "Keystone: Open Workspace",
+        "category": "Keystone"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "compile": "tsc -p ./",
+    "watch": "tsc -w -p ./",
+    "build:webview": "cd webview && npm install && npm run build",
+    "build:extension": "tsc -p ./",
+    "build": "npm run build:webview && npm run build:extension",
+    "typecheck": "tsc -p ./ && cd webview && npm run typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}

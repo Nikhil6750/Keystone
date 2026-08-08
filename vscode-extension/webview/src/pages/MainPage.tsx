@@ -1,10 +1,10 @@
 import React from 'react';
-import { StatusCard } from '../components/StatusCard';
+import { WorkflowBuilder } from '../components/workflow/WorkflowBuilder';
 
 export const MainPage: React.FC = () => {
   return (
-    <div className="container">
-      <StatusCard />
+    <div className="app-container">
+      <WorkflowBuilder />
     </div>
   );
 };

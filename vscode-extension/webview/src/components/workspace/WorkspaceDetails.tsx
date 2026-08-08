@@ -1,6 +1,6 @@
 import React from 'react';
 import { Folder, FileText, Clock, HardDrive, Hash, AlignLeft } from 'lucide-react';
-import type { WorkspaceNodeItem } from '../../hooks/useWorkspaceExplorer';
+import type { WorkspaceNodeItem } from '../../api/MockProvider';
 
 interface WorkspaceDetailsProps {
   node: WorkspaceNodeItem | null;

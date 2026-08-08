@@ -1,14 +1,22 @@
-import { useState, useMemo } from 'react';
-import {
-  MOCK_KNOWLEDGE_DOCUMENTS,
-  type KnowledgeDocument,
-} from '../mock/knowledge';
+import { useState, useEffect, useMemo } from 'react';
+import { KnowledgeService } from '../services/KnowledgeService';
+import type { KnowledgeDocument } from '../api/MockProvider';
 import { useAppState } from './useAppState';
 
 export function useKnowledgeExplorer() {
   const { selectedKnowledgeId, setSelectedKnowledgeId } = useAppState();
-  const [documents] = useState<KnowledgeDocument[]>(MOCK_KNOWLEDGE_DOCUMENTS);
+  const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  useEffect(() => {
+    let isMounted = true;
+    KnowledgeService.listDocuments().then((docs) => {
+      if (isMounted) setDocuments(docs);
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const selectedDocument = useMemo(
     () => documents.find((doc) => doc.id === selectedKnowledgeId) || null,

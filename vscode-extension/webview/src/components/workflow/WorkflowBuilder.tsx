@@ -6,13 +6,14 @@ import { ExecuteButton } from './ExecuteButton';
 import { ExecutionConsole } from '../execution/ExecutionConsole';
 import { useWorkflowBuilder } from '../../hooks/useWorkflowBuilder';
 import { useWorkflowExecution } from '../../hooks/useWorkflowExecution';
-import type { Suggestion } from '../../hooks/useWorkflowBuilder';
+import type { Suggestion } from '../../api/MockProvider';
 
 export const WorkflowBuilder: React.FC = () => {
   const {
     prompt,
     setPrompt,
     selectedTemplate,
+    suggestions,
     selectSuggestion,
   } = useWorkflowBuilder();
 
@@ -53,6 +54,7 @@ export const WorkflowBuilder: React.FC = () => {
         <PromptInput value={prompt} onChange={handlePromptChange} />
 
         <SuggestionGrid
+          suggestions={suggestions}
           selectedTemplate={selectedTemplate}
           onSelectSuggestion={handleSelectSuggestion}
         />

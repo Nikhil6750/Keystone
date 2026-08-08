@@ -8,7 +8,7 @@ import {
   Code,
   FileJson,
 } from 'lucide-react';
-import type { WorkspaceNodeItem } from '../../hooks/useWorkspaceExplorer';
+import type { WorkspaceNodeItem } from '../../api/MockProvider';
 
 interface WorkspaceNodeProps {
   node: WorkspaceNodeItem;
@@ -86,7 +86,7 @@ export const WorkspaceNode: React.FC<WorkspaceNodeProps> = ({
 
       {isDirectory && isExpanded && node.children && node.children.length > 0 && (
         <div className="tree-node-children">
-          {node.children.map((child) => (
+          {node.children.map((child: WorkspaceNodeItem) => (
             <WorkspaceNode
               key={child.id}
               node={child}

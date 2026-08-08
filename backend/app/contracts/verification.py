@@ -11,9 +11,10 @@ vocabularies for it.
 Every field here must describe Keystone's own observable, measurable
 evidence — test results, exit codes, diffs, human/secondary-agent
 sign-off — never a model's internal reasoning. `VerificationEvidence.value`
-is validated defensively against the most likely leak vector (a dict value
-carrying a reasoning-shaped key); nothing in this module can substitute for
-disciplined field design, but see `docs/contracts.md` for the full rule.
+is checked recursively for reserved reasoning-trace-shaped dict keys via
+`app.contracts.evidence_safety` (shared with `app.contracts.explainability`);
+nothing in this module can substitute for disciplined field design, but see
+`docs/contracts.md` for the full rule.
 """
 
 from datetime import datetime
@@ -23,27 +24,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.contracts.enums import BenchmarkEvaluatorType
-
-_FORBIDDEN_EVIDENCE_KEY_SUBSTRINGS = (
-    "chain_of_thought",
-    "reasoning",
-    "internal_thought",
-    "hidden_prompt",
-    "raw_prompt",
-    "scratchpad",
-)
-
-
-def _reject_reasoning_shaped_keys(value: Any) -> Any:
-    if isinstance(value, dict):
-        for key in value:
-            lowered = str(key).lower()
-            if any(bad in lowered for bad in _FORBIDDEN_EVIDENCE_KEY_SUBSTRINGS):
-                raise ValueError(
-                    f"evidence value must not contain a '{key}' key — Keystone explains only "
-                    "its own observable decision evidence, never a model's internal reasoning"
-                )
-    return value
+from app.contracts.evidence_safety import reject_reasoning_shaped_keys
 
 
 class VerificationStatus(StrEnum):
@@ -78,12 +59,25 @@ class VerificationEvidence(BaseModel):
     @field_validator("value")
     @classmethod
     def _value_not_reasoning_shaped(cls, value: Any) -> Any:
-        return _reject_reasoning_shaped_keys(value)
+        return reject_reasoning_shaped_keys(value)
 
 
 class VerificationResult(BaseModel):
     """The outcome of verifying one execution result against its
-    `ExpectedOutcome` (`app.contracts.planning`)."""
+    `ExpectedOutcome` (`app.contracts.planning`).
+
+    `failure_reason` behavior by `status` — the only two combinations with
+    an unambiguous expectation are enforced; the other two are deliberately
+    left to the caller's judgment:
+
+    - `PASSED`: `failure_reason` must be `None` (there is nothing to explain).
+    - `FAILED`: `failure_reason` is required and must not be blank.
+    - `INCONCLUSIVE`: `failure_reason` is optional — a caller may note *why*
+      the check could not reach a verdict (e.g. "evaluator timed out"), or
+      leave it `None` when there's nothing more to say than "inconclusive."
+    - `REQUIRES_HUMAN_REVIEW`: `failure_reason` is optional, for the same
+      reason — it may carry context for the reviewer, or be left `None`.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -78,7 +78,7 @@
       "type": "string"
     }
   },
-  "description": "The outcome of verifying one execution result against its\n`ExpectedOutcome` (`app.contracts.planning`).",
+  "description": "The outcome of verifying one execution result against its\n`ExpectedOutcome` (`app.contracts.planning`).\n\n`failure_reason` behavior by `status` \u2014 the only two combinations with\nan unambiguous expectation are enforced; the other two are deliberately\nleft to the caller's judgment:\n\n- `PASSED`: `failure_reason` must be `None` (there is nothing to explain).\n- `FAILED`: `failure_reason` is required and must not be blank.\n- `INCONCLUSIVE`: `failure_reason` is optional \u2014 a caller may note *why*\n  the check could not reach a verdict (e.g. \"evaluator timed out\"), or\n  leave it `None` when there's nothing more to say than \"inconclusive.\"\n- `REQUIRES_HUMAN_REVIEW`: `failure_reason` is optional, for the same\n  reason \u2014 it may carry context for the reviewer, or be left `None`.",
   "properties": {
     "confidence": {
       "anyOf": [

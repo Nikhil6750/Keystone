@@ -67,6 +67,23 @@ def test_inconclusive_and_requires_human_review_have_no_failure_reason_requireme
     assert review.failure_reason is None
 
 
+def test_inconclusive_may_optionally_carry_a_failure_reason() -> None:
+    result = VerificationResult.model_validate(
+        _result(status=VerificationStatus.INCONCLUSIVE, failure_reason="evaluator timed out")
+    )
+    assert result.failure_reason == "evaluator timed out"
+
+
+def test_requires_human_review_may_optionally_carry_a_failure_reason() -> None:
+    result = VerificationResult.model_validate(
+        _result(
+            status=VerificationStatus.REQUIRES_HUMAN_REVIEW,
+            failure_reason="ambiguous diff, needs a human call",
+        )
+    )
+    assert result.failure_reason == "ambiguous diff, needs a human call"
+
+
 def test_confidence_must_be_between_zero_and_one() -> None:
     with pytest.raises(ValidationError):
         VerificationResult.model_validate(
@@ -121,6 +138,38 @@ def test_verification_evidence_rejects_reasoning_shaped_value() -> None:
                 "value": {"chain_of_thought": "x"},
             }
         )
+
+
+def test_verification_evidence_rejects_reasoning_shaped_key_nested_in_a_dict() -> None:
+    with pytest.raises(ValidationError):
+        VerificationEvidence.model_validate(
+            {
+                "kind": "review",
+                "description": "secondary review",
+                "value": {"details": {"internal_reasoning": "x"}},
+            }
+        )
+
+
+def test_verification_evidence_rejects_reasoning_shaped_key_inside_a_list() -> None:
+    with pytest.raises(ValidationError):
+        VerificationEvidence.model_validate(
+            {
+                "kind": "review",
+                "description": "secondary review",
+                "value": [{"hidden_reasoning": "x"}],
+            }
+        )
+
+
+def test_verification_evidence_accepts_benign_key_that_merely_mentions_reasoning() -> None:
+    """`reasoning_step_count` is a plain observable count, not reasoning
+    content — the safety check matches exact reserved key names, not any
+    key containing the substring "reasoning"."""
+    evidence = VerificationEvidence.model_validate(
+        {"kind": "review", "description": "secondary review", "value": {"reasoning_step_count": 4}}
+    )
+    assert evidence.value == {"reasoning_step_count": 4}
 
 
 def test_verification_evidence_accepts_plain_observable_value() -> None:

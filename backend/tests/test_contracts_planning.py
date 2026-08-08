@@ -89,6 +89,43 @@ def test_workflow_plan_rejects_a_longer_cycle() -> None:
         )
 
 
+def test_workflow_plan_rejects_a_cycle_nested_inside_a_larger_graph() -> None:
+    """A cycle among a subset of tasks must be rejected even when most of
+    the graph (here, `entry` and `exit`) is well-formed — the validator
+    must not stop at the first acyclic-looking branch it finds."""
+    with pytest.raises(ValidationError):
+        WorkflowPlan.model_validate(
+            _plan(
+                [
+                    _task(key="entry"),
+                    _task(key="a", depends_on=["entry", "e"]),
+                    _task(key="b", depends_on=["a"]),
+                    _task(key="c", depends_on=["b"]),
+                    _task(key="d", depends_on=["c"]),
+                    _task(key="e", depends_on=["d"]),
+                    _task(key="exit", depends_on=["entry"]),
+                ]
+            )
+        )
+
+
+def test_workflow_plan_accepts_disconnected_components() -> None:
+    """Two entirely independent task chains in one plan are structurally
+    valid — a `WorkflowPlan` is not required to be a single connected
+    graph, only acyclic with known dependencies."""
+    plan = WorkflowPlan.model_validate(
+        _plan(
+            [
+                _task(key="a1"),
+                _task(key="a2", depends_on=["a1"]),
+                _task(key="b1"),
+                _task(key="b2", depends_on=["b1"]),
+            ]
+        )
+    )
+    assert {task.key for task in plan.tasks} == {"a1", "a2", "b1", "b2"}
+
+
 def test_workflow_plan_rejects_blank_plan_id_or_goal() -> None:
     with pytest.raises(ValidationError):
         WorkflowPlan.model_validate(_plan([], plan_id="  "))

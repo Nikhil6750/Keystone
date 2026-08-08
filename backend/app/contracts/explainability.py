@@ -16,9 +16,9 @@ own observable decision evidence — execution counts, success rates, circuit
 state, configured constraints, timing. Nothing here may expose or claim to
 expose a model's hidden chain-of-thought, its internal reasoning trace, a
 provider's private reasoning, credentials, prompts containing private data,
-or full private file contents. `EvidenceItem.value` is validated defensively
-against the most likely leak vector (a dict value carrying a reasoning-shaped
-key) — the same discipline as `app.contracts.verification`.
+or full private file contents. `EvidenceItem.value` is checked recursively
+for reserved reasoning-trace-shaped dict keys via `app.contracts.evidence_safety`
+(shared with `app.contracts.verification`) — the same discipline throughout.
 """
 
 from datetime import datetime
@@ -27,28 +27,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.contracts.evidence_safety import reject_reasoning_shaped_keys
 from app.contracts.routing import RoutingDecision
-
-_FORBIDDEN_EVIDENCE_KEY_SUBSTRINGS = (
-    "chain_of_thought",
-    "reasoning",
-    "internal_thought",
-    "hidden_prompt",
-    "raw_prompt",
-    "scratchpad",
-)
-
-
-def _reject_reasoning_shaped_keys(value: Any) -> Any:
-    if isinstance(value, dict):
-        for key in value:
-            lowered = str(key).lower()
-            if any(bad in lowered for bad in _FORBIDDEN_EVIDENCE_KEY_SUBSTRINGS):
-                raise ValueError(
-                    f"evidence value must not contain a '{key}' key — Keystone explains only "
-                    "its own observable decision evidence, never a model's internal reasoning"
-                )
-    return value
 
 
 class DecisionType(StrEnum):
@@ -82,11 +62,27 @@ class EvidenceItem(BaseModel):
     @field_validator("value")
     @classmethod
     def _value_not_reasoning_shaped(cls, value: Any) -> Any:
-        return _reject_reasoning_shaped_keys(value)
+        return reject_reasoning_shaped_keys(value)
 
 
 class ScoreContribution(BaseModel):
-    """How much one scoring factor contributed to a candidate's composite score."""
+    """How much one scoring factor contributed to a candidate's composite score.
+
+    Normalized, non-negative scoring only: `raw_score`, `weight`, and
+    `weighted_contribution` are each bounded to `[0.0, 1.0]`. There is no
+    negative "penalty" value here — a candidate that should score worse
+    because of some condition is expressed as a *low* `raw_score` (e.g.
+    `0.1`, not `-0.9`), or, if the condition disqualifies the candidate
+    outright rather than merely scoring it low, as an `ExclusionReason`
+    instead. This keeps every number in a `ScoreContribution` directly
+    comparable and averageable without sign-handling logic anywhere
+    downstream.
+
+    `weighted_contribution` is not required to equal `raw_score * weight`
+    exactly: future scoring may normalize or rescale contributions (e.g.
+    across factors with different evidence quality) before combining them,
+    so only the bound is enforced here, not the arithmetic relationship.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -102,6 +98,13 @@ class ScoreContribution(BaseModel):
     def _factor_name_not_blank(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("factor_name must not be empty")
+        return value
+
+    @field_validator("raw_score", "weight", "weighted_contribution")
+    @classmethod
+    def _bounded_zero_to_one(cls, value: float | None) -> float | None:
+        if value is not None and not 0.0 <= value <= 1.0:
+            raise ValueError("must be between 0.0 and 1.0")
         return value
 
 

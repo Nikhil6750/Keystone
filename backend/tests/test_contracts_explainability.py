@@ -154,12 +154,108 @@ def test_routing_explanation_nests_the_existing_routing_decision() -> None:
 
 def test_evidence_item_rejects_reasoning_shaped_dict_value() -> None:
     with pytest.raises(ValidationError):
-        EvidenceItem(kind="model_output", description="raw output", value={"reasoning": "secret"})
+        EvidenceItem(
+            kind="model_output", description="raw output", value={"chain_of_thought": "secret"}
+        )
+
+
+def test_evidence_item_rejects_reasoning_shaped_key_nested_in_a_dict() -> None:
+    with pytest.raises(ValidationError):
+        EvidenceItem(
+            kind="model_output",
+            description="raw output",
+            value={"details": {"chain_of_thought": "secret"}},
+        )
+
+
+def test_evidence_item_rejects_reasoning_shaped_key_inside_a_list() -> None:
+    with pytest.raises(ValidationError):
+        EvidenceItem(
+            kind="model_output",
+            description="raw output",
+            value=[{"internal_reasoning": "secret"}],
+        )
+
+
+def test_evidence_item_accepts_benign_key_that_merely_mentions_reasoning() -> None:
+    """`reasoning_step_count` is a plain observable count, not reasoning
+    content — the safety check matches exact reserved key names, not any
+    key containing the substring "reasoning"."""
+    item = EvidenceItem(
+        kind="model_output", description="raw output", value={"reasoning_step_count": 4}
+    )
+    assert item.value == {"reasoning_step_count": 4}
 
 
 def test_evidence_item_accepts_plain_observable_value() -> None:
     item = EvidenceItem(kind="latency", description="median latency", value=1200.5, sample_size=15)
     assert item.value == 1200.5
+
+
+def test_counterfactual_condition_round_trips_through_json() -> None:
+    condition = CounterfactualCondition(
+        description="if codex's success rate exceeded 90%, it would have been selected",
+        would_change_outcome_to="codex",
+    )
+    restored = CounterfactualCondition.model_validate_json(condition.model_dump_json())
+    assert restored == condition
+
+
+def test_counterfactual_condition_rejects_blank_description() -> None:
+    with pytest.raises(ValidationError):
+        CounterfactualCondition(description="   ")
+
+
+def test_counterfactual_condition_would_change_outcome_to_is_optional() -> None:
+    condition = CounterfactualCondition(description="no alternative outcome was close")
+    assert condition.would_change_outcome_to is None
+
+
+def test_score_contribution_accepts_lower_bound_zero() -> None:
+    contribution = ScoreContribution(
+        factor_name="reliability", raw_score=0.0, weight=0.0, weighted_contribution=0.0
+    )
+    assert contribution.raw_score == 0.0
+    assert contribution.weight == 0.0
+    assert contribution.weighted_contribution == 0.0
+
+
+def test_score_contribution_accepts_upper_bound_one() -> None:
+    contribution = ScoreContribution(
+        factor_name="reliability", raw_score=1.0, weight=1.0, weighted_contribution=1.0
+    )
+    assert contribution.raw_score == 1.0
+    assert contribution.weight == 1.0
+    assert contribution.weighted_contribution == 1.0
+
+
+@pytest.mark.parametrize("field_name", ["raw_score", "weight", "weighted_contribution"])
+def test_score_contribution_rejects_negative_values(field_name: str) -> None:
+    kwargs: dict[str, object] = {"factor_name": "reliability", "weight": 0.5}
+    kwargs[field_name] = -0.01
+    with pytest.raises(ValidationError):
+        ScoreContribution(**kwargs)
+
+
+@pytest.mark.parametrize("field_name", ["raw_score", "weight", "weighted_contribution"])
+def test_score_contribution_rejects_values_above_one(field_name: str) -> None:
+    kwargs: dict[str, object] = {"factor_name": "reliability", "weight": 0.5}
+    kwargs[field_name] = 1.01
+    with pytest.raises(ValidationError):
+        ScoreContribution(**kwargs)
+
+
+def test_score_contribution_does_not_require_weighted_contribution_to_equal_raw_times_weight() -> (
+    None
+):
+    """Future scoring may normalize/rescale before combining terms, so the
+    contract only bounds each value to [0, 1] — it never enforces the
+    arithmetic relationship between them. `0.2 * 0.5 == 0.1`, not `0.9`, and
+    this must still construct without error."""
+    contribution = ScoreContribution(
+        factor_name="reliability", raw_score=0.2, weight=0.5, weighted_contribution=0.9
+    )
+    assert contribution.weighted_contribution == 0.9
 
 
 def test_no_contract_model_has_a_credential_or_reasoning_shaped_field_name() -> None:

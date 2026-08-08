@@ -1,7 +1,8 @@
 """The Metric Aggregator: deterministic, pure-function reduction of a list
 of `LearningEvent`s into `AgentPassportMetricBucket`/`VerificationMetrics`
-values for one bucket (overall, one task type, one repository, or one
-capability).
+values for one bucket (overall, one task type, one repository, one
+capability, or -- Stage 5B's finest-grained dimension -- one
+`(repository, task type)` pair).
 
 **Deterministic by construction**: every function here is a symmetric
 aggregate (count, sum, max, sorted-percentile) over its input event list --
@@ -200,6 +201,27 @@ def group_by_capability_and_bucket(events: list[LearningEvent]) -> dict[str, Lea
     }
 
 
+def group_by_repository_task_type_and_bucket(
+    events: list[LearningEvent],
+) -> dict[tuple[str, str], LearningBucket]:
+    """Group `events` by the `(repository_id, task_type)` pair -- Stage 5B's
+    finest-grained evidence dimension (`app.engine.learning.policy`'s
+    hierarchy priority 1). Only real, observed joint evidence: an event
+    contributes here only when it carries *both* a `repository_id` and a
+    `task_type`; this is additional real aggregation over the same raw
+    events the other three dimensions already use, never a fabricated
+    blend of the separate repository/task-type buckets."""
+    groups: dict[tuple[str, str], list[LearningEvent]] = {}
+    for event in events:
+        if event.repository_id is None or event.task_type is None:
+            continue
+        key = (event.repository_id, event.task_type)
+        groups.setdefault(key, []).append(event)
+    return {
+        group_key: bucket_from_events(group_events) for group_key, group_events in groups.items()
+    }
+
+
 def count_failure_categories(events: Iterable[LearningEvent]) -> dict[str, int]:
     """Deterministic failure-category tally (keyed by `FailureCategory.value`)
     across every event with a real `failure_category`. Dict key insertion
@@ -221,5 +243,6 @@ __all__ = [
     "count_failure_categories",
     "group_and_bucket",
     "group_by_capability_and_bucket",
+    "group_by_repository_task_type_and_bucket",
     "percentile",
 ]

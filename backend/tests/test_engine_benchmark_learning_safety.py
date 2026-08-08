@@ -21,6 +21,7 @@ from app.engine.benchmark_learning.policy import BenchmarkLearningPolicy
 from app.engine.learning.events import LearningEvent
 
 _CREATED_AT = datetime(2026, 1, 1, tzinfo=UTC)
+_CAMPAIGN_ID = "campaign-1"
 
 _FORBIDDEN_FIELD_NAME_SUBSTRINGS = (
     "password",
@@ -78,6 +79,7 @@ def test_provenance_source_cannot_be_forged_to_a_non_benchmark_value() -> None:
     with pytest.raises(MalformedBenchmarkLearningInputError):
         BenchmarkLearningProvenance(
             event_id="e1",
+            campaign_id=_CAMPAIGN_ID,
             suite_id="s1",
             case_id="c1",
             agent_type="a1",
@@ -93,7 +95,7 @@ def test_record_rejects_mismatched_event_and_provenance_identity() -> None:
     an `event`/`provenance` pair that don't actually describe the same
     observation must be rejected, not silently accepted."""
     event = LearningEvent(
-        event_id="benchmark::s1::c1::a1::rep1",
+        event_id="benchmark::campaign-1::s1::c1::a1::rep1",
         workflow_id="benchmark::s1",
         agent_type="a1",
         execution_status=AgentExecutionStatus.SUCCEEDED,
@@ -101,7 +103,9 @@ def test_record_rejects_mismatched_event_and_provenance_identity() -> None:
         verification_status=VerificationStatus.PASSED,
     )
     mismatched_provenance = BenchmarkLearningProvenance(
-        event_id="benchmark::s1::c2::a1::rep1",  # different case_id -> different identity
+        # different case_id -> different identity
+        event_id="benchmark::campaign-1::s1::c2::a1::rep1",
+        campaign_id=_CAMPAIGN_ID,
         suite_id="s1",
         case_id="c2",
         agent_type="a1",
@@ -111,6 +115,35 @@ def test_record_rejects_mismatched_event_and_provenance_identity() -> None:
     )
     with pytest.raises(MalformedBenchmarkLearningInputError):
         BenchmarkLearningRecord(event=event, provenance=mismatched_provenance)
+
+
+def test_record_rejects_mismatched_execution_status() -> None:
+    """Defense-in-depth: a `BenchmarkLearningRecord` whose `event` and
+    `provenance` disagree about `execution_status` (e.g. a hand-built
+    provenance claiming CANCELLED for an event that actually SUCCEEDED)
+    must be rejected -- this is exactly the kind of mismatch that could
+    silently misreport a benchmark outcome."""
+    same_id = "benchmark::campaign-1::s1::c1::a1::rep1"
+    event = LearningEvent(
+        event_id=same_id,
+        workflow_id="benchmark::s1",
+        agent_type="a1",
+        execution_status=AgentExecutionStatus.SUCCEEDED,
+        created_at=_CREATED_AT,
+        verification_status=VerificationStatus.PASSED,
+    )
+    provenance_with_wrong_execution_status = BenchmarkLearningProvenance(
+        event_id=same_id,
+        campaign_id=_CAMPAIGN_ID,
+        suite_id="s1",
+        case_id="c1",
+        agent_type="a1",
+        repetition=1,
+        execution_status=AgentExecutionStatus.CANCELLED,  # disagrees with event above
+        verification_status=VerificationStatus.PASSED,
+    )
+    with pytest.raises(MalformedBenchmarkLearningInputError, match="execution_status"):
+        BenchmarkLearningRecord(event=event, provenance=provenance_with_wrong_execution_status)
 
 
 def test_converted_event_never_leaks_verification_result_internal_details_via_new_fields() -> None:
@@ -138,7 +171,7 @@ def test_converted_event_never_leaks_verification_result_internal_details_via_ne
         duration_ms=10.0,
         created_at=_CREATED_AT,
     )
-    record = convert_benchmark_result_to_learning_event(result)
+    record = convert_benchmark_result_to_learning_event(result, campaign_id=_CAMPAIGN_ID)
 
     # LearningEvent and BenchmarkLearningProvenance carry no field that
     # could reproduce verification_result.failure_reason's raw text.

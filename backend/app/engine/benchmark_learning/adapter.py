@@ -46,15 +46,25 @@ a caller already built from production events.
 
 **Mapping decisions worth calling out explicitly:**
 
-- `event_id`/`workflow_id` are pure functions of `suite_id`/`case_id`/
+- `event_id` is a pure function of `campaign_id`/`suite_id`/`case_id`/
   `agent_type`/`repetition` -- never a random UUID, never derived from
-  `created_at` or from the observed outcome. The same benchmark execution
-  slot always yields the same identity, regardless of what its outcome
-  was, so a caller can idempotently reconvert without producing duplicate
-  semantic events. (`repetition` is baked into `event_id`, not
-  `workflow_id`, so every repetition of the same case still shares one
-  `workflow_id` -- consistent with treating a benchmark case as one
-  logical "workflow" run repeated `N` times.)
+  `created_at` or from the observed outcome. `campaign_id` is always
+  caller-supplied (there is no existing deterministic run/campaign
+  identity anywhere on `BenchmarkExecutionResult` to inherit from today;
+  if one is ever added upstream, a caller should pass it through here
+  rather than this module inventing its own). It is what distinguishes
+  two genuinely separate executions of the same
+  suite+case+agent+repetition -- e.g. the same suite re-run a week later
+  -- which would otherwise be indistinguishable and collapse into the
+  same identity. Within one campaign, the same benchmark execution slot
+  always yields the same identity regardless of outcome, so a caller can
+  idempotently reconvert without producing duplicate semantic events.
+  `workflow_id` stays a function of `suite_id` alone (not `campaign_id`)
+  -- every repetition and every campaign of the same case still shares
+  one `workflow_id`, consistent with treating a benchmark case as one
+  logical "workflow" run repeated `N` times; campaigns are distinguished
+  by `event_id`/`BenchmarkLearningProvenance.campaign_id`, not by
+  `workflow_id`.
 - `attempt_number` is always `1`, deliberately never set to
   `repetition`. `LearningEvent.attempt_number` means "this was a retry of
   the same attempt" and directly feeds `LearningPassport`/`AgentPassport`
@@ -97,13 +107,16 @@ from app.engine.learning.events import LearningEvent
 from app.engine.learning.passport import LearningPassport, rebuild_all_passports
 
 
-def _event_id(suite_id: str, case_id: str, agent_type: str, repetition: int) -> str:
+def _event_id(
+    campaign_id: str, suite_id: str, case_id: str, agent_type: str, repetition: int
+) -> str:
     """Pure function of stable benchmark facts only -- never the outcome,
     never a timestamp, never random. Same inputs always yield the same
-    identity, so re-converting the same benchmark execution slot (even
-    with a different, later-updated outcome) always maps to the same
-    `event_id`."""
-    return f"benchmark::{suite_id}::{case_id}::{agent_type}::rep{repetition}"
+    identity, so re-converting the same benchmark execution slot within
+    the same campaign (even with a different, later-updated outcome)
+    always maps to the same `event_id`; a different `campaign_id` for the
+    same suite/case/agent/repetition always maps to a different one."""
+    return f"benchmark::{campaign_id}::{suite_id}::{case_id}::{agent_type}::rep{repetition}"
 
 
 def _workflow_id(suite_id: str) -> str:
@@ -111,16 +124,29 @@ def _workflow_id(suite_id: str) -> str:
 
 
 def convert_benchmark_result_to_learning_event(
-    result: BenchmarkExecutionResult, *, created_at: datetime | None = None
+    result: BenchmarkExecutionResult,
+    *,
+    campaign_id: str,
+    created_at: datetime | None = None,
 ) -> BenchmarkLearningRecord:
     """Convert one `BenchmarkExecutionResult` into a `BenchmarkLearningRecord`
     (a `LearningEvent` plus its `BenchmarkLearningProvenance`).
+
+    `campaign_id` is required and must identify which run of the benchmark
+    suite this result belongs to -- it is always caller-supplied (never
+    `datetime.now()`, never a random UUID), since `BenchmarkExecutionResult`
+    itself carries no deterministic run/campaign identity to inherit today.
+    Two conversions of the same suite/case/agent/repetition under
+    different `campaign_id`s always produce different `event_id`s.
 
     `created_at`, if supplied, is used as-is; otherwise `result.created_at`
     is used. If neither is available, raises
     `MalformedBenchmarkLearningInputError` -- this module never calls
     `datetime.now()` to paper over a missing timestamp.
     """
+    if not campaign_id.strip():
+        raise MalformedBenchmarkLearningInputError("campaign_id must not be blank")
+
     resolved_created_at = created_at if created_at is not None else result.created_at
     if resolved_created_at is None:
         raise MalformedBenchmarkLearningInputError(
@@ -128,7 +154,9 @@ def convert_benchmark_result_to_learning_event(
             "explicitly or ensure the result itself carries one"
         )
 
-    event_id = _event_id(result.suite_id, result.case_id, result.agent_type, result.repetition)
+    event_id = _event_id(
+        campaign_id, result.suite_id, result.case_id, result.agent_type, result.repetition
+    )
     workflow_id = _workflow_id(result.suite_id)
 
     event = LearningEvent(
@@ -151,6 +179,7 @@ def convert_benchmark_result_to_learning_event(
 
     provenance = BenchmarkLearningProvenance(
         event_id=event_id,
+        campaign_id=campaign_id,
         suite_id=result.suite_id,
         case_id=result.case_id,
         agent_type=result.agent_type,
@@ -163,26 +192,34 @@ def convert_benchmark_result_to_learning_event(
 
 
 def convert_benchmark_results_to_learning_records(
-    results: Iterable[BenchmarkExecutionResult], *, created_at: datetime | None = None
+    results: Iterable[BenchmarkExecutionResult],
+    *,
+    campaign_id: str,
+    created_at: datetime | None = None,
 ) -> list[BenchmarkLearningRecord]:
     """Convert many `BenchmarkExecutionResult`s into a deterministic,
-    duplicate-free list of `BenchmarkLearningRecord`s.
+    duplicate-free list of `BenchmarkLearningRecord`s, all under one
+    `campaign_id`.
 
     - Ordering is always by `event_id` ascending, regardless of input
       order -- the same set of results in any shuffled order produces the
       same output list.
     - A byte-identical duplicate (same `event_id`, same resulting
-      `LearningEvent`) is kept once, silently.
+      `LearningEvent`) is kept once, silently. Re-running this function
+      again with the same `campaign_id` and the same results (idempotent
+      reconversion) produces the identical output.
     - Two results that share an `event_id`
-      (`suite_id`/`case_id`/`agent_type`/`repetition`) but convert to a
-      *different* `LearningEvent` -- a genuine data conflict, e.g. the same
-      benchmark slot reported with two different outcomes in one batch --
-      raises `BenchmarkLearningIdentityConflictError` rather than silently
-      picking one.
+      (`campaign_id`/`suite_id`/`case_id`/`agent_type`/`repetition`) but
+      convert to a *different* `LearningEvent` -- a genuine data conflict,
+      e.g. the same benchmark slot reported with two different outcomes in
+      one batch -- raises `BenchmarkLearningIdentityConflictError` rather
+      than silently picking one.
     """
     by_id: dict[str, BenchmarkLearningRecord] = {}
     for result in results:
-        record = convert_benchmark_result_to_learning_event(result, created_at=created_at)
+        record = convert_benchmark_result_to_learning_event(
+            result, campaign_id=campaign_id, created_at=created_at
+        )
         existing = by_id.get(record.event.event_id)
         if existing is not None and existing.event != record.event:
             raise BenchmarkLearningIdentityConflictError(

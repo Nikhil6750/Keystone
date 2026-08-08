@@ -17,6 +17,7 @@ from app.engine.learning.policy import LearningPolicy
 from app.engine.learning.recommendation import RecommendationOutcome
 
 _CREATED_AT = datetime(2026, 1, 1, tzinfo=UTC)
+_CAMPAIGN_ID = "campaign-1"
 
 
 def _verification_result(status: VerificationStatus) -> VerificationResult:
@@ -57,7 +58,7 @@ def _result(
 
 
 def _passports_for(results: list[BenchmarkExecutionResult]) -> dict:
-    records = convert_benchmark_results_to_learning_records(results)
+    records = convert_benchmark_results_to_learning_records(results, campaign_id=_CAMPAIGN_ID)
     filtered = BenchmarkLearningPolicy(enabled=True).filter_records(records)
     return build_benchmark_learning_passports(filtered, updated_at=_CREATED_AT)
 
@@ -130,7 +131,7 @@ def test_aggregation_no_duplicated_formula_reused_from_stage5() -> None:
     from app.engine.learning.passport import rebuild_all_passports
 
     results = [_result(repetition=i, duration_ms=float(100 * i)) for i in range(1, 6)]
-    records = convert_benchmark_results_to_learning_records(results)
+    records = convert_benchmark_results_to_learning_records(results, campaign_id=_CAMPAIGN_ID)
     via_adapter = build_benchmark_learning_passports(records, updated_at=_CREATED_AT)
     via_direct_stage5 = rebuild_all_passports(
         [r.event for r in records], updated_at=_CREATED_AT

@@ -20,6 +20,7 @@ from app.engine.routing.evidence import NullEvidenceProvider
 from app.engine.routing.router import Router
 
 _CREATED_AT = datetime(2026, 1, 1, tzinfo=UTC)
+_CAMPAIGN_ID = "campaign-1"
 
 
 def _verification_result(status: VerificationStatus) -> VerificationResult:
@@ -50,6 +51,10 @@ def _benchmark_result(
     )
 
 
+def _convert(results):
+    return convert_benchmark_results_to_learning_records(results, campaign_id=_CAMPAIGN_ID)
+
+
 def _production_event(agent_type: str = "shared-agent") -> LearningEvent:
     return LearningEvent(
         event_id="prod-1",
@@ -77,7 +82,7 @@ def test_benchmark_conversion_does_not_touch_production_evidence_provider() -> N
 
     # 2. Generate benchmark learning events completely separately.
     benchmark_results = [_benchmark_result(repetition=r) for r in range(1, 4)]
-    records = convert_benchmark_results_to_learning_records(benchmark_results)
+    records = _convert(benchmark_results)
     filtered = BenchmarkLearningPolicy(enabled=True).filter_records(records)
     build_benchmark_learning_passports(filtered, updated_at=_CREATED_AT)
 
@@ -95,7 +100,7 @@ def test_benchmark_evidence_never_enters_a_provider_unless_explicitly_supplied()
     assert production_provider.overall_metrics("shared-agent") is None
 
     benchmark_results = [_benchmark_result(repetition=1)]
-    records = convert_benchmark_results_to_learning_records(benchmark_results)
+    records = _convert(benchmark_results)
     filtered = BenchmarkLearningPolicy(enabled=True).filter_records(records)
     build_benchmark_learning_passports(filtered, updated_at=_CREATED_AT)
 
@@ -107,7 +112,7 @@ def test_benchmark_history_does_not_mutate_router() -> None:
     router = Router(evidence=NullEvidenceProvider())
 
     benchmark_results = [_benchmark_result(repetition=r) for r in range(1, 4)]
-    records = convert_benchmark_results_to_learning_records(benchmark_results)
+    records = _convert(benchmark_results)
     filtered = BenchmarkLearningPolicy(enabled=True).filter_records(records)
     passports = build_benchmark_learning_passports(filtered, updated_at=_CREATED_AT)
     assert "shared-agent" in passports  # benchmark evidence was really built
@@ -118,7 +123,7 @@ def test_benchmark_history_does_not_mutate_router() -> None:
 
 def test_disabled_policy_produces_no_usable_benchmark_evidence_at_all() -> None:
     benchmark_results = [_benchmark_result(repetition=r) for r in range(1, 4)]
-    records = convert_benchmark_results_to_learning_records(benchmark_results)
+    records = _convert(benchmark_results)
     filtered = BenchmarkLearningPolicy(enabled=False).filter_records(records)
     assert filtered == []
     passports = build_benchmark_learning_passports(filtered, updated_at=_CREATED_AT)
@@ -131,7 +136,7 @@ def test_explicit_opt_in_required_to_build_combined_production_router() -> None:
     benchmark-only events and pass it to Router themselves -- this proves
     that pathway exists and is opt-in, not automatic."""
     benchmark_results = [_benchmark_result(repetition=r) for r in range(1, 6)]
-    records = convert_benchmark_results_to_learning_records(benchmark_results)
+    records = _convert(benchmark_results)
     filtered = BenchmarkLearningPolicy(enabled=True).filter_records(records)
     benchmark_events = [r.event for r in filtered]
 
@@ -156,7 +161,7 @@ def test_cold_start_benchmark_only_evidence_available_with_no_production_history
     benchmark_results = [
         _benchmark_result(agent_type="new-agent", repetition=r) for r in range(1, 6)
     ]
-    records = convert_benchmark_results_to_learning_records(benchmark_results)
+    records = _convert(benchmark_results)
     filtered = BenchmarkLearningPolicy(enabled=True).filter_records(records)
     passports = build_benchmark_learning_passports(filtered, updated_at=_CREATED_AT)
 
@@ -177,7 +182,7 @@ def test_cold_start_does_not_claim_production_reliability() -> None:
     benchmark_results = [
         _benchmark_result(agent_type="new-agent", repetition=r) for r in range(1, 6)
     ]
-    records = convert_benchmark_results_to_learning_records(benchmark_results)
+    records = _convert(benchmark_results)
     filtered = BenchmarkLearningPolicy(enabled=True).filter_records(records)
     passports = build_benchmark_learning_passports(filtered, updated_at=_CREATED_AT)
 

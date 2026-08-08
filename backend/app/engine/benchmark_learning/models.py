@@ -49,6 +49,13 @@ class EvidenceSource(StrEnum):
 class BenchmarkLearningProvenance:
     """The benchmark-specific facts one `LearningEvent` cannot carry itself.
 
+    `campaign_id` identifies *which run* of the suite this observation
+    belongs to -- it is what distinguishes two genuinely separate
+    executions of the same `suite_id`/`case_id`/`agent_type`/`repetition`
+    (e.g. re-running the same suite a week later): without it, those two
+    executions would be indistinguishable and idempotent conversion would
+    incorrectly collapse them into one event identity.
+
     Always `source=EvidenceSource.BENCHMARK` -- there is no other way to
     construct this type, so its mere presence (joined to a `LearningEvent`
     by `event_id`) is itself the "this came from a benchmark, not
@@ -56,6 +63,7 @@ class BenchmarkLearningProvenance:
     """
 
     event_id: str
+    campaign_id: str
     suite_id: str
     case_id: str
     agent_type: str
@@ -67,6 +75,8 @@ class BenchmarkLearningProvenance:
     def __post_init__(self) -> None:
         if not self.event_id.strip():
             raise MalformedBenchmarkLearningInputError("event_id must not be blank")
+        if not self.campaign_id.strip():
+            raise MalformedBenchmarkLearningInputError("campaign_id must not be blank")
         if not self.suite_id.strip():
             raise MalformedBenchmarkLearningInputError("suite_id must not be blank")
         if not self.case_id.strip():
@@ -108,6 +118,11 @@ class BenchmarkLearningRecord:
             raise MalformedBenchmarkLearningInputError(
                 "BenchmarkLearningRecord.event.verification_status must match "
                 "BenchmarkLearningRecord.provenance.verification_status"
+            )
+        if self.event.execution_status != self.provenance.execution_status:
+            raise MalformedBenchmarkLearningInputError(
+                "BenchmarkLearningRecord.event.execution_status must match "
+                "BenchmarkLearningRecord.provenance.execution_status"
             )
 
 

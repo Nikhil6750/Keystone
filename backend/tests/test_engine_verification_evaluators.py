@@ -14,6 +14,8 @@ from app.engine.verification.errors import (
     UnsupportedEvaluatorError,
 )
 from app.engine.verification.evaluators import (
+    MAX_REGEX_INPUT_LENGTH,
+    MAX_REGEX_PATTERN_LENGTH,
     CommandSpec,
     NullCommandExecutor,
     ObservedOutcome,
@@ -98,6 +100,66 @@ def test_json_schema_inconclusive_when_output_missing() -> None:
     assert outcome.status is VerificationStatus.INCONCLUSIVE
 
 
+@pytest.mark.parametrize(
+    "unsupported_schema",
+    [
+        {"type": "string", "minLength": 3},
+        {"type": "string", "pattern": "^[a-z]+$"},
+        {"type": "number", "minimum": 0},
+        {"type": "number", "maximum": 100},
+        {"oneOf": [{"type": "string"}, {"type": "number"}]},
+        {"anyOf": [{"type": "string"}, {"type": "number"}]},
+        {"allOf": [{"type": "object"}]},
+        {"type": "object", "additionalProperties": False},
+    ],
+)
+def test_json_schema_rejects_unsupported_top_level_keywords(
+    unsupported_schema: dict[str, object],
+) -> None:
+    """An unsupported keyword must never be silently ignored -- a value that
+    should fail under full JSON Schema semantics (e.g. `minLength`) must
+    never PASS just because Keystone doesn't understand the keyword."""
+    with pytest.raises(MalformedExpectedOutcomeError):
+        evaluate_json_schema(
+            {"schema": unsupported_schema}, ObservedOutcome({"output": "anything"})
+        )
+
+
+def test_json_schema_rejects_unsupported_keyword_nested_in_properties() -> None:
+    schema = {
+        "type": "object",
+        "properties": {"name": {"type": "string", "minLength": 1}},
+    }
+    with pytest.raises(MalformedExpectedOutcomeError):
+        evaluate_json_schema({"schema": schema}, ObservedOutcome({"output": {"name": "x"}}))
+
+
+def test_json_schema_rejects_unsupported_keyword_nested_in_items() -> None:
+    schema = {"type": "array", "items": {"type": "number", "minimum": 0}}
+    with pytest.raises(MalformedExpectedOutcomeError):
+        evaluate_json_schema({"schema": schema}, ObservedOutcome({"output": [1, 2]}))
+
+
+def test_json_schema_still_accepts_only_supported_keywords() -> None:
+    """A schema using exactly the documented supported set (including the
+    inert `$schema`/`description`/`title` keywords) must still work."""
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "Example",
+        "description": "A simple object",
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+            "name": {"type": "string"},
+            "tags": {"type": "array", "items": {"type": "string"}},
+        },
+    }
+    outcome = evaluate_json_schema(
+        {"schema": schema}, ObservedOutcome({"output": {"name": "x", "tags": ["a"]}})
+    )
+    assert outcome.status is VerificationStatus.PASSED
+
+
 # --- regex --------------------------------------------------------------------------
 
 
@@ -126,6 +188,52 @@ def test_regex_raises_on_missing_pattern() -> None:
 def test_regex_inconclusive_when_output_missing() -> None:
     outcome = evaluate_regex({"pattern": "x"}, ObservedOutcome({}))
     assert outcome.status is VerificationStatus.INCONCLUSIVE
+
+
+# --- regex: ReDoS hardening (P0-3) ----------------------------------------------------
+
+
+def test_regex_rejects_oversized_pattern() -> None:
+    oversized_pattern = "a" * (MAX_REGEX_PATTERN_LENGTH + 1)
+    with pytest.raises(MalformedExpectedOutcomeError, match="maximum allowed length"):
+        evaluate_regex({"pattern": oversized_pattern}, ObservedOutcome({"output": "x"}))
+
+
+def test_regex_accepts_pattern_at_exact_length_limit() -> None:
+    pattern = "a" * MAX_REGEX_PATTERN_LENGTH
+    outcome = evaluate_regex({"pattern": pattern}, ObservedOutcome({"output": pattern}))
+    assert outcome.status is VerificationStatus.PASSED
+
+
+@pytest.mark.parametrize("pattern", ["(a+)+", "(a*)+", "(.+)+", "(.*)+"])
+def test_regex_rejects_catastrophic_nested_quantifier_patterns(pattern: str) -> None:
+    """These patterns are classic catastrophic-backtracking shapes -- they
+    must be rejected up front (before `re.compile`/`.search` ever runs), not
+    executed and hoped to finish quickly."""
+    with pytest.raises(MalformedExpectedOutcomeError, match="catastrophic"):
+        evaluate_regex({"pattern": pattern}, ObservedOutcome({"output": "a" * 40}))
+
+
+def test_regex_does_not_reject_a_similar_but_safe_repeated_group_pattern() -> None:
+    """A group without an inner quantifier (e.g. repeating a fixed literal)
+    is linear-time and must not be caught by the conservative heuristic."""
+    outcome = evaluate_regex({"pattern": r"(abc)+"}, ObservedOutcome({"output": "abcabcabc"}))
+    assert outcome.status is VerificationStatus.PASSED
+
+
+def test_regex_returns_inconclusive_for_oversized_observed_output_without_searching() -> None:
+    """An oversized observed output is never handed to `.search` at all --
+    proven structurally (INCONCLUSIVE without a match attempt), not by
+    timing, which would be flaky."""
+    oversized_output = "b" * (MAX_REGEX_INPUT_LENGTH + 1)
+    outcome = evaluate_regex({"pattern": r"^a"}, ObservedOutcome({"output": oversized_output}))
+    assert outcome.status is VerificationStatus.INCONCLUSIVE
+
+
+def test_regex_accepts_observed_output_at_exact_length_limit() -> None:
+    output = "a" + "b" * (MAX_REGEX_INPUT_LENGTH - 1)
+    outcome = evaluate_regex({"pattern": r"^a"}, ObservedOutcome({"output": output}))
+    assert outcome.status is VerificationStatus.PASSED
 
 
 # --- exit_code / build ---------------------------------------------------------------
@@ -159,6 +267,50 @@ def test_exit_code_raises_on_malformed_criteria() -> None:
 def test_build_uses_same_semantics_as_exit_code() -> None:
     assert evaluate_build({}, ObservedOutcome({"exit_code": 0})).status is VerificationStatus.PASSED
     assert evaluate_build({}, ObservedOutcome({"exit_code": 2})).status is VerificationStatus.FAILED
+
+
+# --- build: Stage 4D planner criteria acknowledgement (P1) -----------------------------
+
+
+def test_build_require_clean_build_true_passes_on_zero_exit_code() -> None:
+    outcome = evaluate_build({"require_clean_build": True}, ObservedOutcome({"exit_code": 0}))
+    assert outcome.status is VerificationStatus.PASSED
+
+
+def test_build_require_clean_build_true_fails_on_nonzero_exit_code() -> None:
+    outcome = evaluate_build({"require_clean_build": True}, ObservedOutcome({"exit_code": 1}))
+    assert outcome.status is VerificationStatus.FAILED
+
+
+def test_build_require_build_and_test_true_passes_on_zero_exit_code() -> None:
+    outcome = evaluate_build({"require_build_and_test": True}, ObservedOutcome({"exit_code": 0}))
+    assert outcome.status is VerificationStatus.PASSED
+
+
+def test_build_require_build_and_test_true_fails_on_nonzero_exit_code() -> None:
+    outcome = evaluate_build({"require_build_and_test": True}, ObservedOutcome({"exit_code": 3}))
+    assert outcome.status is VerificationStatus.FAILED
+
+
+def test_build_require_clean_build_overrides_conflicting_expected_exit_code() -> None:
+    """A caller-supplied `expected_exit_code` conflicting with an explicit
+    `require_clean_build=True` is always resolved in favor of exit_code 0 --
+    "clean build" is unambiguous."""
+    outcome = evaluate_build(
+        {"require_clean_build": True, "expected_exit_code": 5}, ObservedOutcome({"exit_code": 0})
+    )
+    assert outcome.status is VerificationStatus.PASSED
+
+
+@pytest.mark.parametrize("key", ["require_clean_build", "require_build_and_test"])
+def test_build_raises_on_malformed_boolean_criteria(key: str) -> None:
+    with pytest.raises(MalformedExpectedOutcomeError):
+        evaluate_build({key: "yes"}, ObservedOutcome({"exit_code": 0}))
+
+
+def test_build_require_clean_build_inconclusive_when_missing_evidence() -> None:
+    outcome = evaluate_build({"require_clean_build": True}, ObservedOutcome({}))
+    assert outcome.status is VerificationStatus.INCONCLUSIVE
 
 
 # --- lint / type_check ----------------------------------------------------------------
@@ -238,6 +390,58 @@ def test_unit_test_raises_on_malformed_criteria() -> None:
         evaluate_unit_test({"min_tests": -1}, ObservedOutcome({"exit_code": 0}))
 
 
+# --- unit_test: Stage 4D planner criteria acknowledgement (P1) --------------------------
+
+
+def test_unit_test_require_all_pass_true_passes_when_all_pass() -> None:
+    outcome = evaluate_unit_test(
+        {"require_all_pass": True},
+        ObservedOutcome({"exit_code": 0, "tests_total": 5, "tests_failed": 0}),
+    )
+    assert outcome.status is VerificationStatus.PASSED
+
+
+def test_unit_test_require_all_pass_true_fails_when_any_failed() -> None:
+    outcome = evaluate_unit_test(
+        {"require_all_pass": True},
+        ObservedOutcome({"exit_code": 1, "tests_total": 5, "tests_failed": 1}),
+    )
+    assert outcome.status is VerificationStatus.FAILED
+
+
+def test_unit_test_require_all_pass_true_forces_positive_test_evidence() -> None:
+    """`require_all_pass=True` explicitly enforces "positive evidence of
+    test execution" -- even if a caller also passed `min_tests=0`, zero
+    executed tests must never count as "all passed". Proves the flag is
+    genuinely consumed, not merely validated and dropped: without the
+    explicit `min_tests = max(min_tests, 1)` enforcement, this exact input
+    (exit_code=0, tests_failed=0, tests_total=0) would incorrectly PASS."""
+    outcome = evaluate_unit_test(
+        {"require_all_pass": True, "min_tests": 0},
+        ObservedOutcome({"exit_code": 0, "tests_total": 0, "tests_failed": 0}),
+    )
+    assert outcome.status is VerificationStatus.INCONCLUSIVE
+
+
+def test_unit_test_without_require_all_pass_min_tests_zero_allows_zero_tests() -> None:
+    """Baseline contrast for the test above: without `require_all_pass`,
+    `min_tests=0` really does allow zero executed tests to satisfy the
+    threshold -- confirming the difference is caused by `require_all_pass`,
+    not some other change."""
+    outcome = evaluate_unit_test(
+        {"min_tests": 0}, ObservedOutcome({"exit_code": 0, "tests_total": 0, "tests_failed": 0})
+    )
+    assert outcome.status is VerificationStatus.PASSED
+
+
+def test_unit_test_raises_on_malformed_require_all_pass() -> None:
+    with pytest.raises(MalformedExpectedOutcomeError):
+        evaluate_unit_test(
+            {"require_all_pass": "yes"},
+            ObservedOutcome({"exit_code": 0, "tests_total": 1, "tests_failed": 0}),
+        )
+
+
 # --- file_diff --------------------------------------------------------------------------
 
 
@@ -274,6 +478,65 @@ def test_file_diff_inconclusive_when_missing_evidence() -> None:
 def test_file_diff_raises_when_no_criteria_given() -> None:
     with pytest.raises(MalformedExpectedOutcomeError):
         evaluate_file_diff({}, ObservedOutcome({"diff": "+line"}))
+
+
+# --- file_diff: Stage 4D planner criteria acknowledgement (P0-1) -------------------------
+
+
+def test_file_diff_require_non_empty_diff_true_passes_on_non_empty_diff() -> None:
+    outcome = evaluate_file_diff(
+        {"require_non_empty_diff": True}, ObservedOutcome({"diff": "+added a line"})
+    )
+    assert outcome.status is VerificationStatus.PASSED
+
+
+def test_file_diff_require_non_empty_diff_true_fails_on_empty_diff() -> None:
+    outcome = evaluate_file_diff({"require_non_empty_diff": True}, ObservedOutcome({"diff": ""}))
+    assert outcome.status is VerificationStatus.FAILED
+
+
+def test_file_diff_require_non_empty_diff_true_inconclusive_when_missing() -> None:
+    outcome = evaluate_file_diff({"require_non_empty_diff": True}, ObservedOutcome({}))
+    assert outcome.status is VerificationStatus.INCONCLUSIVE
+
+
+def test_file_diff_require_non_empty_files_changed_true_passes_on_non_empty_list() -> None:
+    outcome = evaluate_file_diff(
+        {"require_non_empty_files_changed": True}, ObservedOutcome({"files_changed": ["a.py"]})
+    )
+    assert outcome.status is VerificationStatus.PASSED
+
+
+def test_file_diff_require_non_empty_files_changed_true_fails_on_empty_list() -> None:
+    outcome = evaluate_file_diff(
+        {"require_non_empty_files_changed": True}, ObservedOutcome({"files_changed": []})
+    )
+    assert outcome.status is VerificationStatus.FAILED
+
+
+def test_file_diff_require_non_empty_files_changed_true_inconclusive_when_missing() -> None:
+    outcome = evaluate_file_diff({"require_non_empty_files_changed": True}, ObservedOutcome({}))
+    assert outcome.status is VerificationStatus.INCONCLUSIVE
+
+
+@pytest.mark.parametrize(
+    "key", ["require_non_empty_diff", "require_non_empty_files_changed"]
+)
+def test_file_diff_raises_on_malformed_boolean_criteria(key: str) -> None:
+    with pytest.raises(MalformedExpectedOutcomeError):
+        evaluate_file_diff({key: "yes"}, ObservedOutcome({"diff": "+line"}))
+
+
+def test_file_diff_expected_diff_still_supported_alongside_new_keys() -> None:
+    outcome = evaluate_file_diff({"expected_diff": "+line"}, ObservedOutcome({"diff": "+line"}))
+    assert outcome.status is VerificationStatus.PASSED
+
+
+def test_file_diff_expected_files_changed_still_supported_alongside_new_keys() -> None:
+    outcome = evaluate_file_diff(
+        {"expected_files_changed": ["a.py"]}, ObservedOutcome({"files_changed": ["a.py"]})
+    )
+    assert outcome.status is VerificationStatus.PASSED
 
 
 # --- human_reviewed -----------------------------------------------------------------------

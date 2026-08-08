@@ -4,6 +4,8 @@ hidden reasoning or majority-vote-by-count heuristics."""
 
 from datetime import UTC, datetime
 
+import pytest
+
 from app.contracts.verification import VerificationStatus
 from app.engine.verification.aggregation import AggregatedVerification
 from app.engine.verification.consensus import (
@@ -11,6 +13,7 @@ from app.engine.verification.consensus import (
     ConsensusOutcome,
     evaluate_consensus,
 )
+from app.engine.verification.errors import VerificationEngineError
 from app.engine.verification.evaluators import ObservedOutcome
 from app.engine.verification.recovery import RecoveryAction
 
@@ -141,3 +144,38 @@ def test_consensus_result_is_deterministic() -> None:
         assert again.outcome == first.outcome
         assert again.agreed_agent_types == first.agreed_agent_types
         assert again.accepted_agent_type == first.accepted_agent_type
+
+
+# --- duplicate candidates (P1) -----------------------------------------------------------
+
+
+def test_duplicate_agent_type_is_rejected_not_counted_as_independent_candidates() -> None:
+    """`codex, codex, claude` must never be treated as 3 independent votes --
+    a duplicate pool is ambiguous and rejected outright."""
+    candidates = [
+        _candidate("codex", VerificationStatus.PASSED, "result"),
+        _candidate("codex", VerificationStatus.PASSED, "result"),
+        _candidate("claude", VerificationStatus.FAILED),
+    ]
+    with pytest.raises(VerificationEngineError, match="codex"):
+        evaluate_consensus(candidates)
+
+
+def test_duplicate_agent_type_rejected_even_with_conflicting_verdicts() -> None:
+    """Duplicates are rejected purely on `agent_type` identity -- even if
+    the repeated entries happen to disagree, they are still an ambiguous
+    pool, never resolved by picking one."""
+    candidates = [
+        _candidate("codex", VerificationStatus.PASSED, "result A"),
+        _candidate("codex", VerificationStatus.FAILED),
+    ]
+    with pytest.raises(VerificationEngineError):
+        evaluate_consensus(candidates)
+
+
+def test_no_duplicate_agent_types_does_not_raise() -> None:
+    candidates = [
+        _candidate("codex", VerificationStatus.PASSED, "result"),
+        _candidate("claude", VerificationStatus.FAILED),
+    ]
+    evaluate_consensus(candidates)  # must not raise

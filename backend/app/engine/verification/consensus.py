@@ -28,15 +28,22 @@ model's internal reasoning, prompt, or scratchpad -- only
   candidate objectively failed" is a stronger, more actionable signal than
   "we simply couldn't confirm any of them."
 - An empty candidate list is also `INSUFFICIENT_EVIDENCE`.
+- A candidate pool containing more than one entry for the same `agent_type`
+  is ambiguous and rejected outright (`VerificationEngineError`) -- never
+  silently deduplicated or scored as if the repeated entries were
+  independent evidence (`codex, codex, claude` must never be counted as 3
+  independent candidates).
 """
 
 import json
+from collections import Counter
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
 from app.contracts.verification import VerificationStatus
 from app.engine.verification.aggregation import AggregatedVerification
+from app.engine.verification.errors import VerificationEngineError
 from app.engine.verification.evaluators import ObservedOutcome
 from app.engine.verification.recovery import RecoveryAction
 
@@ -96,7 +103,20 @@ def evaluate_consensus(
     """Combine independently verified `candidates` into one `ConsensusResult`.
     See module docstring for the exact rule table. Deterministic: identical
     `candidates` (in any order, since results are agent-type-sorted) always
-    produce an identical `ConsensusResult`."""
+    produce an identical `ConsensusResult`.
+
+    Raises `VerificationEngineError` if `candidates` contains more than one
+    entry for the same `agent_type` -- an ambiguous pool, never silently
+    resolved by counting duplicates as independent agreement."""
+    agent_type_counts = Counter(c.agent_type for c in candidates)
+    duplicate_types = sorted(
+        agent_type for agent_type, count in agent_type_counts.items() if count > 1
+    )
+    if duplicate_types:
+        raise VerificationEngineError(
+            "duplicate candidate agent_type(s) in consensus pool: " + ", ".join(duplicate_types)
+        )
+
     if not candidates:
         return ConsensusResult(
             outcome=ConsensusOutcome.INSUFFICIENT_EVIDENCE,

@@ -1,7 +1,7 @@
 {
   "$defs": {
     "AgentPassportMetricBucket": {
-      "description": "Execution counts and latency for one dimension (a task type, a repository, ...).",
+      "description": "Execution counts and latency for one dimension (a task type, a repository, ...).\n\nValidated so that every consumer (the Stage 4B Router in particular) can\ntrust these values without re-checking them: counts are non-negative,\n`success_count` can never exceed `execution_count`, and `median_latency_ms`\n\u2014 when present \u2014 is always finite and non-negative. A malformed bucket\n(e.g. from a buggy future aggregation implementation) is rejected here,\nat construction, rather than silently accepted and left for a downstream\nconsumer to (maybe) defend against.",
       "properties": {
         "execution_count": {
           "default": 0,

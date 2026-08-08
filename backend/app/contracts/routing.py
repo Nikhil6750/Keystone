@@ -204,5 +204,14 @@ class RoutingDecision(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _selected_agent_types_unique(self) -> "RoutingDecision":
+        """A duplicate entry would mean the same runtime was selected twice
+        for one decision — always a caller/producer bug, never silently
+        deduplicated."""
+        if len(self.selected_agent_types) != len(set(self.selected_agent_types)):
+            raise ValueError("selected_agent_types must not contain duplicates")
+        return self
+
 
 __all__ = ["RoutingCandidateScore", "RoutingConstraints", "RoutingDecision", "RoutingRequest"]

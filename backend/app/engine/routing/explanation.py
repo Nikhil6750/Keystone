@@ -21,9 +21,25 @@ def _excluded_text(all_scores: list[RoutingCandidateScore]) -> str:
     return f" Excluded: {reasons}."
 
 
+def _is_bootstrap(score: RoutingCandidateScore) -> bool:
+    """True when `score` reflects no differentiating historical evidence at
+    all (see `scorer.score_candidate`'s `evidence["bootstrap_no_differentiating_evidence"]`)
+    — i.e. the composite score is entirely neutral defaults, and any
+    selection among such candidates was decided by the deterministic
+    tie-break (`router._ranking_key`), never by evidence of one candidate
+    being better than another."""
+    return bool(score.evidence.get("bootstrap_no_differentiating_evidence"))
+
+
 def explain_selection(
     selected: RoutingCandidateScore, all_scores: list[RoutingCandidateScore]
 ) -> str:
+    if _is_bootstrap(selected):
+        return (
+            "No historical evidence differentiated the eligible candidates; "
+            f"deterministic fallback ordering selected '{selected.agent_type}'."
+            f"{_excluded_text(all_scores)}"
+        )
     score_text = f"composite score {selected.composite_score:.2f}"
     confidence_text = (
         "limited historical evidence" if selected.low_sample_size else "sufficient history"
@@ -37,6 +53,13 @@ def explain_selection(
 def explain_parallel_selection(
     chosen: list[RoutingCandidateScore], all_scores: list[RoutingCandidateScore]
 ) -> str:
+    if all(_is_bootstrap(score) for score in chosen):
+        names = ", ".join(f"'{score.agent_type}'" for score in chosen)
+        return (
+            "No historical evidence differentiated the eligible candidates; "
+            f"deterministic fallback ordering selected {len(chosen)} candidate(s): {names}."
+            f"{_excluded_text(all_scores)}"
+        )
     chosen_text = ", ".join(
         f"{score.agent_type} (score {score.composite_score:.2f})" for score in chosen
     )

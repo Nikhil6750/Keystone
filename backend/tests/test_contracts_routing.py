@@ -276,6 +276,19 @@ def test_selected_agent_types_must_be_empty_when_no_primary_is_selected() -> Non
         )
 
 
+def test_selected_agent_types_must_not_contain_duplicates() -> None:
+    with pytest.raises(ValidationError, match="selected_agent_types must not contain duplicates"):
+        RoutingDecision.model_validate(
+            {
+                "task_type": "code_generation",
+                "selected_agent_type": "claude_code",
+                "selected_agent_types": ["claude_code", "claude_code"],
+                "explanation": "consensus selection",
+                "decided_at": datetime.now(UTC),
+            }
+        )
+
+
 def test_routing_request_accepts_nested_constraints_dict() -> None:
     request = RoutingRequest.model_validate(
         {
@@ -285,3 +298,4 @@ def test_routing_request_accepts_nested_constraints_dict() -> None:
     )
     assert request.constraints.excluded_agent_types == ["codex"]
     assert request.constraints.max_cost_usd == 1.5
+

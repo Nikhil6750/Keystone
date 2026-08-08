@@ -2,6 +2,9 @@
 
 from datetime import UTC, datetime
 
+import pytest
+from pydantic import ValidationError
+
 from app.contracts.passports import AgentPassport, AgentPassportMetricBucket
 
 
@@ -47,3 +50,35 @@ def test_metric_bucket_defaults_to_zero_counts() -> None:
     assert bucket.execution_count == 0
     assert bucket.success_count == 0
     assert bucket.failure_count == 0
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("execution_count", -1),
+        ("success_count", -1),
+        ("failure_count", -1),
+    ],
+)
+def test_metric_bucket_rejects_negative_counts(field: str, value: int) -> None:
+    with pytest.raises(ValidationError):
+        AgentPassportMetricBucket.model_validate({field: value})
+
+
+def test_metric_bucket_rejects_success_count_exceeding_execution_count() -> None:
+    with pytest.raises(ValidationError, match="success_count must not exceed execution_count"):
+        AgentPassportMetricBucket.model_validate({"execution_count": 5, "success_count": 6})
+
+
+@pytest.mark.parametrize("bad_latency", [float("nan"), float("inf"), float("-inf"), -1.0])
+def test_metric_bucket_rejects_invalid_latency(bad_latency: float) -> None:
+    with pytest.raises(ValidationError):
+        AgentPassportMetricBucket.model_validate({"median_latency_ms": bad_latency})
+
+
+def test_metric_bucket_accepts_zero_and_positive_finite_latency() -> None:
+    zero_bucket = AgentPassportMetricBucket.model_validate({"median_latency_ms": 0.0})
+    pos_bucket = AgentPassportMetricBucket.model_validate({"median_latency_ms": 150.5})
+    assert zero_bucket.median_latency_ms == 0.0
+    assert pos_bucket.median_latency_ms == 150.5
+

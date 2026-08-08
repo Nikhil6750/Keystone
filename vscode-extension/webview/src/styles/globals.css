@@ -1,0 +1,64 @@
+:root {
+  --font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+  --bg-color: var(--vscode-editor-background, #1e1e1e);
+  --fg-color: var(--vscode-editor-foreground, #d4d4d4);
+  --card-bg: var(--vscode-welcomePage-tileBackground, #252526);
+  --border-color: var(--vscode-widget-border, #3c3c3c);
+  --accent-color: var(--vscode-textLink-foreground, #3794ff);
+  --success-color: var(--vscode-testing-iconPassed, #89d185);
+}
+
+body {
+  margin: 0;
+  padding: 24px;
+  font-family: var(--font-family);
+  background-color: var(--bg-color);
+  color: var(--fg-color);
+  box-sizing: border-box;
+}
+
+.container {
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.card {
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 24px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-top: 0;
+  margin-bottom: 16px;
+  color: var(--fg-color);
+}
+
+p {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin: 8px 0;
+  color: var(--fg-color);
+}
+
+.status-badge {
+  display: inline-block;
+  margin-top: 16px;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  background-color: rgba(55, 148, 255, 0.1);
+  color: var(--accent-color);
+  border: 1px solid var(--accent-color);
+}
+
+.status-badge.connected {
+  background-color: rgba(137, 209, 133, 0.1);
+  color: var(--success-color);
+  border-color: var(--success-color);
+}

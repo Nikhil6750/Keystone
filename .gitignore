@@ -50,6 +50,7 @@ pnpm-debug.log*
 
 # --- IDE ---
 .vscode/
+!vscode-extension/.vscode/
 .idea/
 *.swp
 *.swo

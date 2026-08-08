@@ -81,4 +81,3 @@ def test_metric_bucket_accepts_zero_and_positive_finite_latency() -> None:
     pos_bucket = AgentPassportMetricBucket.model_validate({"median_latency_ms": 150.5})
     assert zero_bucket.median_latency_ms == 0.0
     assert pos_bucket.median_latency_ms == 150.5
-

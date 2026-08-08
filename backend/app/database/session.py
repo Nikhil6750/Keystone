@@ -12,10 +12,13 @@ from app.core.config import get_settings
 
 def _create_engine() -> Engine:
     settings = get_settings()
+    url = settings.database_url
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
     connect_args: dict[str, Any] = {}
-    if settings.database_url.startswith("sqlite"):
+    if url.startswith("sqlite"):
         connect_args["check_same_thread"] = False
-    return create_engine(settings.database_url, connect_args=connect_args)
+    return create_engine(url, connect_args=connect_args)
 
 
 def _sqlite_foreign_keys_listener(dbapi_connection: Any, _connection_record: Any) -> None:

@@ -298,4 +298,3 @@ def test_routing_request_accepts_nested_constraints_dict() -> None:
     )
     assert request.constraints.excluded_agent_types == ["codex"]
     assert request.constraints.max_cost_usd == 1.5
-

@@ -1,4 +1,17 @@
-"""Execution History Repository for Stage 5 Raw Event Persistence."""
+"""Execution History Repository for Stage 5 Raw Event Persistence.
+
+**Raw history is never silently rewritten.** `record_event` treats
+`event_id` as an immutable identity: recording a byte-identical replay of
+an already-stored event is a safe, idempotent no-op (returns the existing
+row untouched), but recording a *conflicting* replay -- the same
+`event_id` with a different observed fact (a different verification
+outcome, cost, duration, execution status, etc.) -- raises
+`LearningEventConflictError` rather than overwriting historical evidence.
+`created_at` is deliberately excluded from the conflict comparison: it is
+an operational timestamp, not an observed fact about the execution, so
+harmless timestamp drift (e.g. reserialization) across two recordings of
+the same event never triggers a false conflict.
+"""
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -10,7 +23,30 @@ from app.contracts.enums import AgentCapability, AgentExecutionStatus, RuntimeKi
 from app.contracts.errors import FailureCategory
 from app.contracts.verification import VerificationStatus
 from app.engine.learning.events import LearningEvent
+from app.persistence.errors import LearningEventConflictError
 from app.persistence.models import LearningEventRecord
+
+# Every field compared to decide "identical replay" vs. "conflicting
+# replay" -- deliberately every observable fact on LearningEventRecord
+# *except* event_id (the identity being looked up) and created_at (an
+# operational timestamp, never an observed fact; see module docstring).
+_CONFLICT_COMPARISON_FIELDS = (
+    "workflow_id",
+    "step_id",
+    "attempt_number",
+    "agent_type",
+    "runtime_kind",
+    "task_type",
+    "repository_id",
+    "capabilities",
+    "execution_status",
+    "failure_category",
+    "verification_status",
+    "duration_ms",
+    "retry_count",
+    "cancelled",
+    "real_cost",
+)
 
 
 class ExecutionHistoryRepository:
@@ -79,29 +115,22 @@ class ExecutionHistoryRepository:
         )
 
     def record_event(self, session: Session, event: LearningEvent) -> LearningEventRecord:
-        """Insert or update a raw execution learning event."""
+        """Insert a new raw execution learning event, or -- for an
+        already-recorded `event_id` -- either return the existing row
+        unchanged (byte-identical replay) or raise
+        `LearningEventConflictError` (conflicting replay). Never updates a
+        historical row's observed facts in place; see module docstring.
+        """
         existing = session.get(LearningEventRecord, event.event_id)
-        if existing:
-            record = self.domain_to_record(event)
-            for attr in (
-                "workflow_id",
-                "step_id",
-                "attempt_number",
-                "agent_type",
-                "runtime_kind",
-                "task_type",
-                "repository_id",
-                "capabilities",
-                "execution_status",
-                "failure_category",
-                "verification_status",
-                "duration_ms",
-                "retry_count",
-                "cancelled",
-                "real_cost",
-                "created_at",
-            ):
-                setattr(existing, attr, getattr(record, attr))
+        if existing is not None:
+            candidate = self.domain_to_record(event)
+            conflicting_fields = tuple(
+                attr
+                for attr in _CONFLICT_COMPARISON_FIELDS
+                if getattr(existing, attr) != getattr(candidate, attr)
+            )
+            if conflicting_fields:
+                raise LearningEventConflictError(event.event_id, conflicting_fields)
             return existing
 
         record = self.domain_to_record(event)

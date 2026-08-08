@@ -1,14 +1,13 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { WorkflowBuilder } from '../components/workflow/WorkflowBuilder';
 import { AgentManager } from '../components/agents/AgentManager';
 import { KnowledgeExplorer } from '../components/knowledge/KnowledgeExplorer';
 import { WorkspaceExplorer } from '../components/workspace/WorkspaceExplorer';
+import { useAppState } from '../hooks/useAppState';
 import { GitFork, Bot, BookOpen, FolderTree } from 'lucide-react';
 
-type Tab = 'builder' | 'agents' | 'knowledge' | 'workspace';
-
 export const MainPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<Tab>('builder');
+  const { activeTab, setActiveTab } = useAppState();
 
   return (
     <div className="app-container">

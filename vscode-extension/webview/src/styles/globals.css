@@ -81,6 +81,116 @@ body {
   width: 100%;
 }
 
+/* Global Notification System (Top-Right Floating Overlay) */
+.global-notification-overlay {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 340px;
+  width: 100%;
+  pointer-events: none;
+}
+
+.global-notification-item {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
+  color: var(--fg-color);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  animation: slideLeft 0.2s ease;
+  box-sizing: border-box;
+}
+
+.global-notification-item.success {
+  border-color: rgba(137, 209, 133, 0.5);
+  background-color: rgba(20, 40, 25, 0.95);
+}
+
+.global-notification-item.success .notif-icon-box {
+  color: var(--status-green);
+}
+
+.global-notification-item.info {
+  border-color: rgba(55, 148, 255, 0.5);
+  background-color: rgba(15, 30, 50, 0.95);
+}
+
+.global-notification-item.info .notif-icon-box {
+  color: var(--accent-color);
+}
+
+.global-notification-item.warning {
+  border-color: rgba(204, 167, 0, 0.5);
+  background-color: rgba(45, 40, 15, 0.95);
+}
+
+.global-notification-item.warning .notif-icon-box {
+  color: var(--status-amber);
+}
+
+.global-notification-item.error {
+  border-color: rgba(241, 76, 76, 0.5);
+  background-color: rgba(50, 20, 20, 0.95);
+}
+
+.global-notification-item.error .notif-icon-box {
+  color: var(--status-red);
+}
+
+.notif-icon-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: 2px;
+  flex-shrink: 0;
+}
+
+.notif-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.notif-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--fg-color);
+}
+
+.notif-message {
+  font-size: 0.76rem;
+  color: var(--muted-fg);
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.notif-close-btn {
+  background: none;
+  border: none;
+  color: var(--muted-fg);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.notif-close-btn:hover {
+  color: var(--fg-color);
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
 /* Container */
 .workflow-builder-container,
 .agent-manager-container {

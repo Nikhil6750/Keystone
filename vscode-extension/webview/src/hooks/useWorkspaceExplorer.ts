@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { vscodeApi } from '../services/vscodeApi';
+import { useAppState } from './useAppState';
 
 export interface WorkspaceNodeItem {
   id: string;
@@ -156,15 +157,30 @@ const FALLBACK_TREE: WorkspaceNodeItem[] = [
   },
 ];
 
+function findNodeById(nodes: WorkspaceNodeItem[], id: string | null): WorkspaceNodeItem | null {
+  if (!id) return null;
+  for (const node of nodes) {
+    if (node.id === id) return node;
+    if (node.children) {
+      const found = findNodeById(node.children, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 export function useWorkspaceExplorer() {
+  const { selectedWorkspaceNodeId, setSelectedWorkspaceNodeId } = useAppState();
   const [hasWorkspace, setHasWorkspace] = useState<boolean>(true);
   const [workspaceName, setWorkspaceName] = useState<string | null>('Keystone');
   const [tree, setTree] = useState<WorkspaceNodeItem[]>(FALLBACK_TREE);
-  const [selectedNode, setSelectedNode] = useState<WorkspaceNodeItem | null>(
-    FALLBACK_TREE[0]
-  );
   const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(
     new Set(['.', 'backend', 'backend/app', 'vscode-extension'])
+  );
+
+  const selectedNode = useMemo(
+    () => findNodeById(tree, selectedWorkspaceNodeId) || tree[0] || null,
+    [tree, selectedWorkspaceNodeId]
   );
 
   useEffect(() => {
@@ -180,19 +196,28 @@ export function useWorkspaceExplorer() {
 
         if (hw && rootNodes && rootNodes.length > 0) {
           setTree(rootNodes);
-          setSelectedNode(rootNodes[0]);
-          setExpandedNodeIds(new Set([rootNodes[0].id]));
+          if (!selectedWorkspaceNodeId) {
+            setSelectedWorkspaceNodeId(rootNodes[0].id);
+          }
+          setExpandedNodeIds((prev) => {
+            const next = new Set(prev);
+            next.add(rootNodes[0].id);
+            return next;
+          });
         }
       }
     };
 
     window.addEventListener('message', handleWindowMessage);
     return () => window.removeEventListener('message', handleWindowMessage);
-  }, []);
+  }, [selectedWorkspaceNodeId, setSelectedWorkspaceNodeId]);
 
-  const selectNode = useCallback((node: WorkspaceNodeItem) => {
-    setSelectedNode(node);
-  }, []);
+  const selectNode = useCallback(
+    (node: WorkspaceNodeItem) => {
+      setSelectedWorkspaceNodeId(node.id);
+    },
+    [setSelectedWorkspaceNodeId]
+  );
 
   const toggleExpand = useCallback((nodeId: string) => {
     setExpandedNodeIds((prev) => {

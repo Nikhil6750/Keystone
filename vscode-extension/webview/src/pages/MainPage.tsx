@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { WorkflowBuilder } from '../components/workflow/WorkflowBuilder';
 import { AgentManager } from '../components/agents/AgentManager';
-import { GitFork, Bot } from 'lucide-react';
+import { KnowledgeExplorer } from '../components/knowledge/KnowledgeExplorer';
+import { GitFork, Bot, BookOpen } from 'lucide-react';
 
-type Tab = 'builder' | 'agents';
+type Tab = 'builder' | 'agents' | 'knowledge';
 
 export const MainPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('builder');
@@ -33,12 +34,24 @@ export const MainPage: React.FC = () => {
           <Bot size={15} />
           <span>Agent Manager</span>
         </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'knowledge'}
+          className={`nav-tab ${activeTab === 'knowledge' ? 'active' : ''}`}
+          onClick={() => setActiveTab('knowledge')}
+        >
+          <BookOpen size={15} />
+          <span>Knowledge</span>
+        </button>
       </nav>
 
       {/* Main View Area */}
       <main className="tab-content-area">
         {activeTab === 'builder' && <WorkflowBuilder />}
         {activeTab === 'agents' && <AgentManager />}
+        {activeTab === 'knowledge' && <KnowledgeExplorer />}
       </main>
     </div>
   );

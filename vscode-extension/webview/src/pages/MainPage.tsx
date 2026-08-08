@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import { WorkflowBuilder } from '../components/workflow/WorkflowBuilder';
 import { AgentManager } from '../components/agents/AgentManager';
 import { KnowledgeExplorer } from '../components/knowledge/KnowledgeExplorer';
-import { GitFork, Bot, BookOpen } from 'lucide-react';
+import { WorkspaceExplorer } from '../components/workspace/WorkspaceExplorer';
+import { GitFork, Bot, BookOpen, FolderTree } from 'lucide-react';
 
-type Tab = 'builder' | 'agents' | 'knowledge';
+type Tab = 'builder' | 'agents' | 'knowledge' | 'workspace';
 
 export const MainPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('builder');
@@ -45,6 +46,17 @@ export const MainPage: React.FC = () => {
           <BookOpen size={15} />
           <span>Knowledge</span>
         </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'workspace'}
+          className={`nav-tab ${activeTab === 'workspace' ? 'active' : ''}`}
+          onClick={() => setActiveTab('workspace')}
+        >
+          <FolderTree size={15} />
+          <span>Workspace</span>
+        </button>
       </nav>
 
       {/* Main View Area */}
@@ -52,6 +64,7 @@ export const MainPage: React.FC = () => {
         {activeTab === 'builder' && <WorkflowBuilder />}
         {activeTab === 'agents' && <AgentManager />}
         {activeTab === 'knowledge' && <KnowledgeExplorer />}
+        {activeTab === 'workspace' && <WorkspaceExplorer />}
       </main>
     </div>
   );

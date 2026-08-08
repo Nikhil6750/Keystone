@@ -10,9 +10,31 @@ share mutable state beyond the intentionally-shared per-agent-type
 concurrency limiter, so one workflow's cancellation or failure can never
 affect another.
 
+`run()` maintains an explicit in-memory `GraphWorkflowStatus` and, per step,
+`GraphStepStatus`, and every real change to either is validated through
+`app.engine.workflow.state_machine`'s `transition_graph_workflow`/
+`transition_graph_step` — not just constructed ad hoc. All of this bookkeeping
+happens exclusively in `run()`'s own single coroutine (never inside `_run_one`,
+which executes concurrently as a separate task), so introducing it adds no new
+race surface: `_run_one` remains a pure function of its own local state plus
+the shared semaphores.
+
 Retries are out of scope here (`GraphStepStatus.RETRYING` exists in the
 status vocabulary but this scheduler runs each step at most once) — Stage 3
 adds retry behavior as a `StepRunner` decorator, without scheduler changes.
+
+Two distinct kinds of "unordered" exist in this module, deliberately handled
+differently:
+
+- The failure-triggered skip cascade (one step fails, some set of transitive
+  dependents become `SKIPPED`) stems from a single synchronous event and is
+  made deterministic: dependents are processed in workflow declaration order,
+  so the same failure on the same graph always skips steps (and emits their
+  events) in the same order.
+- Genuinely concurrent task completions (multiple independent steps finishing
+  in the same scheduling pass) are *not* artificially ordered — there is no
+  "true" order for events that actually happened at the same time, so
+  `asyncio.wait`'s `done` set is processed in whatever order Python gives it.
 """
 
 import asyncio
@@ -31,6 +53,7 @@ from app.engine.workflow.events import StateSink
 from app.engine.workflow.exceptions import StepRunnerError
 from app.engine.workflow.graph import WorkflowGraph
 from app.engine.workflow.runner import StepRunner
+from app.engine.workflow.state_machine import transition_graph_step, transition_graph_workflow
 from app.engine.workflow.status import GraphStepStatus, GraphWorkflowStatus
 
 
@@ -95,14 +118,41 @@ class GraphScheduler:
         cancellation: CancellationToken | None = None,
         sink: StateSink | None = None,
     ) -> WorkflowRunResult:
-        graph = WorkflowGraph.from_definition(definition)
         cancellation = cancellation or CancellationToken()
-        workflow_semaphore = asyncio.Semaphore(self._max_concurrent_steps_per_workflow)
-
         sequence = _SequenceCounter()
         await self._emit(sink, sequence, workflow_id, "workflow.started", None, {})
 
+        workflow_status = transition_graph_workflow(
+            GraphWorkflowStatus.PENDING, GraphWorkflowStatus.PLANNING
+        )
+        await self._emit(sink, sequence, workflow_id, "workflow.planning", None, {})
+
+        # Validation happens during "planning": a malformed graph never
+        # reaches RUNNING. Raises CycleDetectedError; propagates uncaught,
+        # exactly as before this stage's state-machine wiring.
+        graph = WorkflowGraph.from_definition(definition)
+        step_statuses: dict[str, GraphStepStatus] = {
+            key: GraphStepStatus.PENDING for key in graph.steps
+        }
         outcomes: dict[str, StepOutcome] = {}
+
+        if cancellation.is_cancelled:
+            workflow_status = transition_graph_workflow(
+                workflow_status, GraphWorkflowStatus.CANCELLING
+            )
+            await self._emit(sink, sequence, workflow_id, "workflow.cancelling", None, {})
+            for key in graph.steps:
+                outcomes[key] = self._cancel_never_started(step_statuses, key)
+            workflow_status = transition_graph_workflow(
+                workflow_status, GraphWorkflowStatus.CANCELLED
+            )
+            await self._emit(sink, sequence, workflow_id, "workflow.cancelled", None, {})
+            return WorkflowRunResult(status=workflow_status, step_outcomes=outcomes)
+
+        workflow_status = transition_graph_workflow(workflow_status, GraphWorkflowStatus.RUNNING)
+        await self._emit(sink, sequence, workflow_id, "workflow.running", None, {})
+
+        workflow_semaphore = asyncio.Semaphore(self._max_concurrent_steps_per_workflow)
         completed_success: set[str] = set()
         scheduled: set[str] = set()
         skipped: set[str] = set()
@@ -114,14 +164,24 @@ class GraphScheduler:
             ready = graph.ready_steps(completed_success, exclude=scheduled | skipped)
             for key in ready:
                 scheduled.add(key)
+                step = graph.steps[key]
+                step_statuses[key] = transition_graph_step(
+                    step_statuses[key], GraphStepStatus.READY
+                )
+                step_statuses[key] = transition_graph_step(
+                    step_statuses[key], GraphStepStatus.RUNNING
+                )
                 task = asyncio.ensure_future(
                     self._run_one(
                         workflow_semaphore=workflow_semaphore,
                         workflow_id=workflow_id,
-                        step=graph.steps[key],
+                        step=step,
+                        # Only this step's *direct* dependencies' outputs —
+                        # never the full accumulated workflow history. For
+                        # A -> B, A -> C, B,C -> D: D receives B and C's
+                        # output, never A's, unless D explicitly depends on A.
                         previous_outputs={
-                            dep_key: outcomes[dep_key].output or {}
-                            for dep_key in completed_success
+                            dep_key: outcomes[dep_key].output or {} for dep_key in step.depends_on
                         },
                         cancellation=cancellation,
                     )
@@ -134,8 +194,11 @@ class GraphScheduler:
             done, _ = await asyncio.wait(pending_tasks.keys(), return_when=asyncio.FIRST_COMPLETED)
             for task in done:
                 key = pending_tasks.pop(task)
-                outcome = task.result()
+                outcome = self._collect_result(task, key)
                 outcomes[key] = outcome
+                step_statuses[key] = self._apply_terminal_step_transition(
+                    step_statuses[key], outcome.status
+                )
                 await self._emit(
                     sink,
                     sequence,
@@ -147,10 +210,20 @@ class GraphScheduler:
                 if outcome.status is GraphStepStatus.SUCCEEDED:
                     completed_success.add(key)
                 elif outcome.status is GraphStepStatus.FAILED:
-                    for dependent_key in graph.transitive_dependents(key):
+                    # Deterministic order: declaration order, not set iteration
+                    # order — see module docstring for why this differs from
+                    # genuinely-concurrent completions below.
+                    dependents = sorted(
+                        graph.transitive_dependents(key),
+                        key=lambda dependent_key: graph.declaration_order[dependent_key],
+                    )
+                    for dependent_key in dependents:
                         if dependent_key in outcomes or dependent_key in skipped:
                             continue
                         skipped.add(dependent_key)
+                        step_statuses[dependent_key] = transition_graph_step(
+                            step_statuses[dependent_key], GraphStepStatus.SKIPPED
+                        )
                         now = datetime.now(UTC)
                         outcomes[dependent_key] = StepOutcome(
                             key=dependent_key,
@@ -173,25 +246,87 @@ class GraphScheduler:
         # Steps never reached at all (cancelled before they ever became ready).
         for key in graph.steps:
             if key not in outcomes:
-                now = datetime.now(UTC)
-                outcomes[key] = StepOutcome(
-                    key=key,
-                    status=GraphStepStatus.CANCELLED,
-                    output=None,
-                    error_message="workflow cancelled before this step started",
-                    started_at=now,
-                    completed_at=now,
-                )
+                outcomes[key] = self._cancel_never_started(step_statuses, key)
 
         if cancellation.is_cancelled:
-            overall = GraphWorkflowStatus.CANCELLED
+            workflow_status = transition_graph_workflow(
+                workflow_status, GraphWorkflowStatus.CANCELLING
+            )
+            await self._emit(sink, sequence, workflow_id, "workflow.cancelling", None, {})
+            workflow_status = transition_graph_workflow(
+                workflow_status, GraphWorkflowStatus.CANCELLED
+            )
         elif any(outcome.status is GraphStepStatus.FAILED for outcome in outcomes.values()):
-            overall = GraphWorkflowStatus.FAILED
+            workflow_status = transition_graph_workflow(workflow_status, GraphWorkflowStatus.FAILED)
         else:
-            overall = GraphWorkflowStatus.SUCCEEDED
+            workflow_status = transition_graph_workflow(
+                workflow_status, GraphWorkflowStatus.SUCCEEDED
+            )
 
-        await self._emit(sink, sequence, workflow_id, f"workflow.{overall.value}", None, {})
-        return WorkflowRunResult(status=overall, step_outcomes=outcomes)
+        await self._emit(
+            sink, sequence, workflow_id, f"workflow.{workflow_status.value}", None, {}
+        )
+        return WorkflowRunResult(status=workflow_status, step_outcomes=outcomes)
+
+    @staticmethod
+    def _apply_terminal_step_transition(
+        current: GraphStepStatus, outcome_status: GraphStepStatus
+    ) -> GraphStepStatus:
+        """Move a `RUNNING` step to its terminal outcome, validated.
+
+        `CANCELLED` always passes through `CANCELLING` first (the required
+        `RUNNING -> CANCELLING -> CANCELLED` path) even though `StepOutcome`
+        itself only ever records the final `CANCELLED` value — `CANCELLING`
+        is transient and has no observable duration in this design, so it is
+        validated but not separately surfaced as an outcome.
+        """
+        if outcome_status is GraphStepStatus.CANCELLED:
+            current = transition_graph_step(current, GraphStepStatus.CANCELLING)
+            return transition_graph_step(current, GraphStepStatus.CANCELLED)
+        return transition_graph_step(current, outcome_status)
+
+    @staticmethod
+    def _cancel_never_started(
+        step_statuses: dict[str, GraphStepStatus], key: str
+    ) -> StepOutcome:
+        """A step that never became ready before the run ended: `PENDING -> CANCELLED`
+        directly — it never ran, so there is no `CANCELLING` phase to pass through."""
+        step_statuses[key] = transition_graph_step(step_statuses[key], GraphStepStatus.CANCELLED)
+        now = datetime.now(UTC)
+        return StepOutcome(
+            key=key,
+            status=GraphStepStatus.CANCELLED,
+            output=None,
+            error_message="workflow cancelled before this step started",
+            started_at=now,
+            completed_at=now,
+        )
+
+    @staticmethod
+    def _collect_result(task: "asyncio.Task[StepOutcome]", key: str) -> StepOutcome:
+        """Retrieve `_run_one`'s result defensively.
+
+        `_run_one` is designed to never raise — every expected and
+        unexpected runner failure is already caught inside it and turned
+        into a `FAILED` `StepOutcome`. This is a deliberate backstop, not the
+        primary error-handling path: if a future change ever lets something
+        escape `_run_one` anyway, one step fails cleanly instead of crashing
+        the entire run. Only `Exception` is caught here — `asyncio.CancelledError`,
+        `SystemExit`, and `KeyboardInterrupt` are `BaseException`s and are
+        never caught or hidden by this handler.
+        """
+        try:
+            return task.result()
+        except Exception as exc:  # noqa: BLE001 - defensive backstop, see docstring
+            now = datetime.now(UTC)
+            return StepOutcome(
+                key=key,
+                status=GraphStepStatus.FAILED,
+                output=None,
+                error_message=f"unexpected scheduler error: {exc}",
+                started_at=now,
+                completed_at=now,
+            )
 
     async def _run_one(
         self,
@@ -224,6 +359,13 @@ class GraphScheduler:
                 )
             )
             cancel_wait: asyncio.Task[None] = asyncio.ensure_future(cancellation.wait())
+            # If both `run_task` and `cancel_wait` become ready in the same
+            # event-loop turn (e.g. the step finishes at the exact moment
+            # cancellation is requested), `run_task`'s real outcome always
+            # wins: `if run_task in done` is checked first below. This is a
+            # deliberate, deterministic tie-break — prefer reporting genuine
+            # work that actually finished over a same-instant cancellation —
+            # not an accident of `asyncio.wait`'s set ordering.
             done, _pending = await asyncio.wait(
                 {run_task, cancel_wait}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
             )
@@ -302,6 +444,9 @@ class GraphScheduler:
             timestamp=datetime.now(UTC),
             payload=payload,
         )
+        # Awaited inline, not fire-and-forget: transition/event ordering must
+        # stay deterministic, and a sink failure must not be silently lost.
+        # See `app.engine.workflow.events` for why this is fail-fast by design.
         await sink.on_event(event)
 
 

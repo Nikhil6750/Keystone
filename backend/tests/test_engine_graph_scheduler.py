@@ -301,3 +301,333 @@ def test_scheduler_rejects_non_positive_configuration() -> None:
         GraphScheduler(runner, max_concurrent_per_agent_type=0)
     with pytest.raises(ValueError):
         GraphScheduler(runner, default_step_timeout_seconds=0)
+
+
+# ---------------------------------------------------------------------------
+# Fix 1: the state machine is real — GraphScheduler validates every transition
+# it makes through app.engine.workflow.state_machine. If the wiring were
+# wrong (an illegal transition attempted), these calls would raise
+# InvalidGraphStateTransition and the test itself would fail with that
+# unhandled exception — so "completes normally with the expected status" is
+# itself meaningful proof the transitions taken were legal.
+# ---------------------------------------------------------------------------
+
+
+async def test_successful_run_follows_the_full_planning_to_succeeded_lifecycle() -> None:
+    runner = FakeStepRunner()
+    scheduler = GraphScheduler(runner)
+    sink = RecordingStateSink()
+    definition = _definition([_step(key="a"), _step(key="b", depends_on=["a"])])
+
+    result = await scheduler.run(definition, workflow_id="wf-lifecycle", sink=sink)
+
+    assert result.status is GraphWorkflowStatus.SUCCEEDED
+    event_types = [event.event_type for event in sink.events]
+    # Relative order: started, planning, running all precede succeeded.
+    assert event_types.index("workflow.started") < event_types.index("workflow.planning")
+    assert event_types.index("workflow.planning") < event_types.index("workflow.running")
+    assert event_types.index("workflow.running") < event_types.index("workflow.succeeded")
+    assert event_types[-1] == "workflow.succeeded"
+
+
+async def test_cancellation_before_run_begins_follows_the_cancelling_lifecycle() -> None:
+    runner = FakeStepRunner()
+    scheduler = GraphScheduler(runner)
+    sink = RecordingStateSink()
+    cancellation = CancellationToken()
+    cancellation.cancel()  # cancelled before scheduler.run() is ever awaited
+    definition = _definition([_step(key="a")])
+
+    result = await scheduler.run(
+        definition, workflow_id="wf-precancelled", cancellation=cancellation, sink=sink
+    )
+
+    assert result.status is GraphWorkflowStatus.CANCELLED
+    assert result.step_outcomes["a"].status is GraphStepStatus.CANCELLED
+    assert runner.calls == []
+    event_types = [event.event_type for event in sink.events]
+    assert event_types.index("workflow.started") < event_types.index("workflow.planning")
+    assert event_types.index("workflow.planning") < event_types.index("workflow.cancelling")
+    assert event_types.index("workflow.cancelling") < event_types.index("workflow.cancelled")
+    # The RUNNING phase is never reached at all when already cancelled.
+    assert "workflow.running" not in event_types
+
+
+async def test_failed_run_completes_without_raising_an_invalid_transition() -> None:
+    runner = FakeStepRunner(failures={"a"})
+    scheduler = GraphScheduler(runner)
+    definition = _definition([_step(key="a"), _step(key="independent")])
+    result = await scheduler.run(definition, workflow_id="wf-failed-lifecycle")
+    assert result.status is GraphWorkflowStatus.FAILED
+
+
+async def test_cancelled_mid_flight_completes_without_raising_an_invalid_transition() -> None:
+    release_a = asyncio.Event()
+    runner = FakeStepRunner(release_events={"a": release_a})
+    scheduler = GraphScheduler(runner)
+    cancellation = CancellationToken()
+    definition = _definition([_step(key="a")])
+
+    run_task = asyncio.ensure_future(
+        scheduler.run(definition, workflow_id="wf-cancel-lifecycle", cancellation=cancellation)
+    )
+    await asyncio.sleep(0.02)
+    cancellation.cancel()
+    release_a.set()
+    result = await run_task
+    assert result.status is GraphWorkflowStatus.CANCELLED
+
+
+# ---------------------------------------------------------------------------
+# Fix 2: previous_outputs is scoped to direct dependencies only.
+# ---------------------------------------------------------------------------
+
+
+async def test_step_receives_only_its_direct_dependencies_outputs() -> None:
+    # Diamond: a -> b, a -> c, b & c -> d. d must see only b and c's output,
+    # never a's, even though a succeeded earlier in the same run.
+    runner = FakeStepRunner(
+        outputs={"a": {"from": "a"}, "b": {"from": "b"}, "c": {"from": "c"}}
+    )
+    scheduler = GraphScheduler(runner)
+    definition = _definition(
+        [
+            _step(key="a"),
+            _step(key="b", depends_on=["a"]),
+            _step(key="c", depends_on=["a"]),
+            _step(key="d", depends_on=["b", "c"]),
+        ]
+    )
+    result = await scheduler.run(definition, workflow_id="wf-scoped-outputs")
+    assert result.status is GraphWorkflowStatus.SUCCEEDED
+
+    seen_by_d = runner.previous_outputs_seen["d"]
+    assert set(seen_by_d.keys()) == {"b", "c"}
+    assert "a" not in seen_by_d
+    assert seen_by_d["b"] == {"from": "b"}
+    assert seen_by_d["c"] == {"from": "c"}
+
+
+async def test_root_step_receives_no_previous_outputs() -> None:
+    runner = FakeStepRunner()
+    scheduler = GraphScheduler(runner)
+    definition = _definition([_step(key="a")])
+    await scheduler.run(definition, workflow_id="wf-root-outputs")
+    assert runner.previous_outputs_seen["a"] == {}
+
+
+# ---------------------------------------------------------------------------
+# Fix 3: the failure-triggered skip cascade is deterministic, ordered by
+# workflow declaration order — not set iteration order.
+# ---------------------------------------------------------------------------
+
+
+async def test_skip_cascade_is_ordered_by_declaration_order_not_alphabetically() -> None:
+    # Declared deliberately out of alphabetical order: z, m, b. If the skip
+    # cascade were driven by set iteration (as it was before this fix), this
+    # order would be arbitrary/hash-dependent instead of z, m, b.
+    runner = FakeStepRunner(failures={"a"})
+    scheduler = GraphScheduler(runner)
+    sink = RecordingStateSink()
+    definition = _definition(
+        [
+            _step(key="a"),
+            _step(key="z", depends_on=["a"]),
+            _step(key="m", depends_on=["a"]),
+            _step(key="b", depends_on=["a"]),
+        ]
+    )
+    result = await scheduler.run(definition, workflow_id="wf-skip-order", sink=sink)
+
+    assert result.status is GraphWorkflowStatus.FAILED
+    skip_events = [event for event in sink.events if event.event_type == "step.skipped"]
+    assert [event.step_id for event in skip_events] == ["z", "m", "b"]
+    # Sequence numbers assigned to those events follow the same order.
+    assert [event.sequence_number for event in skip_events] == sorted(
+        event.sequence_number for event in skip_events
+    )
+
+
+async def test_skip_cascade_ordering_is_reproducible_across_runs() -> None:
+    definition = _definition(
+        [
+            _step(key="a"),
+            _step(key="z", depends_on=["a"]),
+            _step(key="m", depends_on=["a"]),
+            _step(key="b", depends_on=["a"]),
+        ]
+    )
+    orders: list[list[str]] = []
+    for _ in range(5):
+        runner = FakeStepRunner(failures={"a"})
+        scheduler = GraphScheduler(runner)
+        sink = RecordingStateSink()
+        await scheduler.run(definition, workflow_id="wf-skip-repro", sink=sink)
+        skip_order = [
+            event.step_id for event in sink.events if event.event_type == "step.skipped"
+        ]
+        orders.append(skip_order)
+    assert all(order == orders[0] for order in orders)
+
+
+# ---------------------------------------------------------------------------
+# Fix 4: an unexpected (non-StepRunnerError) runner exception fails only
+# that step; the scheduler itself never crashes.
+# ---------------------------------------------------------------------------
+
+
+async def test_unexpected_runner_exception_fails_only_that_step() -> None:
+    runner = FakeStepRunner(crashes={"a"})
+    scheduler = GraphScheduler(runner)
+    definition = _definition(
+        [
+            _step(key="a"),
+            _step(key="descendant", depends_on=["a"]),
+            _step(key="independent"),
+        ]
+    )
+    result = await scheduler.run(definition, workflow_id="wf-crash")
+
+    assert result.status is GraphWorkflowStatus.FAILED
+    assert result.step_outcomes["a"].status is GraphStepStatus.FAILED
+    assert "boom" in (result.step_outcomes["a"].error_message or "")
+    assert result.step_outcomes["descendant"].status is GraphStepStatus.SKIPPED
+    assert result.step_outcomes["independent"].status is GraphStepStatus.SUCCEEDED
+    assert "independent" in runner.calls
+
+
+# ---------------------------------------------------------------------------
+# Fix 5: cancellation edge cases.
+# ---------------------------------------------------------------------------
+
+
+async def test_repeated_cancellation_is_idempotent() -> None:
+    release_a = asyncio.Event()
+    runner = FakeStepRunner(release_events={"a": release_a})
+    scheduler = GraphScheduler(runner)
+    cancellation = CancellationToken()
+    definition = _definition([_step(key="a")])
+
+    run_task = asyncio.ensure_future(
+        scheduler.run(definition, workflow_id="wf-repeat-cancel", cancellation=cancellation)
+    )
+    await asyncio.sleep(0.02)
+    cancellation.cancel()
+    cancellation.cancel()
+    cancellation.cancel()
+    release_a.set()
+    result = await run_task
+
+    assert result.status is GraphWorkflowStatus.CANCELLED
+    # Cancelling again after completion must not raise either.
+    cancellation.cancel()
+    assert cancellation.is_cancelled is True
+
+
+async def test_no_dependent_work_begins_after_cancellation_in_a_wide_graph() -> None:
+    release_a = asyncio.Event()
+    runner = FakeStepRunner(release_events={"a": release_a})
+    scheduler = GraphScheduler(runner)
+    cancellation = CancellationToken()
+    definition = _definition(
+        [
+            _step(key="a"),
+            _step(key="b1", depends_on=["a"]),
+            _step(key="b2", depends_on=["a"]),
+            _step(key="b3", depends_on=["a"]),
+            _step(key="c1", depends_on=["b1"]),
+            _step(key="c2", depends_on=["b2"]),
+        ]
+    )
+    run_task = asyncio.ensure_future(
+        scheduler.run(definition, workflow_id="wf-wide-cancel", cancellation=cancellation)
+    )
+    await asyncio.sleep(0.02)
+    cancellation.cancel()
+    release_a.set()
+    result = await run_task
+
+    assert result.status is GraphWorkflowStatus.CANCELLED
+    for key in ("b1", "b2", "b3", "c1", "c2"):
+        assert key not in runner.calls
+        assert result.step_outcomes[key].status is GraphStepStatus.CANCELLED
+
+
+async def test_no_orphan_tasks_remain_after_cancellation() -> None:
+    release_a = asyncio.Event()
+    runner = FakeStepRunner(release_events={"a": release_a})
+    scheduler = GraphScheduler(runner)
+    cancellation = CancellationToken()
+    definition = _definition([_step(key="a"), _step(key="b", depends_on=["a"])])
+
+    tasks_before = asyncio.all_tasks()
+    run_task = asyncio.ensure_future(
+        scheduler.run(definition, workflow_id="wf-orphan-check", cancellation=cancellation)
+    )
+    await asyncio.sleep(0.02)
+    cancellation.cancel()
+    release_a.set()
+    await run_task
+    # Give any fire-and-forget cancellation bookkeeping one more loop turn.
+    await asyncio.sleep(0)
+
+    tasks_after = asyncio.all_tasks()
+    leaked = (tasks_after - tasks_before) - {run_task}
+    still_running = {task for task in leaked if not task.done()}
+    assert still_running == set(), f"orphan tasks still running: {still_running}"
+
+
+# ---------------------------------------------------------------------------
+# Fix 6: additional DAG coverage.
+# ---------------------------------------------------------------------------
+
+
+async def test_empty_workflow_succeeds_with_no_steps() -> None:
+    runner = FakeStepRunner()
+    scheduler = GraphScheduler(runner)
+    definition = _definition([])
+    result = await scheduler.run(definition, workflow_id="wf-empty")
+    assert result.status is GraphWorkflowStatus.SUCCEEDED
+    assert result.step_outcomes == {}
+    assert runner.calls == []
+
+
+async def test_two_disconnected_multi_step_branches_run_independently() -> None:
+    runner = FakeStepRunner()
+    scheduler = GraphScheduler(runner)
+    definition = _definition(
+        [
+            _step(key="a1"),
+            _step(key="a2", depends_on=["a1"]),
+            _step(key="b1"),
+            _step(key="b2", depends_on=["b1"]),
+        ]
+    )
+    result = await scheduler.run(definition, workflow_id="wf-disconnected")
+    assert result.status is GraphWorkflowStatus.SUCCEEDED
+    assert all(
+        result.step_outcomes[key].status is GraphStepStatus.SUCCEEDED
+        for key in ("a1", "a2", "b1", "b2")
+    )
+    # Each branch's internal order is respected independently.
+    assert runner.calls.index("a1") < runner.calls.index("a2")
+    assert runner.calls.index("b1") < runner.calls.index("b2")
+
+
+async def test_no_step_is_ever_scheduled_more_than_once() -> None:
+    runner = FakeStepRunner(
+        delays={"a": 0.01, "b": 0.02, "c": 0.01},
+    )
+    scheduler = GraphScheduler(runner, max_concurrent_steps_per_workflow=10)
+    definition = _definition(
+        [
+            _step(key="a"),
+            _step(key="b"),
+            _step(key="c", depends_on=["a", "b"]),
+            _step(key="d", depends_on=["c"]),
+        ]
+    )
+    result = await scheduler.run(definition, workflow_id="wf-no-dup-schedule")
+    assert result.status is GraphWorkflowStatus.SUCCEEDED
+    assert len(runner.calls) == len(set(runner.calls))
+    assert sorted(runner.calls) == ["a", "b", "c", "d"]

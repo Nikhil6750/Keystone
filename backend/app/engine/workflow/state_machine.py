@@ -4,11 +4,15 @@
 Mirrors the pattern of `app.engine.state_machine` (which remains the
 validated transition table for the live, persisted
 `WorkflowStatus`/`StepStatus`) but operates on plain enum values rather than
-ORM instances, since this package has nothing persisted to mutate yet. The
-`GraphScheduler` itself only ever produces valid transitions by construction;
-this module exists so that invariant is independently testable and so a
-future caller composing its own state machine on top of scheduler events has
-a validated table to check against.
+ORM instances, since this package has nothing persisted to mutate yet.
+
+`GraphScheduler.run()` calls `transition_graph_workflow`/`transition_graph_step`
+at every real state change during execution — this table is not just
+documentation, it is the actual guard the scheduler validates against.
+Retry-related states (`RETRYING`) and workflow/step compensation states
+remain defined for future (Stage 3+) integration even though the current
+scheduler does not itself produce them — do not remove them merely because
+they are unused today.
 """
 
 from app.engine.workflow.status import GraphStepStatus, GraphWorkflowStatus
@@ -52,7 +56,12 @@ GRAPH_STEP_TRANSITIONS: dict[GraphStepStatus, frozenset[GraphStepStatus]] = {
         {GraphStepStatus.READY, GraphStepStatus.SKIPPED, GraphStepStatus.CANCELLED}
     ),
     GraphStepStatus.READY: frozenset(
-        {GraphStepStatus.RUNNING, GraphStepStatus.CANCELLING, GraphStepStatus.CANCELLED}
+        {
+            GraphStepStatus.RUNNING,
+            GraphStepStatus.CANCELLING,
+            GraphStepStatus.CANCELLED,
+            GraphStepStatus.SKIPPED,
+        }
     ),
     GraphStepStatus.RUNNING: frozenset(
         {

@@ -117,6 +117,23 @@ def test_transitive_dependents_covers_indirect_descendants() -> None:
     assert graph.transitive_dependents("d") == set()
 
 
+def test_topological_order_handles_disconnected_multi_step_components() -> None:
+    definition = _definition(
+        [
+            _step(key="a1"),
+            _step(key="a2", depends_on=["a1"]),
+            _step(key="b1"),
+            _step(key="b2", depends_on=["b1"]),
+        ]
+    )
+    graph = WorkflowGraph.from_definition(definition)
+    order = graph.topological_order()
+    assert set(order) == {"a1", "a2", "b1", "b2"}
+    assert order.index("a1") < order.index("a2")
+    assert order.index("b1") < order.index("b2")
+    assert graph.ready_steps(completed=set()) == ["a1", "b1"]
+
+
 def test_topological_order_is_deterministic_across_calls() -> None:
     definition = _definition(
         [

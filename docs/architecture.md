@@ -260,6 +260,21 @@ one at this layer. Provider-backed compensation handlers (calling a real externa
 system to undo a step) are out of scope for this prototype; only the demo handler and
 the test-only fakes exist today.
 
+`CompensationService.resume_compensation(workflow_id)` recovers a workflow left
+`COMPENSATING` by a process interruption — the same gap `WorkflowEngine.resume_workflow`
+closes for execution, closed here for compensation. Requires `COMPENSATING` status;
+claims the workflow via the same atomic `Workflow.version` check as execution resume
+(`workflow_service.claim_workflow_for_compensation_resume`), so two concurrent
+compensation-resumes can never both proceed. A step already `COMPENSATED` is never
+re-compensated; the one step (if any) whose handler was in flight when the process was
+interrupted has its dangling `CompensationAttempt` marked `FAILED` first — never assumed
+to have silently succeeded — then re-attempted with a fresh attempt. Remaining eligible
+steps continue in the same reverse-position order a fresh run would use. The returned
+summary is rebuilt from current persisted step/attempt state, not from any in-memory
+list from the interrupted run, which does not survive a process restart. Emits a new
+`WORKFLOW_COMPENSATION_RESUMED` audit event, additive to the enum (unconstrained
+`VARCHAR` column, no migration), extending the same hash-linked chain.
+
 ### `engine/workflow/` — DAG graph and concurrent scheduler
 An additive, dependency-aware execution capability alongside the live sequential
 `WorkflowEngine` above — not a replacement for it. **Implementation status:

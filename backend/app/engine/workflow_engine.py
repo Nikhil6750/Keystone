@@ -159,6 +159,35 @@ class WorkflowEngine:
         a clear `EXECUTION_INTERRUPTED` reason — it cannot be assumed to
         have completed or to be safely retriable as-is — and is then
         re-attempted from a fresh attempt, exactly like any other retry.
+        `step.attempt_count` (not a call-local counter) is what bounds total
+        attempts to `max_attempts` across initial execution, retries, *and*
+        any resume — an interrupted attempt already counts toward that total
+        the moment it is marked `FAILED` above (see `_execute_step`).
+
+        **Recovery semantics, stated plainly:**
+
+        - This provides **at-least-once** execution for the interrupted
+          step's external side effect, not exactly-once. If the underlying
+          agent actually completed its work before the process crashed but
+          the outcome was never persisted, resume cannot tell the
+          difference from a genuine failure and will re-attempt — unless the
+          provider itself has its own idempotency mechanism, nothing here
+          prevents that side effect from running twice.
+        - `app.engine.workflow.idempotency.IdempotentExecutionGuard` (the
+          additive graph-scheduler layer's duplicate-execution guard) does
+          **not** help here: it is process-local and in-memory, so it
+          provides no protection at all across the kind of process
+          restart/crash this method exists to recover from.
+        - `WORKFLOW_RESUMED` is appended through the same tamper-evident,
+          hash-linked audit chain as every other event — a resume is exactly
+          as traceable and provenance-preserving as normal execution, not a
+          special, less-audited path.
+        - An interrupted attempt remains explicitly attributable after
+          resume: its `StepAttempt` row is preserved (marked `FAILED` with
+          `error_type="EXECUTION_INTERRUPTED"`, not deleted or overwritten),
+          and the `WORKFLOW_RESUMED` event's payload lists exactly which
+          step IDs were already succeeded, which were interrupted, and which
+          are about to run.
         """
         workflow = workflow_service.get_workflow(self._db, workflow_id)
         if workflow is None:
@@ -179,15 +208,25 @@ class WorkflowEngine:
         )
         all_steps = sorted(workflow.steps, key=lambda s: s.position)
         pending_steps: list[WorkflowStep] = []
+        already_succeeded_step_ids: list[str] = []
+        interrupted_step_ids: list[str] = []
         for step in all_steps:
             if StepStatus(step.status) is StepStatus.SUCCEEDED:
                 context = context.with_step_output(step.id, step.output_payload or {})
+                already_succeeded_step_ids.append(step.id)
                 continue
             if StepStatus(step.status) is StepStatus.RUNNING:
                 self._mark_interrupted_attempt_failed(step)
                 workflow_service.transition_step(self._db, step.id, StepStatus.RETRYING)
+                interrupted_step_ids.append(step.id)
             pending_steps.append(step)
 
+        # Step IDs only — internal identifiers already exposed elsewhere in
+        # the API, never sensitive payload content — so a future
+        # explainability/observability consumer can trace exactly which
+        # steps were already done, which were mid-flight when the process
+        # was interrupted, and which are about to run, without having to
+        # cross-reference separate per-step events to reconstruct it.
         audit_service.append_event(
             self._db,
             workflow_id=workflow.id,
@@ -196,7 +235,10 @@ class WorkflowEngine:
             actor_id=_SYSTEM_ACTOR,
             payload={
                 "resumed_step_count": len(pending_steps),
-                "already_succeeded_step_count": len(all_steps) - len(pending_steps),
+                "resumed_step_ids": [step.id for step in pending_steps],
+                "already_succeeded_step_count": len(already_succeeded_step_ids),
+                "already_succeeded_step_ids": already_succeeded_step_ids,
+                "interrupted_step_ids": interrupted_step_ids,
             },
         )
 
@@ -319,7 +361,43 @@ class WorkflowEngine:
 
         breaker = self._circuit_breakers.get_or_create(step.agent_type)
         max_attempts = step.max_attempts
-        attempt_number = 0
+        # Seeded from the step's persisted attempt history, never hardcoded to
+        # 0: a step resumed after an interruption must never receive more
+        # total attempts (initial + retries + resume) than max_attempts
+        # allows. An interrupted RUNNING attempt already counts here since
+        # resume_workflow marks it FAILED in place (see
+        # _mark_interrupted_attempt_failed) rather than creating a new
+        # attempt row, so step.attempt_count already reflects it. For a
+        # fresh (never-resumed) step this is always 0, identical to before.
+        attempt_number = step.attempt_count
+        if attempt_number >= max_attempts:
+            logger.warning(
+                "step_attempt_budget_already_exhausted workflow_id=%s step_id=%s "
+                "attempt_count=%s max_attempts=%s",
+                workflow.id,
+                step.id,
+                attempt_number,
+                max_attempts,
+            )
+            workflow_service.transition_step(self._db, step.id, StepStatus.FAILED)
+            audit_service.append_event(
+                self._db,
+                workflow_id=workflow.id,
+                step_id=step.id,
+                event_type=AuditEventType.STEP_FAILED,
+                actor_type=ActorType.SYSTEM,
+                actor_id=_SYSTEM_ACTOR,
+                payload={
+                    "error_code": "MAX_ATTEMPTS_EXHAUSTED",
+                    "attempt_count": attempt_number,
+                    "max_attempts": max_attempts,
+                },
+            )
+            raise StepExecutionError(
+                f"step '{step.id}' already exhausted its {max_attempts} allowed "
+                "attempt(s) before this execution began",
+                error_type="MAX_ATTEMPTS_EXHAUSTED",
+            )
 
         while True:
             attempt_number += 1

@@ -7,13 +7,27 @@ Reuses the existing `RetryPolicy` (its delay computation, not its blocking
 `CircuitBreakerRegistry` (`app.resilience`) rather than duplicating
 retry/backoff/circuit-breaker logic a second time — the same classification
 shape (retryable vs. not, circuit-breaker-aware, bounded by attempts) as the
-live `WorkflowEngine`'s retry loop.
+live `WorkflowEngine`'s retry loop. Retry decisions use
+`is_legacy_error_type_retryable`, the canonical policy that matches the live
+engine's deliberate per-adapter semantics exactly (see that function's
+docstring in `app.contracts.errors` for why this is not simply
+`classify_legacy_error_type(...) in RETRYABLE_FAILURE_CATEGORIES`).
+
+**`max_attempts` is an upper bound on attempts, not a guarantee that many
+attempts will happen.** `GraphScheduler` (or any other caller) may impose its
+own overall timeout on the whole `run()` call, including every backoff sleep
+between attempts — `run()` has no awareness of that outer timeout and cannot
+protect its remaining retry budget from it. A step can therefore stop after
+fewer than `max_attempts` attempts if the caller's timeout elapses first,
+same as any other cancellation of this coroutine mid-backoff: the pending
+`asyncio.sleep` (or the in-flight inner call) is simply cancelled, and no
+further attempts are made once that happens.
 """
 
 import asyncio
 from typing import Any
 
-from app.contracts.errors import RETRYABLE_FAILURE_CATEGORIES, classify_legacy_error_type
+from app.contracts.errors import is_legacy_error_type_retryable
 from app.contracts.workflow import WorkflowStepDefinition
 from app.engine.workflow.exceptions import StepRunnerError
 from app.engine.workflow.runner import StepRunner
@@ -72,8 +86,7 @@ class RetryingStepRunner:
                     timeout_seconds=timeout_seconds,
                 )
             except StepRunnerError as exc:
-                category = classify_legacy_error_type(exc.error_type)
-                retryable = category in RETRYABLE_FAILURE_CATEGORIES
+                retryable = is_legacy_error_type_retryable(exc.error_type)
                 if retryable:
                     breaker.record_failure()
                 circuit_open_now = breaker.snapshot().state is CircuitState.OPEN

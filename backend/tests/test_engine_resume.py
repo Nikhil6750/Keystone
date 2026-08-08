@@ -16,7 +16,7 @@ from app.models.enums import AttemptStatus, StepStatus, WorkflowStatus
 from app.resilience.circuit_breaker import CircuitBreakerRegistry
 from app.resilience.retry import RetryPolicy
 from app.services import workflow_service
-from tests.support.executors import FailingExecutor, RecordingExecutor
+from tests.support.executors import FailingExecutor, RecordingExecutor, RetryableFailingExecutor
 from tests.support.fakes import FakeSleeper
 from tests.support.workflow_builders import build_workflow_in_status
 
@@ -115,6 +115,52 @@ def test_resume_records_a_workflow_resumed_audit_event(
     events = audit_service.list_events(db_session, workflow.id)
     event_types = [event.event_type for event in events]
     assert "workflow_resumed" in event_types
+
+
+def test_workflow_resumed_payload_identifies_every_step_by_id(
+    db_session: Session, executor_registry: ExecutorRegistry
+) -> None:
+    workflow = build_workflow_in_status(
+        db_session,
+        workflow_status=WorkflowStatus.RUNNING,
+        steps=[
+            {
+                "name": "done",
+                "position": 0,
+                "agent_type": "mock",
+                "status": StepStatus.SUCCEEDED,
+                "output_payload": {},
+            },
+            {
+                "name": "in-flight",
+                "position": 1,
+                "agent_type": "mock",
+                "status": StepStatus.RUNNING,
+            },
+            {
+                "name": "not-started",
+                "position": 2,
+                "agent_type": "mock",
+                "status": StepStatus.PENDING,
+            },
+        ],
+    )
+    done_step, in_flight_step, not_started_step = workflow.steps
+    workflow_service.create_step_attempt(db_session, in_flight_step.id)
+    executor_registry.register("mock", RecordingExecutor(output={}))
+    engine = _engine(db_session, executor_registry)
+
+    engine.resume_workflow(workflow.id)
+
+    events = audit_service.list_events(db_session, workflow.id)
+    resumed_event = next(event for event in events if event.event_type == "workflow_resumed")
+    payload = resumed_event.payload
+
+    assert payload["already_succeeded_step_ids"] == [done_step.id]
+    assert payload["interrupted_step_ids"] == [in_flight_step.id]
+    assert set(payload["resumed_step_ids"]) == {in_flight_step.id, not_started_step.id}
+    assert payload["already_succeeded_step_count"] == 1
+    assert payload["resumed_step_count"] == 2
 
 
 def test_resume_preserves_audit_chain_integrity(
@@ -222,6 +268,181 @@ def test_resume_raises_conflict_error_when_the_claim_is_lost(
 
     with pytest.raises(WorkflowResumeConflictError):
         engine.resume_workflow(workflow.id)
+
+
+def test_resume_with_two_prior_attempts_allows_exactly_one_more(
+    db_session: Session, executor_registry: ExecutorRegistry
+) -> None:
+    """Requirement 1: max_attempts=3, two attempts already consumed -> exactly
+    one attempt remains on resume."""
+    workflow = build_workflow_in_status(
+        db_session,
+        workflow_status=WorkflowStatus.RUNNING,
+        steps=[
+            {
+                "name": "a",
+                "position": 0,
+                "agent_type": "mock",
+                "status": StepStatus.RUNNING,
+                "max_attempts": 3,
+            }
+        ],
+    )
+    step = workflow.steps[0]
+    first = workflow_service.create_step_attempt(db_session, step.id)
+    workflow_service.complete_step_attempt(
+        db_session, first.id, status=AttemptStatus.FAILED, error_type="SIMULATED"
+    )
+    workflow_service.create_step_attempt(db_session, step.id)  # interrupted, still RUNNING
+    assert step.attempt_count == 2
+
+    executor = RecordingExecutor(output={"ok": True})
+    executor_registry.register("mock", executor)
+    engine = _engine(db_session, executor_registry)
+
+    result = engine.resume_workflow(workflow.id)
+
+    assert len(executor.calls) == 1
+    resumed_step = result.steps[0]
+    assert resumed_step.attempt_count == 3
+    assert WorkflowStatus(result.status) is WorkflowStatus.SUCCEEDED
+
+
+def test_resume_with_max_attempts_already_exhausted_makes_no_executor_calls(
+    db_session: Session, executor_registry: ExecutorRegistry
+) -> None:
+    """Requirement 2: max_attempts=3, three already consumed -> zero executor
+    calls on resume."""
+    workflow = build_workflow_in_status(
+        db_session,
+        workflow_status=WorkflowStatus.RUNNING,
+        steps=[
+            {
+                "name": "a",
+                "position": 0,
+                "agent_type": "mock",
+                "status": StepStatus.RUNNING,
+                "max_attempts": 3,
+            }
+        ],
+    )
+    step = workflow.steps[0]
+    for _ in range(2):
+        attempt = workflow_service.create_step_attempt(db_session, step.id)
+        workflow_service.complete_step_attempt(
+            db_session, attempt.id, status=AttemptStatus.FAILED, error_type="SIMULATED"
+        )
+    workflow_service.create_step_attempt(db_session, step.id)  # third, interrupted (RUNNING)
+    assert step.attempt_count == 3
+
+    executor = RecordingExecutor(output={"ok": True})
+    executor_registry.register("mock", executor)
+    engine = _engine(db_session, executor_registry)
+
+    result = engine.resume_workflow(workflow.id)
+
+    assert executor.calls == []
+    assert WorkflowStatus(result.status) is WorkflowStatus.FAILED
+    resumed_step = result.steps[0]
+    assert StepStatus(resumed_step.status) is StepStatus.FAILED
+    assert resumed_step.attempt_count == 3
+
+
+def test_resume_counts_the_interrupted_attempt_toward_the_limit(
+    db_session: Session, executor_registry: ExecutorRegistry
+) -> None:
+    """Requirement 3: one interrupted RUNNING attempt counts toward the limit."""
+    workflow = build_workflow_in_status(
+        db_session,
+        workflow_status=WorkflowStatus.RUNNING,
+        steps=[
+            {
+                "name": "a",
+                "position": 0,
+                "agent_type": "mock",
+                "status": StepStatus.RUNNING,
+                "max_attempts": 1,
+            }
+        ],
+    )
+    step = workflow.steps[0]
+    # The only allowed attempt, interrupted.
+    workflow_service.create_step_attempt(db_session, step.id)
+    assert step.attempt_count == 1
+
+    executor = RecordingExecutor(output={"ok": True})
+    executor_registry.register("mock", executor)
+    engine = _engine(db_session, executor_registry)
+
+    result = engine.resume_workflow(workflow.id)
+
+    assert executor.calls == []
+    assert WorkflowStatus(result.status) is WorkflowStatus.FAILED
+
+
+def test_resume_final_remaining_attempt_can_still_succeed(
+    db_session: Session, executor_registry: ExecutorRegistry
+) -> None:
+    """Requirement 4: a successful final remaining attempt succeeds normally."""
+    workflow = build_workflow_in_status(
+        db_session,
+        workflow_status=WorkflowStatus.RUNNING,
+        steps=[
+            {
+                "name": "a",
+                "position": 0,
+                "agent_type": "mock",
+                "status": StepStatus.RUNNING,
+                "max_attempts": 2,
+            }
+        ],
+    )
+    step = workflow.steps[0]
+    workflow_service.create_step_attempt(db_session, step.id)  # attempt 1, interrupted
+
+    executor = RecordingExecutor(output={"ok": True})
+    executor_registry.register("mock", executor)
+    engine = _engine(db_session, executor_registry)
+
+    result = engine.resume_workflow(workflow.id)
+
+    assert len(executor.calls) == 1
+    assert WorkflowStatus(result.status) is WorkflowStatus.SUCCEEDED
+    resumed_step = result.steps[0]
+    assert StepStatus(resumed_step.status) is StepStatus.SUCCEEDED
+    assert resumed_step.attempt_count == 2
+
+
+def test_resume_final_remaining_attempt_failure_exhausts_the_workflow(
+    db_session: Session, executor_registry: ExecutorRegistry
+) -> None:
+    """Requirement 5: a failed final remaining attempt exhausts the workflow
+    correctly."""
+    workflow = build_workflow_in_status(
+        db_session,
+        workflow_status=WorkflowStatus.RUNNING,
+        steps=[
+            {
+                "name": "a",
+                "position": 0,
+                "agent_type": "mock",
+                "status": StepStatus.RUNNING,
+                "max_attempts": 2,
+            }
+        ],
+    )
+    step = workflow.steps[0]
+    workflow_service.create_step_attempt(db_session, step.id)  # attempt 1, interrupted
+
+    executor_registry.register("mock", RetryableFailingExecutor())
+    engine = _engine(db_session, executor_registry)
+
+    result = engine.resume_workflow(workflow.id)
+
+    assert WorkflowStatus(result.status) is WorkflowStatus.FAILED
+    resumed_step = result.steps[0]
+    assert StepStatus(resumed_step.status) is StepStatus.FAILED
+    assert resumed_step.attempt_count == 2
 
 
 def test_resume_with_no_remaining_steps_still_succeeds(

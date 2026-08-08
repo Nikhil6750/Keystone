@@ -69,3 +69,61 @@ def classify_legacy_error_type(error_type: str) -> FailureCategory:
     evidence collection.
     """
     return _LEGACY_ERROR_TYPE_MAP.get(error_type, FailureCategory.UNKNOWN)
+
+
+# --- Canonical retry-policy decision -----------------------------------------
+#
+# `RETRYABLE_FAILURE_CATEGORIES` (above) is a *broad, observability-oriented*
+# bucketing: it groups codes for routing/passport evidence and is
+# deliberately coarse. It is NOT authoritative for "should this be retried" —
+# two of its members disagree with the live engine's deliberate, documented
+# per-adapter-exception `retryable` flags (`app.adapters.exceptions`):
+#
+# - AGENT_UNAVAILABLE buckets into PROVIDER_ERROR (broadly retryable), but the
+#   live engine deliberately treats it as non-retryable: the executable
+#   itself could not be resolved, and retrying will not change that.
+# - AGENT_USAGE_LIMIT_ERROR buckets into RATE_LIMITED (broadly retryable),
+#   but the live engine deliberately treats it as non-retryable: there is no
+#   retry-after-aware scheduling yet, so an immediate retry would just fail
+#   identically (see `AgentUsageLimitError`'s own docstring).
+#
+# `is_legacy_error_type_retryable` is the single canonical source of truth
+# for the actual retry decision, matching the live adapters' flags exactly.
+# The live synchronous `WorkflowEngine` does not need to call this — it
+# already reads `StepExecutionError.retryable` straight from the raised
+# exception, which is where these semantics are defined — but any new
+# consumer (e.g. the async `RetryingStepRunner`) that only has an
+# `error_type` string to go on, not the original exception object, must use
+# this function rather than `classify_legacy_error_type(...) in
+# RETRYABLE_FAILURE_CATEGORIES`, to avoid silently disagreeing with the live
+# engine's deliberate behavior.
+_LEGACY_ERROR_TYPE_RETRYABLE: dict[str, bool] = {
+    "AGENT_UNAVAILABLE": False,
+    "AGENT_CONFIGURATION_ERROR": False,
+    "AGENT_TIMEOUT": True,
+    "AGENT_PROCESS_ERROR": True,
+    "AGENT_OUTPUT_ERROR": True,
+    "AGENT_AUTHENTICATION_ERROR": False,
+    "AGENT_USAGE_LIMIT_ERROR": False,
+    "AGENT_PERMISSION_ERROR": False,
+    "CIRCUIT_BREAKER_OPEN": False,
+    "AGENT_EXECUTOR_NOT_REGISTERED": False,
+    "INVALID_EXECUTOR_OUTPUT": False,
+    "UNEXPECTED_ERROR": False,
+}
+
+# Unrecognized error types default to retryable, matching this codebase's
+# existing "retryable by default when uncertain" precedent for genuinely
+# unclassified failures (see `AgentOutputError`'s own default and
+# `STEP_EXECUTION_FAILED`'s `FailureCategory.UNKNOWN` bucketing above).
+_DEFAULT_RETRYABLE_WHEN_UNKNOWN = True
+
+
+def is_legacy_error_type_retryable(error_type: str) -> bool:
+    """The canonical, single-source-of-truth retry decision for a legacy
+    `error_type` string — authoritative for both the live engine's adapter
+    exceptions and the additive async retry layer. See the module-level note
+    above for why this is not simply `classify_legacy_error_type(...) in
+    RETRYABLE_FAILURE_CATEGORIES`.
+    """
+    return _LEGACY_ERROR_TYPE_RETRYABLE.get(error_type, _DEFAULT_RETRYABLE_WHEN_UNKNOWN)

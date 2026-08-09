@@ -53,13 +53,11 @@ Keystone/
 
 ## Backend setup
 
-Requires Python 3.12+.
+Requires Python 3.12+ and `uv`.
 
 ```bash
 cd backend
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
+uv sync --frozen
 cp .env.example .env
 ```
 
@@ -67,15 +65,15 @@ cp .env.example .env
 
 ```bash
 cd backend
-pytest
+uv run pytest -q
 ```
 
 ## Linting and type checking
 
 ```bash
 cd backend
-ruff check .
-mypy app
+uv run ruff check app tests
+uv run mypy app
 ```
 
 ## Starting the API

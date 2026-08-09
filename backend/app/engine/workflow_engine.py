@@ -3,6 +3,8 @@ and optional automatic compensation support."""
 
 import json
 import logging
+from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -10,6 +12,9 @@ from sqlalchemy.orm import Session
 from app.audit import service as audit_service
 from app.audit.hashing import compute_digest
 from app.audit.types import ActorType, AuditEventType
+from app.contracts.enums import AgentExecutionStatus
+from app.contracts.errors import FailureCategory
+from app.contracts.verification import VerificationStatus
 from app.engine.compensation import CompensationService
 from app.engine.compensation_registry import CompensationRegistry
 from app.engine.context import ExecutionContext
@@ -24,6 +29,7 @@ from app.models.enums import AttemptStatus, StepStatus, WorkflowStatus
 from app.models.step_attempt import StepAttempt
 from app.models.workflow import Workflow
 from app.models.workflow_step import WorkflowStep
+from app.persistence.service import LearningPersistenceService
 from app.resilience.circuit_breaker import (
     CircuitBreakerOpenError,
     CircuitBreakerRegistry,
@@ -41,6 +47,59 @@ _DEFAULT_RETRY_BASE_DELAY_SECONDS = 0.5
 _DEFAULT_RETRY_MAX_DELAY_SECONDS = 5.0
 
 _SYSTEM_ACTOR = "workflow_engine"
+
+# `StepExecutionError.error_type` values this engine itself raises with,
+# mapped to the canonical `FailureCategory` they represent. Deliberately
+# not exhaustive of every possible executor-supplied `error_type` -- see
+# `_classify_failed_attempt` for the fallback behavior for values outside
+# this table.
+_ERROR_TYPE_TO_FAILURE_CATEGORY: dict[str, FailureCategory] = {
+    "AGENT_EXECUTOR_NOT_REGISTERED": FailureCategory.INTERNAL_ERROR,
+    "CIRCUIT_BREAKER_OPEN": FailureCategory.CIRCUIT_OPEN,
+    "UNEXPECTED_ERROR": FailureCategory.INTERNAL_ERROR,
+    "INVALID_EXECUTOR_OUTPUT": FailureCategory.VALIDATION_FAILURE,
+}
+
+# A verification-outcome seam a caller may inject: given the step and the
+# attempt that just concluded, return the `VerificationStatus` Stage 4E (or
+# a future Stage 8 orchestrator) already determined for it, or `None` if no
+# verification has happened yet. Never called by anything in this module
+# for a non-terminal (still-retrying) attempt -- only for an attempt that
+# is about to produce its step's *final* `LearningEvent`.
+VerificationResolver = Callable[[WorkflowStep, StepAttempt], VerificationStatus | None]
+
+
+def _classify_failed_attempt(
+    error_type: str | None,
+) -> tuple[AgentExecutionStatus, FailureCategory]:
+    """Map one step attempt's `error_type` string to the canonical
+    `(AgentExecutionStatus, FailureCategory)` pair its `LearningEvent`
+    requires.
+
+    Single-event classification only -- no counting, no rate, no
+    percentile; this is not a learning aggregation formula, just the
+    typed-enum equivalent of the untyped `error_type` string already on
+    `StepAttempt`. An `error_type` this function does not recognize (by
+    exact match against this engine's own known constants, by containing
+    "TIMEOUT"/"CANCEL", or by matching a `FailureCategory` value directly)
+    is reported as `FailureCategory.UNKNOWN` -- never a guessed, more
+    specific category nothing actually observed.
+    """
+    if error_type is None:
+        return AgentExecutionStatus.FAILED, FailureCategory.UNKNOWN
+
+    normalized = error_type.strip().upper()
+    if normalized in _ERROR_TYPE_TO_FAILURE_CATEGORY:
+        return AgentExecutionStatus.FAILED, _ERROR_TYPE_TO_FAILURE_CATEGORY[normalized]
+    if "TIMEOUT" in normalized:
+        return AgentExecutionStatus.TIMED_OUT, FailureCategory.TIMEOUT
+    if "CANCEL" in normalized:
+        return AgentExecutionStatus.CANCELLED, FailureCategory.CANCELLED
+
+    try:
+        return AgentExecutionStatus.FAILED, FailureCategory(error_type.strip().lower())
+    except ValueError:
+        return AgentExecutionStatus.FAILED, FailureCategory.UNKNOWN
 
 
 def _ensure_json_compatible(output: Any) -> dict[str, Any]:
@@ -73,6 +132,15 @@ class WorkflowEngine:
     uses — best-effort: a failure during automatic compensation is logged,
     not re-raised, since `CompensationService` already persists that failure
     durably before any exception would propagate here.
+
+    When `learning_persistence` is supplied, every terminal step attempt
+    (success, terminal failure, or a failed-but-retrying attempt) is
+    recorded as a `LearningEvent` through it -- see
+    `app.persistence.service.LearningPersistenceService.record_step_attempt_outcome`,
+    the sole construction point; this class never builds a `LearningEvent`
+    itself. `learning_persistence=None` (the default) fully preserves
+    Phase 2/3/4 behavior: no learning event is ever recorded, and every
+    existing `WorkflowEngine` constructor call keeps working unchanged.
     """
 
     def __init__(
@@ -85,6 +153,8 @@ class WorkflowEngine:
         sleeper: Sleeper | None = None,
         compensation_registry: CompensationRegistry | None = None,
         auto_compensate_on_failure: bool = False,
+        learning_persistence: LearningPersistenceService | None = None,
+        verification_resolver: VerificationResolver | None = None,
     ) -> None:
         self._db = db
         self._registry = registry
@@ -103,6 +173,77 @@ class WorkflowEngine:
             if compensation_registry is not None
             else None
         )
+        self._learning_persistence = learning_persistence
+        self._verification_resolver = verification_resolver
+
+    def _record_step_learning_event(
+        self,
+        step: WorkflowStep,
+        attempt: StepAttempt,
+        *,
+        execution_status: AgentExecutionStatus,
+        failure_category: FailureCategory | None = None,
+        is_terminal: bool,
+    ) -> None:
+        """Record `attempt`'s outcome as a `LearningEvent`, if learning
+        persistence is configured; a no-op otherwise.
+
+        Only `is_terminal=True` (the attempt that succeeded, or the
+        attempt that finally exhausted retries/failed permanently) ever
+        consults `self._verification_resolver` -- a still-retrying
+        attempt's `LearningEvent` always has `verification_status=None`,
+        since nothing has been verified yet and nothing here fabricates a
+        status. Execution success alone is never treated as verified
+        success: `verification_status` only ever comes from the resolver
+        (Stage 4E's real verification, once wired by a caller), never
+        inferred from `execution_status`.
+
+        A persistence failure here is never silently swallowed: this
+        method explicitly rolls back before re-raising, so a conflicting
+        or malformed learning event never leaves the session holding a
+        half-applied, uncommitted change alongside the (already-committed,
+        via `workflow_service`) step-attempt state.
+        """
+        if self._learning_persistence is None:
+            return
+
+        verification_status: VerificationStatus | None = None
+        if is_terminal and self._verification_resolver is not None:
+            verification_status = self._verification_resolver(step, attempt)
+
+        duration_ms: float | None = None
+        if attempt.started_at is not None and attempt.completed_at is not None:
+            duration_ms = (attempt.completed_at - attempt.started_at).total_seconds() * 1000.0
+
+        created_at = attempt.completed_at or datetime.now(UTC)
+        task_type = step.input_payload.get("task_type") if step.input_payload else None
+        repository_id = step.input_payload.get("repository_id") if step.input_payload else None
+
+        try:
+            self._learning_persistence.record_step_attempt_outcome(
+                self._db,
+                workflow_id=step.workflow_id,
+                step_id=step.id,
+                attempt_number=attempt.attempt_number,
+                agent_type=step.agent_type,
+                execution_status=execution_status,
+                verification_status=verification_status,
+                failure_category=failure_category,
+                task_type=task_type if isinstance(task_type, str) else None,
+                repository_id=repository_id if isinstance(repository_id, str) else None,
+                duration_ms=duration_ms,
+                created_at=created_at,
+            )
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            logger.exception(
+                "learning_event_persistence_failed workflow_id=%s step_id=%s attempt_number=%s",
+                step.workflow_id,
+                step.id,
+                attempt.attempt_number,
+            )
+            raise
 
     def execute_workflow(self, workflow_id: str) -> Workflow:
         """Run a `PENDING` workflow's steps to completion (or first failure).
@@ -473,6 +614,16 @@ class WorkflowEngine:
                         error_type=exc.error_type,
                         error_message=str(exc),
                     )
+                    retry_exec_status, retry_failure_category = _classify_failed_attempt(
+                        exc.error_type
+                    )
+                    self._record_step_learning_event(
+                        step,
+                        attempt,
+                        execution_status=retry_exec_status,
+                        failure_category=retry_failure_category,
+                        is_terminal=False,
+                    )
                     audit_service.append_event(
                         self._db,
                         workflow_id=workflow.id,
@@ -556,6 +707,12 @@ class WorkflowEngine:
             workflow_service.complete_step_attempt(
                 self._db, attempt.id, status=AttemptStatus.SUCCEEDED, output_payload=output
             )
+            self._record_step_learning_event(
+                step,
+                attempt,
+                execution_status=AgentExecutionStatus.SUCCEEDED,
+                is_terminal=True,
+            )
             audit_service.append_event(
                 self._db,
                 workflow_id=workflow.id,
@@ -597,6 +754,14 @@ class WorkflowEngine:
             status=AttemptStatus.FAILED,
             error_type=error_type,
             error_message=error_message,
+        )
+        exec_status, failure_category = _classify_failed_attempt(error_type)
+        self._record_step_learning_event(
+            step,
+            attempt,
+            execution_status=exec_status,
+            failure_category=failure_category,
+            is_terminal=True,
         )
         workflow_service.transition_step(self._db, step.id, StepStatus.FAILED)
 

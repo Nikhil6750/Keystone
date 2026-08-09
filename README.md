@@ -72,7 +72,7 @@ uv run pytest -q
 
 ```bash
 cd backend
-uv run ruff check app tests
+uv run ruff check .
 uv run mypy app
 ```
 
@@ -80,7 +80,7 @@ uv run mypy app
 
 ```bash
 cd backend
-uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload
 ```
 
 The API is served at `http://localhost:8000`:

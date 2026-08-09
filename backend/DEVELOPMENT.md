@@ -27,7 +27,7 @@ Keystone uses [`uv`](https://github.com/astral-sh/uv) to manage a reproducible P
 
 5. **Run linting**:
    ```bash
-   uv run ruff check app tests
+   uv run ruff check .
    ```
 
 6. **Run type checking**:
@@ -35,7 +35,12 @@ Keystone uses [`uv`](https://github.com/astral-sh/uv) to manage a reproducible P
    uv run mypy app
    ```
 
-7. **(Optional) Verify toolchain environment**:
+7. **Start the API server**:
+   ```bash
+   uv run uvicorn app.main:app --reload
+   ```
+
+8. **(Optional) Verify toolchain environment**:
    ```bash
    uv run python scripts/verify_environment.py
    ```

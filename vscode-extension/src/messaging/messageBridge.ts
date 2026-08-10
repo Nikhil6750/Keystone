@@ -2,11 +2,14 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Logger } from '../utils/logger';
+import { OrchestrationApiClient } from '../api/orchestrationApiClient';
+import type { OrchestrationExecutionCreate } from '../../../shared-contracts/src';
 
 export interface BridgeMessage {
   type: string;
   action?: string;
   message?: string;
+  requestId?: string;
   payload?: unknown;
 }
 
@@ -24,8 +27,16 @@ export interface WorkspaceNodeItem {
 
 /**
  * Message bridge between Extension Host and Webview.
+ * Handles IPC messaging, workspace file tree inspects, and REST/SSE orchestration requests.
  */
 export class MessageBridge {
+  private static apiClient: OrchestrationApiClient = new OrchestrationApiClient();
+  private static activeSubscriptions: Map<string, () => void> = new Map();
+
+  public static getApiClient(): OrchestrationApiClient {
+    return this.apiClient;
+  }
+
   public static sendInitMessage(webview: vscode.Webview): void {
     const msg: BridgeMessage = {
       type: 'INIT',
@@ -41,6 +52,201 @@ export class MessageBridge {
 
     if (actionType === 'GET_WORKSPACE_TREE' && webview) {
       this.sendWorkspaceTree(webview);
+      return;
+    }
+
+    if (actionType === 'CREATE_ORCHESTRATION' && webview) {
+      this.handleCreateOrchestration(message, webview);
+      return;
+    }
+
+    if (actionType === 'GET_ORCHESTRATION_STATUS' && webview) {
+      this.handleGetOrchestrationStatus(message, webview);
+      return;
+    }
+
+    if (actionType === 'SUBSCRIBE_EVENTS' && webview) {
+      this.handleSubscribeEvents(message, webview);
+      return;
+    }
+
+    if (actionType === 'UNSUBSCRIBE_EVENTS') {
+      this.handleUnsubscribeEvents(message);
+      return;
+    }
+
+    if (actionType === 'GET_AGENTS' && webview) {
+      this.handleGetAgents(message, webview);
+      return;
+    }
+
+    if (actionType === 'VERIFY_AGENT' && webview) {
+      this.handleVerifyAgent(message, webview);
+      return;
+    }
+  }
+
+  private static async handleCreateOrchestration(
+    message: BridgeMessage,
+    webview: vscode.Webview
+  ): Promise<void> {
+    const requestId = message.requestId || String(Date.now());
+    const payload = message.payload as OrchestrationExecutionCreate;
+
+    try {
+      const accepted = await this.apiClient.createOrchestration(payload);
+      webview.postMessage({
+        type: 'CREATE_ORCHESTRATION_RESPONSE',
+        requestId,
+        success: true,
+        payload: accepted,
+      });
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      webview.postMessage({
+        type: 'CREATE_ORCHESTRATION_RESPONSE',
+        requestId,
+        success: false,
+        error: errorMessage,
+      });
+    }
+  }
+
+  private static async handleGetOrchestrationStatus(
+    message: BridgeMessage,
+    webview: vscode.Webview
+  ): Promise<void> {
+    const requestId = message.requestId || String(Date.now());
+    const executionId = (message.payload as { executionId?: string })?.executionId;
+
+    if (!executionId) {
+      webview.postMessage({
+        type: 'GET_ORCHESTRATION_STATUS_RESPONSE',
+        requestId,
+        success: false,
+        error: 'Missing executionId parameter',
+      });
+      return;
+    }
+
+    try {
+      const status = await this.apiClient.getOrchestrationStatus(executionId);
+      webview.postMessage({
+        type: 'GET_ORCHESTRATION_STATUS_RESPONSE',
+        requestId,
+        success: true,
+        payload: status,
+      });
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      webview.postMessage({
+        type: 'GET_ORCHESTRATION_STATUS_RESPONSE',
+        requestId,
+        success: false,
+        error: errorMessage,
+      });
+    }
+  }
+
+  private static handleSubscribeEvents(message: BridgeMessage, webview: vscode.Webview): void {
+    const executionId = (message.payload as { executionId?: string })?.executionId;
+    if (!executionId) return;
+
+    if (this.activeSubscriptions.has(executionId)) {
+      this.activeSubscriptions.get(executionId)?.();
+      this.activeSubscriptions.delete(executionId);
+    }
+
+    const unsubscribe = this.apiClient.subscribeToEvents(
+      executionId,
+      (event) => {
+        webview.postMessage({
+          type: 'ORCHESTRATION_EVENT',
+          payload: { executionId, event },
+        });
+      },
+      (err) => {
+        webview.postMessage({
+          type: 'ORCHESTRATION_EVENT_ERROR',
+          payload: { executionId, error: err.message },
+        });
+      },
+      () => {
+        webview.postMessage({
+          type: 'ORCHESTRATION_EVENTS_COMPLETED',
+          payload: { executionId },
+        });
+        this.activeSubscriptions.delete(executionId);
+      }
+    );
+
+    this.activeSubscriptions.set(executionId, unsubscribe);
+  }
+
+  private static handleUnsubscribeEvents(message: BridgeMessage): void {
+    const executionId = (message.payload as { executionId?: string })?.executionId;
+    if (executionId && this.activeSubscriptions.has(executionId)) {
+      this.activeSubscriptions.get(executionId)?.();
+      this.activeSubscriptions.delete(executionId);
+    }
+  }
+
+  private static async handleGetAgents(
+    message: BridgeMessage,
+    webview: vscode.Webview
+  ): Promise<void> {
+    const requestId = message.requestId || String(Date.now());
+    try {
+      const agents = await this.apiClient.getAgents();
+      webview.postMessage({
+        type: 'GET_AGENTS_RESPONSE',
+        requestId,
+        success: true,
+        payload: agents,
+      });
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      webview.postMessage({
+        type: 'GET_AGENTS_RESPONSE',
+        requestId,
+        success: false,
+        error: errorMessage,
+      });
+    }
+  }
+
+  private static async handleVerifyAgent(
+    message: BridgeMessage,
+    webview: vscode.Webview
+  ): Promise<void> {
+    const requestId = message.requestId || String(Date.now());
+    const agentId = (message.payload as { agentId?: string })?.agentId;
+
+    if (!agentId) {
+      webview.postMessage({
+        type: 'VERIFY_AGENT_RESPONSE',
+        requestId,
+        success: false,
+        error: 'Missing agentId parameter',
+      });
+      return;
+    }
+
+    try {
+      const verified = await this.apiClient.verifyAgent(agentId);
+      webview.postMessage({
+        type: 'VERIFY_AGENT_RESPONSE',
+        requestId,
+        success: verified,
+      });
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      webview.postMessage({
+        type: 'VERIFY_AGENT_RESPONSE',
+        requestId,
+        success: false,
+        error: errorMessage,
+      });
     }
   }
 

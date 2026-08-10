@@ -17,6 +17,11 @@ export class Logger {
     this.channel?.appendLine(`[INFO] [${new Date().toISOString()}] ${message}`);
   }
 
+  public static warn(message: string): void {
+    this.initialize();
+    this.channel?.appendLine(`[WARN] [${new Date().toISOString()}] ${message}`);
+  }
+
   public static error(message: string, error?: unknown): void {
     this.initialize();
     this.channel?.appendLine(`[ERROR] [${new Date().toISOString()}] ${message}`);

@@ -184,12 +184,8 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setStageStatuses(initial);
   }, [clearAllTimeouts]);
 
-  const startExecution = useCallback(() => {
-    resetExecution();
-    setExecutionStarted(true);
-    publishEvent('WORKFLOW_STARTED', { prompt, templateId: selectedTemplate });
-    pushNotification('info', 'Workflow execution simulation started.', 'Execution Running');
-
+  const runFallbackSimulation = useCallback(() => {
+    pushNotification('info', 'Workflow execution simulation started (Offline mode).', 'Execution Running');
     let cumulativeTime = 0;
     const totalStages = EXECUTION_STAGES.length;
 
@@ -197,7 +193,6 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const startTime = cumulativeTime;
       cumulativeTime += stage.durationMs;
 
-      // 1. Stage Running
       const startTimeout = setTimeout(() => {
         setCurrentStageId(stage.id);
         setStageStatuses((prev) => ({ ...prev, [stage.id]: 'Running' }));
@@ -205,7 +200,6 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }, startTime);
       timeoutsRef.current.push(startTimeout);
 
-      // 2. Logs
       const logCount = stage.logs.length;
       stage.logs.forEach((logMsg, logIdx) => {
         const logDelay = startTime + Math.round(((logIdx + 1) / (logCount + 1)) * stage.durationMs);
@@ -229,7 +223,6 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         timeoutsRef.current.push(logTimeout);
       });
 
-      // 3. Stage Completed
       const endTimeout = setTimeout(() => {
         setStageStatuses((prev) => ({ ...prev, [stage.id]: 'Completed' }));
 
@@ -243,7 +236,64 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }, cumulativeTime);
       timeoutsRef.current.push(endTimeout);
     });
-  }, [resetExecution, publishEvent, pushNotification, prompt, selectedTemplate]);
+  }, [pushNotification, publishEvent]);
+
+  const startExecution = useCallback(async () => {
+    resetExecution();
+    setExecutionStarted(true);
+    publishEvent('WORKFLOW_STARTED', { prompt, templateId: selectedTemplate });
+
+    try {
+      const availableAgents = selectedAgentId ? [selectedAgentId] : [];
+      const accepted = await ApiClient.postOrchestration({
+        goal: prompt || 'Execute engineering workflow',
+        available_agent_types: availableAgents,
+      });
+
+      pushNotification(
+        'info',
+        `Orchestration ${accepted.execution_id.slice(0, 8)} started.`,
+        'Execution Running'
+      );
+
+      const unsubscribe = ApiClient.subscribeOrchestrationEvents(
+        accepted.execution_id,
+        (evt) => {
+          const now = new Date();
+          const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(
+            now.getMinutes()
+          ).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+
+          const msg = evt.message || `${evt.event_type} (seq ${evt.sequence})`;
+          setExecutionLogs((prev) => [
+            ...prev,
+            {
+              id: `${evt.event_id}-${Date.now()}`,
+              stageId: evt.phase || 'executor',
+              stageTitle: evt.phase || 'Execution',
+              message: msg,
+              timestamp: timeStr,
+            },
+          ]);
+
+          if (evt.event_type === 'execution.completed') {
+            setExecutionCompleted(true);
+            setProgressPercentage(100);
+            publishEvent('WORKFLOW_COMPLETED', { status: 'success' });
+            pushNotification('success', 'Orchestration completed successfully.', 'Execution Success');
+          } else if (evt.event_type === 'execution.failed' || evt.event_type === 'execution.cancelled') {
+            setExecutionCompleted(true);
+            publishEvent('WORKFLOW_COMPLETED', { status: 'failed' });
+            pushNotification('error', 'Orchestration execution terminated.', 'Execution Failed');
+          }
+        }
+      );
+
+      timeoutsRef.current.push(setTimeout(() => unsubscribe(), 300000) as unknown as NodeJS.Timeout);
+    } catch {
+      runFallbackSimulation();
+    }
+  }, [resetExecution, publishEvent, pushNotification, prompt, selectedTemplate, selectedAgentId, runFallbackSimulation]);
 
   // Synchronized Selection Wrappers
   const handleSetSelectedAgentId = useCallback(

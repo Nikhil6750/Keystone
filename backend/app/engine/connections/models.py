@@ -90,7 +90,7 @@ def validate_metadata(meta: dict[str, Any] | None) -> dict[str, str]:
 
         if len(val) > MAX_METADATA_VALUE_LENGTH:
             raise ValueError(
-                f"metadata value for '{key_clean}' exceeds max length "
+                f"metadata value for '{key_clean}' exceeds maximum length "
                 f"({MAX_METADATA_VALUE_LENGTH})"
             )
 

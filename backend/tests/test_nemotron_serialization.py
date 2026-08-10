@@ -138,3 +138,36 @@ def test_build_request_body_json_mode_opt_in() -> None:
     messages = build_chat_messages(_minimal_request())
     body = build_request_body(config, messages)
     assert body["response_format"] == {"type": "json_object"}
+
+
+# --- Stage 8B.1 Part C: reasoning_effort / stream sent explicitly ---------
+
+
+def test_build_request_body_sends_default_reasoning_effort_and_stream() -> None:
+    config = NemotronConfig()
+    messages = build_chat_messages(_minimal_request())
+    body = build_request_body(config, messages)
+    assert body["reasoning_effort"] == "none"
+    assert body["stream"] is False
+
+
+def test_build_request_body_reasoning_effort_is_configurable() -> None:
+    config = NemotronConfig(reasoning_effort="high")
+    messages = build_chat_messages(_minimal_request())
+    body = build_request_body(config, messages)
+    assert body["reasoning_effort"] == "high"
+
+
+def test_build_request_body_stream_is_configurable() -> None:
+    config = NemotronConfig(stream=True)
+    messages = build_chat_messages(_minimal_request())
+    body = build_request_body(config, messages)
+    assert body["stream"] is True
+
+
+def test_system_message_never_mentions_reasoning_content_field() -> None:
+    """The prompt must never ask the model to surface reasoning/thinking
+    content -- consistent with Stage 8B rule 16 (never persist/log/expose
+    reasoning_content anywhere in this adapter)."""
+    system = build_chat_messages(_minimal_request())[0]["content"]
+    assert "reasoning_content" not in system

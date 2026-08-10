@@ -17,6 +17,10 @@ back from -- it never bypasses either.
 from app.integrations.nemotron.adapter import NemotronManagerModel
 from app.integrations.nemotron.config import NemotronConfig
 from app.integrations.nemotron.fake import FakeNemotronTransport
+from app.integrations.nemotron.schema_contract import (
+    MANAGER_RESPONSE_CONTRACT,
+    build_manager_response_contract,
+)
 from app.integrations.nemotron.transport import (
     HttpxNemotronTransport,
     NemotronTransport,
@@ -27,9 +31,11 @@ from app.integrations.nemotron.transport import (
 __all__ = [
     "FakeNemotronTransport",
     "HttpxNemotronTransport",
+    "MANAGER_RESPONSE_CONTRACT",
     "NemotronConfig",
     "NemotronManagerModel",
     "NemotronTransport",
     "TransportRequest",
     "TransportResponse",
+    "build_manager_response_contract",
 ]

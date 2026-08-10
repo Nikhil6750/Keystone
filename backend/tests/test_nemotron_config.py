@@ -6,6 +6,8 @@ from app.integrations.nemotron.config import (
     DEFAULT_API_KEY_ENV_VAR,
     DEFAULT_HOSTED_BASE_URL,
     DEFAULT_MODEL,
+    DEFAULT_REASONING_EFFORT,
+    DEFAULT_STREAM,
     NemotronConfig,
 )
 
@@ -18,6 +20,38 @@ def test_hosted_defaults() -> None:
     assert config.timeout_seconds > 0
     assert config.max_output_tokens > 0
     assert config.max_response_body_bytes > 0
+
+
+# --- Stage 8B.1 Part C: bounded low-latency defaults -----------------------
+
+
+def test_reasoning_effort_defaults_to_none() -> None:
+    config = NemotronConfig()
+    assert config.reasoning_effort == DEFAULT_REASONING_EFFORT == "none"
+
+
+def test_stream_defaults_to_false() -> None:
+    config = NemotronConfig()
+    assert config.stream is DEFAULT_STREAM is False
+
+
+@pytest.mark.parametrize("effort", ["none", "medium", "high"])
+def test_reasoning_effort_accepts_every_documented_value(effort: str) -> None:
+    config = NemotronConfig(reasoning_effort=effort)  # type: ignore[arg-type]
+    assert config.reasoning_effort == effort
+
+
+def test_reasoning_effort_rejects_unknown_value() -> None:
+    with pytest.raises(ValueError, match="reasoning_effort"):
+        NemotronConfig(reasoning_effort="ultra")  # type: ignore[arg-type]
+
+
+def test_stream_is_configurable_to_true() -> None:
+    """Configurable does not mean recommended -- no SSE handling exists
+    anywhere in this adapter yet; see Stage 8B.1 Part C. This only proves
+    the field itself is a normal, overridable config value."""
+    config = NemotronConfig(stream=True)
+    assert config.stream is True
 
 
 def test_chat_completions_url_hosted_default() -> None:

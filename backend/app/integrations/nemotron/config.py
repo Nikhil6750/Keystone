@@ -27,6 +27,7 @@ default self-hosted deployment expects.
 
 import os
 from dataclasses import dataclass
+from typing import Literal
 
 DEFAULT_HOSTED_BASE_URL = "https://integrate.api.nvidia.com/v1"
 DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
@@ -38,6 +39,18 @@ DEFAULT_MAX_OUTPUT_TOKENS = 1024
 # `transport.py` while streaming the response body, before any JSON
 # parsing is attempted.
 MAX_RESPONSE_BODY_BYTES = 1_000_000
+
+# Stage 8B.1 Part C: bounded low-latency defaults for Keystone Manager
+# structured planning. Neither field was previously sent explicitly by
+# this adapter -- a certified live diagnostic observed ~20.4s for one call
+# with the provider left to its own defaults. "none"/`False` are the
+# minimum-latency settings; a caller with a genuine need for deeper
+# reasoning can opt into "medium"/"high" explicitly via `NemotronConfig`,
+# never by editing this adapter's code.
+ReasoningEffort = Literal["none", "medium", "high"]
+DEFAULT_REASONING_EFFORT: ReasoningEffort = "none"
+DEFAULT_STREAM = False
+_VALID_REASONING_EFFORTS: frozenset[str] = frozenset({"none", "medium", "high"})
 
 
 @dataclass(frozen=True)
@@ -64,6 +77,11 @@ class NemotronConfig:
     # `build_user_agent()` for how this composes with the project's actual
     # installed version (never a hardcoded/guessed version string).
     user_agent_product: str = "Keystone-Nemotron-Adapter"
+    # Bounded low-latency defaults -- see the module-level comment above.
+    # Configurable per `NemotronConfig` instance, never scattered as a
+    # provider-specific literal inside `serialization.py`/`adapter.py`.
+    reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT
+    stream: bool = DEFAULT_STREAM
 
     def __post_init__(self) -> None:
         if not self.base_url.strip():
@@ -80,6 +98,11 @@ class NemotronConfig:
             raise ValueError("max_response_body_bytes must be positive")
         if not self.user_agent_product.strip():
             raise ValueError("user_agent_product must not be blank")
+        if self.reasoning_effort not in _VALID_REASONING_EFFORTS:
+            raise ValueError(
+                "reasoning_effort must be one of "
+                f"{sorted(_VALID_REASONING_EFFORTS)}, got {self.reasoning_effort!r}"
+            )
 
     @property
     def chat_completions_url(self) -> str:
@@ -105,7 +128,10 @@ __all__ = [
     "DEFAULT_HOSTED_BASE_URL",
     "DEFAULT_MAX_OUTPUT_TOKENS",
     "DEFAULT_MODEL",
+    "DEFAULT_REASONING_EFFORT",
+    "DEFAULT_STREAM",
     "DEFAULT_TIMEOUT_SECONDS",
     "MAX_RESPONSE_BODY_BYTES",
     "NemotronConfig",
+    "ReasoningEffort",
 ]

@@ -1,10 +1,13 @@
 """Repositories for AgentConnection and ConnectedAgent entities.
 
 Storage-neutral, thread-safe in-memory implementations satisfying Stage 8C.3A
-referential integrity guarantees. No database migrations introduced.
+referential integrity guarantees. Shares a single synchronization lock across
+repositories to guarantee AB-BA deadlock prevention. Frozen domain models
+and repository-controlled updates prevent direct reference mutation leaks.
 """
 
 from threading import RLock
+from typing import Any
 
 from app.engine.connections.exceptions import (
     AgentNotFoundError,
@@ -16,6 +19,7 @@ from app.engine.connections.exceptions import (
 from app.engine.connections.models import (
     AgentConnection,
     AgentConnectionCreate,
+    AgentConnectionUpdate,
     ConnectedAgent,
     ConnectedAgentCreate,
     ConnectedAgentUpdate,
@@ -23,15 +27,28 @@ from app.engine.connections.models import (
 )
 
 
+class ConnectionRegistryCoordinator:
+    """Shared synchronization coordinator for AgentConnection and ConnectedAgent repositories."""
+
+    def __init__(self, lock: Any | None = None) -> None:
+        self.lock = lock or RLock()
+
+
 class AgentConnectionRepository:
     """Repository storing `AgentConnection` entities."""
 
-    def __init__(self) -> None:
+    def __init__(self, coordinator: ConnectionRegistryCoordinator | None = None) -> None:
+        self._coordinator = coordinator or ConnectionRegistryCoordinator()
         self._connections: dict[str, AgentConnection] = {}
-        self._lock = RLock()
 
-    def register(self, payload: AgentConnectionCreate | AgentConnection) -> AgentConnection:
-        with self._lock:
+    @property
+    def coordinator(self) -> ConnectionRegistryCoordinator:
+        return self._coordinator
+
+    def register(
+        self, payload: AgentConnectionCreate | AgentConnection
+    ) -> AgentConnection:
+        with self._coordinator.lock:
             cid = payload.connection_id.strip()
             if cid in self._connections:
                 raise DuplicateConnectionError(cid)
@@ -52,17 +69,53 @@ class AgentConnectionRepository:
             return conn
 
     def get(self, connection_id: str) -> AgentConnection | None:
-        with self._lock:
+        with self._coordinator.lock:
             return self._connections.get(connection_id.strip())
 
     def list(self) -> list[AgentConnection]:
-        with self._lock:
+        with self._coordinator.lock:
             return sorted(self._connections.values(), key=lambda c: c.connection_id)
+
+    def update(
+        self, connection_id: str, updates: AgentConnectionUpdate
+    ) -> AgentConnection:
+        with self._coordinator.lock:
+            cid = connection_id.strip()
+            existing = self._connections.get(cid)
+            if existing is None:
+                raise ConnectionNotFoundError(cid)
+
+            new_display = (
+                updates.display_name
+                if updates.display_name is not None
+                else existing.display_name
+            )
+            new_status = (
+                updates.status if updates.status is not None else existing.status
+            )
+            new_meta = (
+                dict(updates.metadata)
+                if updates.metadata is not None
+                else dict(existing.metadata)
+            )
+
+            updated_conn = AgentConnection(
+                connection_id=existing.connection_id,
+                display_name=new_display,
+                connection_kind=existing.connection_kind,
+                provider_or_runtime=existing.provider_or_runtime,
+                status=new_status,
+                metadata=new_meta,
+                created_at=existing.created_at,
+                updated_at=utc_now(),
+            )
+            self._connections[cid] = updated_conn
+            return updated_conn
 
     def delete(
         self, connection_id: str, agent_repo: "ConnectedAgentRepository"
     ) -> bool:
-        with self._lock:
+        with self._coordinator.lock:
             cid = connection_id.strip()
             if cid not in self._connections:
                 raise ConnectionNotFoundError(cid)
@@ -80,20 +133,25 @@ class AgentConnectionRepository:
 class ConnectedAgentRepository:
     """Repository storing `ConnectedAgent` entities with connection FK enforcement."""
 
-    def __init__(self) -> None:
+    def __init__(self, coordinator: ConnectionRegistryCoordinator | None = None) -> None:
+        self._coordinator = coordinator or ConnectionRegistryCoordinator()
         self._agents: dict[str, ConnectedAgent] = {}
-        self._lock = RLock()
+
+    @property
+    def coordinator(self) -> ConnectionRegistryCoordinator:
+        return self._coordinator
 
     def register(
         self,
         payload: ConnectedAgentCreate | ConnectedAgent,
         connection_repo: AgentConnectionRepository,
     ) -> ConnectedAgent:
-        with self._lock:
+        with self._coordinator.lock:
             aid = payload.agent_id.strip()
             cid = payload.connection_id.strip()
 
-            if connection_repo.get(cid) is None:
+            parent_conn = connection_repo.get(cid)
+            if parent_conn is None:
                 raise ConnectionNotFoundError(cid)
 
             if aid in self._agents:
@@ -116,13 +174,13 @@ class ConnectedAgentRepository:
             return agent
 
     def get(self, agent_id: str) -> ConnectedAgent | None:
-        with self._lock:
+        with self._coordinator.lock:
             return self._agents.get(agent_id.strip())
 
     def list(
         self, connection_id: str | None = None, enabled_only: bool = False
     ) -> list[ConnectedAgent]:
-        with self._lock:
+        with self._coordinator.lock:
             result = list(self._agents.values())
             if connection_id is not None:
                 cid = connection_id.strip()
@@ -134,31 +192,52 @@ class ConnectedAgentRepository:
     def update(
         self, agent_id: str, updates: ConnectedAgentUpdate
     ) -> ConnectedAgent:
-        with self._lock:
+        with self._coordinator.lock:
             aid = agent_id.strip()
             existing = self._agents.get(aid)
             if existing is None:
                 raise AgentNotFoundError(aid)
 
-            updated_data = existing.model_dump()
-            if updates.display_name is not None:
-                updated_data["display_name"] = updates.display_name
-            if updates.model_id is not None:
-                updated_data["model_id"] = updates.model_id
-            if updates.capabilities is not None:
-                updated_data["capabilities"] = list(updates.capabilities)
-            if updates.enabled is not None:
-                updated_data["enabled"] = updates.enabled
-            if updates.metadata is not None:
-                updated_data["metadata"] = dict(updates.metadata)
-            updated_data["updated_at"] = utc_now()
+            new_display = (
+                updates.display_name
+                if updates.display_name is not None
+                else existing.display_name
+            )
+            new_model = (
+                updates.model_id
+                if updates.model_id is not None
+                else existing.model_id
+            )
+            new_caps = (
+                list(updates.capabilities)
+                if updates.capabilities is not None
+                else list(existing.capabilities)
+            )
+            new_enabled = (
+                updates.enabled if updates.enabled is not None else existing.enabled
+            )
+            new_meta = (
+                dict(updates.metadata)
+                if updates.metadata is not None
+                else dict(existing.metadata)
+            )
 
-            updated_agent = ConnectedAgent.model_validate(updated_data)
+            updated_agent = ConnectedAgent(
+                agent_id=existing.agent_id,
+                display_name=new_display,
+                connection_id=existing.connection_id,
+                model_id=new_model,
+                capabilities=new_caps,
+                enabled=new_enabled,
+                metadata=new_meta,
+                created_at=existing.created_at,
+                updated_at=utc_now(),
+            )
             self._agents[aid] = updated_agent
             return updated_agent
 
     def delete(self, agent_id: str) -> bool:
-        with self._lock:
+        with self._coordinator.lock:
             aid = agent_id.strip()
             if aid not in self._agents:
                 raise AgentNotFoundError(aid)

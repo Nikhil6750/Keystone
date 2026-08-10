@@ -109,8 +109,7 @@ def get_agent_connection_repository(request: Request) -> AgentConnectionReposito
         request.app.state, "agent_connection_repository", None
     )
     if repo is None:
-        repo = AgentConnectionRepository()
-        request.app.state.agent_connection_repository = repo
+        raise RuntimeError("AgentConnectionRepository is not initialized on app.state")
     return repo
 
 
@@ -120,6 +119,5 @@ def get_connected_agent_repository(request: Request) -> ConnectedAgentRepository
         request.app.state, "connected_agent_repository", None
     )
     if repo is None:
-        repo = ConnectedAgentRepository()
-        request.app.state.connected_agent_repository = repo
+        raise RuntimeError("ConnectedAgentRepository is not initialized on app.state")
     return repo

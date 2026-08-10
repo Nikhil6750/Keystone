@@ -26,6 +26,7 @@ from app.engine.connections import (
     AgentConnectionRepository,
     ConnectedAgentCandidateBridge,
     ConnectedAgentRepository,
+    ConnectionRegistryCoordinator,
 )
 from app.engine.demo_compensation import DEMO_COMPENSATION_HANDLER_NAME, DemoCompensationHandler
 from app.engine.manager.protocol import ManagerModel
@@ -121,8 +122,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.agent_connection_cache = AgentConnectionCache(
         cache_seconds=settings.agent_connection_cache_seconds
     )
-    app.state.agent_connection_repository = AgentConnectionRepository()
-    app.state.connected_agent_repository = ConnectedAgentRepository()
+    connection_coordinator = ConnectionRegistryCoordinator()
+    app.state.agent_connection_repository = AgentConnectionRepository(
+        coordinator=connection_coordinator
+    )
+    app.state.connected_agent_repository = ConnectedAgentRepository(
+        coordinator=connection_coordinator
+    )
     app.state.orchestration_manager_model = None
     app.state.orchestration_execution_store = InMemoryOrchestrationExecutionStore()
     app.state.orchestration_execution_coordinator = OrchestrationExecutionCoordinator(

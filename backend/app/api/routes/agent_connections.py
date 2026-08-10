@@ -1,6 +1,6 @@
 """FastAPI routes for Stage 8C.3A Agent Connections & Connected Agents."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 
 from app.api.deps import (
     get_agent_connection_repository,
@@ -8,14 +8,12 @@ from app.api.deps import (
 )
 from app.engine.connections.exceptions import (
     AgentNotFoundError,
-    ConnectionHasDependentAgentsError,
     ConnectionNotFoundError,
-    DuplicateAgentError,
-    DuplicateConnectionError,
 )
 from app.engine.connections.models import (
     AgentConnection,
     AgentConnectionCreate,
+    AgentConnectionUpdate,
     ConnectedAgent,
     ConnectedAgentCreate,
     ConnectedAgentUpdate,
@@ -39,12 +37,7 @@ def create_agent_connection(
     repo: AgentConnectionRepository = Depends(get_agent_connection_repository),  # noqa: B008
 ) -> AgentConnection:
     """Registers a new integration connection (installed runtime, API, local, custom)."""
-    try:
-        return repo.register(data)
-    except DuplicateConnectionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-        ) from exc
+    return repo.register(data)
 
 
 @router.get(
@@ -71,11 +64,22 @@ def get_agent_connection(
     """Retrieves an agent connection by connection_id."""
     conn = repo.get(connection_id)
     if conn is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"AgentConnection '{connection_id}' not found",
-        )
+        raise ConnectionNotFoundError(connection_id)
     return conn
+
+
+@router.patch(
+    "/agent-connections/{connection_id}",
+    response_model=AgentConnection,
+    summary="Update an agent connection",
+)
+def update_agent_connection(
+    connection_id: str,
+    data: AgentConnectionUpdate,
+    repo: AgentConnectionRepository = Depends(get_agent_connection_repository),  # noqa: B008
+) -> AgentConnection:
+    """Updates mutable fields (display_name, status, metadata) on an agent connection."""
+    return repo.update(connection_id, data)
 
 
 @router.delete(
@@ -89,16 +93,7 @@ def delete_agent_connection(
     agent_repo: ConnectedAgentRepository = Depends(get_connected_agent_repository),  # noqa: B008
 ) -> None:
     """Deletes an agent connection. Rejects deletion if dependent ConnectedAgents exist."""
-    try:
-        conn_repo.delete(connection_id, agent_repo)
-    except ConnectionNotFoundError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
-        ) from exc
-    except ConnectionHasDependentAgentsError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-        ) from exc
+    conn_repo.delete(connection_id, agent_repo)
 
 
 @router.post(
@@ -113,16 +108,7 @@ def create_connected_agent(
     agent_repo: ConnectedAgentRepository = Depends(get_connected_agent_repository),  # noqa: B008
 ) -> ConnectedAgent:
     """Registers a new connected agent identity referencing a valid connection_id."""
-    try:
-        return agent_repo.register(data, conn_repo)
-    except ConnectionNotFoundError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
-        ) from exc
-    except DuplicateAgentError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-        ) from exc
+    return agent_repo.register(data, conn_repo)
 
 
 @router.get(
@@ -151,10 +137,7 @@ def get_connected_agent(
     """Retrieves a connected agent identity by agent_id."""
     agent = agent_repo.get(agent_id)
     if agent is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"ConnectedAgent '{agent_id}' not found",
-        )
+        raise AgentNotFoundError(agent_id)
     return agent
 
 
@@ -169,12 +152,7 @@ def update_connected_agent(
     agent_repo: ConnectedAgentRepository = Depends(get_connected_agent_repository),  # noqa: B008
 ) -> ConnectedAgent:
     """Updates fields on an existing connected agent identity."""
-    try:
-        return agent_repo.update(agent_id, data)
-    except AgentNotFoundError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
-        ) from exc
+    return agent_repo.update(agent_id, data)
 
 
 @router.delete(
@@ -187,9 +165,4 @@ def delete_connected_agent(
     agent_repo: ConnectedAgentRepository = Depends(get_connected_agent_repository),  # noqa: B008
 ) -> None:
     """Deletes a connected agent identity."""
-    try:
-        agent_repo.delete(agent_id)
-    except AgentNotFoundError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
-        ) from exc
+    agent_repo.delete(agent_id)

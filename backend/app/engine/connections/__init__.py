@@ -13,6 +13,7 @@ from app.engine.connections.models import (
     AgentConnection,
     AgentConnectionCreate,
     AgentConnectionStatus,
+    AgentConnectionUpdate,
     ConnectedAgent,
     ConnectedAgentCreate,
     ConnectedAgentUpdate,
@@ -21,6 +22,7 @@ from app.engine.connections.models import (
 from app.engine.connections.repository import (
     AgentConnectionRepository,
     ConnectedAgentRepository,
+    ConnectionRegistryCoordinator,
 )
 
 __all__ = [
@@ -29,6 +31,7 @@ __all__ = [
     "AgentConnectionError",
     "AgentConnectionRepository",
     "AgentConnectionStatus",
+    "AgentConnectionUpdate",
     "AgentNotFoundError",
     "ConnectedAgent",
     "ConnectedAgentCandidateBridge",
@@ -38,6 +41,7 @@ __all__ = [
     "ConnectionHasDependentAgentsError",
     "ConnectionKind",
     "ConnectionNotFoundError",
+    "ConnectionRegistryCoordinator",
     "DuplicateAgentError",
     "DuplicateConnectionError",
 ]

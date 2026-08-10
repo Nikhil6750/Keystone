@@ -4,7 +4,8 @@ Translates `ConnectedAgent` entities backed by active `AgentConnection` records
 into `AgentDescriptor` maps for `RegistryCandidateProvider` and `Router`.
 
 Preserves exact Router authority: candidate agent filtering, capability checks,
-and circuit breaker availability evaluate normally.
+and circuit breaker availability evaluate normally. Prevents user metadata
+from overwriting reserved bridge metadata keys.
 """
 
 from app.contracts.adapter import AgentDescriptor
@@ -41,6 +42,7 @@ class ConnectedAgentCandidateBridge:
                 else RuntimeKind.AGENT_CLI
             )
 
+            # Build authoritative system metadata
             metadata: dict[str, object] = {
                 "connection_id": conn.connection_id,
                 "provider_or_runtime": conn.provider_or_runtime,
@@ -48,7 +50,11 @@ class ConnectedAgentCandidateBridge:
             }
             if agent.model_id is not None:
                 metadata["model_id"] = agent.model_id
-            metadata.update(agent.metadata)
+
+            # Merge user metadata safely -- reserved bridge keys cannot be overwritten
+            for key, val in agent.metadata.items():
+                if key not in metadata:
+                    metadata[key] = val
 
             descriptor = AgentDescriptor(
                 agent_type=agent.agent_id,

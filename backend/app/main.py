@@ -1,7 +1,7 @@
 """FastAPI application entry point."""
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -13,13 +13,25 @@ from app.api.errors import register_exception_handlers
 from app.api.routes.agents import router as agents_router
 from app.api.routes.audit import router as audit_router
 from app.api.routes.health import router as health_router
+from app.api.routes.orchestrations import router as orchestrations_router
 from app.api.routes.resilience import router as resilience_router
 from app.api.routes.workflows import router as workflows_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.database.init_db import initialize_database
+from app.database.session import SessionLocal
 from app.engine.compensation_registry import CompensationRegistry
 from app.engine.demo_compensation import DEMO_COMPENSATION_HANDLER_NAME, DemoCompensationHandler
+from app.engine.manager.protocol import ManagerModel
+from app.engine.orchestration.events import OrchestrationEventSequence, OrchestrationEventSink
+from app.engine.orchestration.execution import (
+    InMemoryOrchestrationExecutionStore,
+    OrchestrationExecutionCoordinator,
+    ServiceFactory,
+)
+from app.engine.orchestration.models import OrchestrationRequest
+from app.engine.orchestration.runtime import RegistryCandidateProvider
+from app.engine.orchestration.service import EndToEndOrchestrationService
 from app.engine.registry import ExecutorRegistry
 from app.resilience.circuit_breaker import CircuitBreakerRegistry
 from app.resilience.retry import RetryPolicy
@@ -28,6 +40,64 @@ configure_logging()
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+
+def _build_orchestration_service_factory(app: FastAPI) -> ServiceFactory:
+    """Returns the `ServiceFactory` the orchestration execution coordinator
+    uses to build one fresh `EndToEndOrchestrationService` per execution.
+
+    Deliberately a factory, never a hardcoded provider instantiated inside
+    a route function (Part 14): reads the app's already-shared
+    `executor_registry`/`circuit_breaker_registry`/`agent_connection_cache`
+    from `app.state` at call time, and gives every execution its own DB
+    session (never the short-lived, request-scoped one an HTTP handler's
+    `Depends(get_db)` would provide -- that session closes when the HTTP
+    response is sent, long before a background execution finishes).
+
+    Candidate agent types come from the caller's own `available_agent_types`
+    on each `OrchestrationRequest`, never from a fixed list here --
+    `RegistryCandidateProvider` only returns candidates for the types
+    actually registered in the live `ExecutorRegistry`, so any dynamically
+    registered agent ID (never Claude/Codex/Gemini-specific) is exactly as
+    usable as a built-in one.
+
+    No `ManagerModel` is wired here by default (`manager_model=None`):
+    `ManagerOrchestrator` already falls back to deterministic Planner-only
+    behavior when none is configured (Stage 8A, unmodified) -- this keeps
+    application startup free of any live-provider dependency. A deployment
+    that wants a real Manager sets `app.state.orchestration_manager_model`
+    before serving requests (or a test overrides the coordinator dependency
+    entirely with its own factory using `FakeManagerModel`).
+    """
+
+    def factory(
+        request: OrchestrationRequest,
+        event_sink: OrchestrationEventSink,
+        event_sequence: OrchestrationEventSequence,
+    ) -> tuple[EndToEndOrchestrationService, Callable[[], None]]:
+        db = SessionLocal()
+        candidate_provider = RegistryCandidateProvider(
+            registry=app.state.executor_registry,
+            agent_types=tuple(request.available_agent_types),
+            connection_cache=app.state.agent_connection_cache,
+            circuit_breakers=app.state.circuit_breaker_registry,
+        )
+        manager_model: ManagerModel | None = getattr(
+            app.state, "orchestration_manager_model", None
+        )
+        service = EndToEndOrchestrationService(
+            db=db,
+            registry=app.state.executor_registry,
+            candidate_provider=candidate_provider,
+            manager_model=manager_model,
+            circuit_breakers=app.state.circuit_breaker_registry,
+            retry_policy=app.state.retry_policy,
+            event_sink=event_sink,
+            event_sequence=event_sequence,
+        )
+        return service, db.close
+
+    return factory
 
 
 @asynccontextmanager
@@ -69,6 +139,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.agent_connection_cache = AgentConnectionCache(
         cache_seconds=settings.agent_connection_cache_seconds
     )
+    # Stage 8C.2: orchestration execution store + coordinator. No
+    # ManagerModel is wired here by default -- see
+    # `_build_orchestration_service_factory`'s docstring. Not restart-safe
+    # (process-local, in-memory only); see `InMemoryOrchestrationExecutionStore`.
+    app.state.orchestration_manager_model = None
+    app.state.orchestration_execution_store = InMemoryOrchestrationExecutionStore()
+    app.state.orchestration_execution_coordinator = OrchestrationExecutionCoordinator(
+        store=app.state.orchestration_execution_store,
+        service_factory=_build_orchestration_service_factory(app),
+    )
     yield
     logger.info("%s shutting down", settings.app_name)
 
@@ -94,6 +174,7 @@ app.include_router(workflows_router, prefix="/api/v1")
 app.include_router(agents_router, prefix="/api/v1")
 app.include_router(resilience_router, prefix="/api/v1")
 app.include_router(audit_router, prefix="/api/v1")
+app.include_router(orchestrations_router, prefix="/api/v1")
 
 
 @app.get("/")

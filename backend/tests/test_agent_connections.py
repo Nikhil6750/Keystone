@@ -64,8 +64,8 @@ def client(
     conn_repo, agent_repo = fresh_repos
     app.dependency_overrides[get_agent_connection_repository] = lambda: conn_repo
     app.dependency_overrides[get_connected_agent_repository] = lambda: agent_repo
-    with TestClient(app) as test_client:
-        yield test_client
+    test_client = TestClient(app)
+    yield test_client
     app.dependency_overrides.clear()
 
 

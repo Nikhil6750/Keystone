@@ -18,7 +18,7 @@ export class ExtensionActivator {
     ActivityBarProvider.register();
 
     // Sidebar View
-    const sidebarProvider = new SidebarViewProvider();
+    const sidebarProvider = new SidebarViewProvider(context.extensionUri);
     const sidebarDisposable = vscode.window.registerWebviewViewProvider(
       SidebarViewProvider.viewType,
       sidebarProvider

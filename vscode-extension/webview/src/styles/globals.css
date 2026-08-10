@@ -1385,3 +1385,622 @@ body {
     transform: translateX(0);
   }
 }
+
+/* ==========================================================================
+   Stage 8C.3 UI — Keystone prompt-first home experience
+   ========================================================================== */
+
+.keystone-home {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 100vh;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* --- Header --- */
+
+.keystone-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+  gap: 12px;
+}
+
+.keystone-header-title {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--fg-color);
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.keystone-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.keystone-agent-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 0.76rem;
+  font-weight: 500;
+  color: var(--muted-fg);
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.keystone-agent-count:hover,
+.keystone-agent-count:focus-visible {
+  color: var(--fg-color);
+  border-color: var(--accent-color);
+}
+
+.keystone-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--muted-fg);
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.keystone-icon-btn:hover,
+.keystone-icon-btn:focus-visible {
+  color: var(--fg-color);
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+.keystone-icon-btn:focus-visible,
+.keystone-agent-count:focus-visible,
+.btn-connect-agent:focus-visible,
+.connect-category-btn:focus-visible,
+.prompt-composer-send-btn:focus-visible,
+.prompt-composer-attach-btn:focus-visible,
+.btn-retry:focus-visible {
+  outline: 1px solid var(--input-focus);
+  outline-offset: 2px;
+}
+
+/* --- Scrollable main body (welcome / progress / result) --- */
+
+.keystone-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- Welcome / connected idle state --- */
+
+.keystone-welcome {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 10px;
+  padding: 32px 20px;
+  min-height: 220px;
+}
+
+.keystone-welcome-title {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--fg-color);
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.keystone-welcome-subtitle {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--fg-color);
+  margin: 0;
+}
+
+.keystone-welcome-hint {
+  font-size: 0.8rem;
+  color: var(--muted-fg);
+  margin: 0 0 6px;
+  max-width: 320px;
+  line-height: 1.4;
+}
+
+.btn-connect-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--button-fg);
+  background-color: var(--button-bg);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.btn-connect-agent:hover {
+  background-color: var(--accent-hover);
+}
+
+/* --- Prompt composer (always docked at the bottom) --- */
+
+.prompt-composer {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  margin: 8px 12px 12px;
+  background-color: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 10px;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
+}
+
+.prompt-composer:focus-within {
+  border-color: var(--input-focus);
+}
+
+.prompt-composer-attach-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  color: var(--muted-fg);
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.prompt-composer-attach-btn:hover {
+  color: var(--fg-color);
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+.prompt-composer-input {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  max-height: 140px;
+  padding: 4px 2px;
+  font-family: var(--font-family);
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: var(--fg-color);
+  background: transparent;
+  border: none;
+  outline: none;
+  overflow-y: auto;
+}
+
+.prompt-composer-input::placeholder {
+  color: var(--muted-fg);
+  opacity: 0.8;
+}
+
+.prompt-composer-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.prompt-composer-send-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  color: var(--button-fg);
+  background-color: var(--button-bg);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.prompt-composer-send-btn:hover:not(:disabled) {
+  background-color: var(--accent-hover);
+}
+
+.prompt-composer-send-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* --- Connect Agent secondary surface --- */
+
+.connect-agent-view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 16px;
+  max-width: 480px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.connect-agent-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 4px 8px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--muted-fg);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.connect-agent-back-btn:hover {
+  color: var(--fg-color);
+  background-color: rgba(255, 255, 255, 0.06);
+}
+
+.connect-agent-heading {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--fg-color);
+  margin: 0;
+}
+
+.connect-category-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.connect-category-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--fg-color);
+  text-align: left;
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+  box-sizing: border-box;
+}
+
+.connect-category-btn:hover {
+  border-color: var(--accent-color);
+  background-color: rgba(55, 148, 255, 0.05);
+}
+
+.connect-category-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-color);
+  flex-shrink: 0;
+}
+
+.connect-category-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.connect-category-title {
+  font-weight: 600;
+}
+
+.connect-category-desc {
+  font-size: 0.74rem;
+  color: var(--muted-fg);
+}
+
+.connect-category-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.connect-category-detail p {
+  font-size: 0.82rem;
+  color: var(--muted-fg);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.connect-future-steps {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 0.78rem;
+  color: var(--muted-fg);
+  line-height: 1.7;
+}
+
+.connect-unavailable-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 3px 9px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--status-amber);
+  background-color: rgba(204, 167, 0, 0.12);
+  border: 1px solid rgba(204, 167, 0, 0.3);
+  border-radius: 999px;
+}
+
+/* --- Execution progress --- */
+
+.execution-progress-view {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 24px 16px;
+  max-width: 520px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.execution-progress-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.progress-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.83rem;
+  color: var(--muted-fg);
+  line-height: 1.5;
+  animation: fadeIn 0.2s ease;
+}
+
+.progress-line.agent {
+  color: var(--fg-color);
+  font-weight: 500;
+}
+
+.progress-line.error {
+  color: var(--status-red);
+}
+
+.progress-line-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--accent-color);
+}
+
+.progress-line.error .progress-line-icon {
+  color: var(--status-red);
+}
+
+/* --- Execution result --- */
+
+.execution-result-view {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 24px 16px;
+  text-align: center;
+}
+
+.result-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  border-radius: 999px;
+}
+
+.result-badge.verified {
+  color: var(--status-green);
+  background-color: rgba(137, 209, 133, 0.15);
+  border: 1px solid rgba(137, 209, 133, 0.35);
+}
+
+.result-badge.failed {
+  color: var(--status-red);
+  background-color: rgba(241, 76, 76, 0.15);
+  border: 1px solid rgba(241, 76, 76, 0.35);
+}
+
+.result-summary {
+  font-size: 0.82rem;
+  color: var(--muted-fg);
+  max-width: 380px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.result-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.result-meta-chip {
+  font-size: 0.72rem;
+  color: var(--muted-fg);
+  padding: 3px 9px;
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+}
+
+.btn-start-over {
+  margin-top: 8px;
+  padding: 7px 16px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--fg-color);
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btn-start-over:hover {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+
+/* --- Backend unavailable --- */
+
+.backend-unavailable-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px 20px;
+  text-align: center;
+  min-height: 220px;
+}
+
+.backend-unavailable-icon {
+  color: var(--status-red);
+  margin-bottom: 4px;
+}
+
+.backend-unavailable-text {
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--fg-color);
+  margin: 0;
+}
+
+.btn-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 7px 16px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--button-fg);
+  background-color: var(--button-bg);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btn-retry:hover {
+  background-color: var(--accent-hover);
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--accent-color);
+  font-size: 0.78rem;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.btn-link:hover {
+  text-decoration: underline;
+}
+
+/* --- Advanced (compact, optional) controls --- */
+
+.advanced-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px;
+}
+
+.advanced-controls-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  color: var(--muted-fg);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.advanced-controls-toggle:hover {
+  color: var(--fg-color);
+}
+
+.advanced-controls-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  font-size: 0.78rem;
+  color: var(--muted-fg);
+}
+
+/* --- Narrow-width responsiveness (sidebar) --- */
+
+@media (max-width: 340px) {
+  .keystone-header-title {
+    font-size: 0.85rem;
+  }
+
+  .keystone-welcome-title {
+    font-size: 1.1rem;
+  }
+
+  .prompt-composer {
+    margin: 6px 8px 8px;
+    padding: 8px 10px;
+  }
+
+  .connect-agent-view,
+  .execution-progress-view {
+    padding: 16px 10px;
+  }
+}

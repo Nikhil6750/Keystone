@@ -1,11 +1,21 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { Logger } from '../../utils/logger';
+import { MessageBridge } from '../../messaging/messageBridge';
+import { getWebviewHtml } from '../../webview/getWebviewHtml';
 
 /**
  * WebviewViewProvider for the Keystone Sidebar View (`keystone.sidebarView`).
+ *
+ * Loads the same real Keystone React webview bundle the editor-panel
+ * surface (`WorkspaceController`) uses -- the prompt-first home
+ * experience must work identically in a narrow sidebar and a wide editor
+ * panel (Stage 8C.3 UI redesign), not a separate placeholder.
  */
 export class SidebarViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'keystone.sidebarView';
+
+  public constructor(private readonly extensionUri: vscode.Uri) {}
 
   public resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -14,49 +24,24 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   ): void {
     Logger.info('Resolving Keystone Sidebar View');
 
+    const distPath = path.join(this.extensionUri.fsPath, 'webview', 'dist');
+
     webviewView.webview.options = {
       enableScripts: true,
+      localResourceRoots: [
+        vscode.Uri.file(distPath),
+        vscode.Uri.file(path.join(this.extensionUri.fsPath, 'media')),
+      ],
     };
 
-    webviewView.webview.html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <style>
-    body { font-family: var(--vscode-font-family, sans-serif); padding: 12px; color: var(--vscode-foreground); }
-    h3 { margin-top: 0; color: var(--vscode-textLink-foreground); }
-    button {
-      background: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
-      border: none;
-      padding: 6px 12px;
-      border-radius: 4px;
-      cursor: pointer;
-      width: 100%;
-    }
-    button:hover {
-      background: var(--vscode-button-hoverBackground);
-    }
-  </style>
-</head>
-<body>
-  <h3>Keystone Explorer</h3>
-  <p>Sprint 1 Foundation Active</p>
-  <button onclick="openWorkspace()">Open Workspace</button>
-
-  <script>
-    const vscode = acquireVsCodeApi();
-    function openWorkspace() {
-      vscode.postMessage({ type: 'OPEN_WORKSPACE' });
-    }
-  </script>
-</body>
-</html>`;
+    webviewView.webview.html = getWebviewHtml(webviewView.webview, this.extensionUri);
 
     webviewView.webview.onDidReceiveMessage((data) => {
-      if (data.type === 'OPEN_WORKSPACE') {
-        vscode.commands.executeCommand('keystone.openWorkspace');
-      }
+      MessageBridge.handleWebviewMessage(data, webviewView.webview);
     });
+
+    setTimeout(() => {
+      MessageBridge.sendInitMessage(webviewView.webview);
+    }, 300);
   }
 }

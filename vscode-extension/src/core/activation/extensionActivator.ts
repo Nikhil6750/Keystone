@@ -18,10 +18,17 @@ export class ExtensionActivator {
     ActivityBarProvider.register();
 
     // Sidebar View
+    // `retainContextWhenHidden` keeps the webview's JS context (and its
+    // already-fetched state) alive when the user switches to a different
+    // activity-bar view and back, instead of tearing the whole React app
+    // down and remounting it -- which would otherwise re-issue every
+    // initial-load request (e.g. GET /connected-agents) on every visibility
+    // toggle, not just once per real session.
     const sidebarProvider = new SidebarViewProvider(context.extensionUri);
     const sidebarDisposable = vscode.window.registerWebviewViewProvider(
       SidebarViewProvider.viewType,
-      sidebarProvider
+      sidebarProvider,
+      { webviewOptions: { retainContextWhenHidden: true } }
     );
     context.subscriptions.push(sidebarDisposable);
     ExtensionLifecycle.register(sidebarDisposable);

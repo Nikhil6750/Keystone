@@ -12,19 +12,3 @@ if (typeof globalScope.acquireVsCodeApi !== 'function') {
     getState: () => undefined,
   });
 }
-
-// jsdom does not implement EventSource -- tests that exercise SSE mock
-// `subscribeToOrchestrationEvents` directly instead of relying on a real
-// EventSource implementation.
-if (typeof window.EventSource === 'undefined') {
-  class NoopEventSource {
-    public close(): void {
-      /* no-op */
-    }
-    public addEventListener(): void {
-      /* no-op */
-    }
-  }
-  // @ts-expect-error -- minimal test-only stand-in, not a spec-complete EventSource
-  window.EventSource = NoopEventSource;
-}

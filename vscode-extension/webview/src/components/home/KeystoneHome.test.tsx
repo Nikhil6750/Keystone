@@ -95,6 +95,30 @@ describe('KeystoneHome', () => {
     expect(mockStartOrchestration).not.toHaveBeenCalled();
   });
 
+  it('5. Retry after a transport failure re-fetches and shows the welcome state on a successful empty response', async () => {
+    mockFetchConnectedAgents.mockRejectedValueOnce(new BackendUnavailableError(new Error('refused')));
+    const user = userEvent.setup();
+    render(<KeystoneHome />);
+
+    expect(await screen.findByText('Keystone backend unavailable.')).toBeInTheDocument();
+
+    mockFetchConnectedAgents.mockResolvedValueOnce([]);
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+
+    // A real, successful (even empty) response must clear the failure
+    // state entirely -- an empty registry is not itself an error.
+    expect(await screen.findByText('Ready to build?')).toBeInTheDocument();
+    expect(screen.queryByText('Keystone backend unavailable.')).not.toBeInTheDocument();
+  });
+
+  it('7. fetches connected agents exactly once on initial mount -- no accidental repeated fetch loop', async () => {
+    mockFetchConnectedAgents.mockResolvedValue([]);
+    render(<KeystoneHome />);
+
+    await screen.findByText('Ready to build?');
+    expect(mockFetchConnectedAgents).toHaveBeenCalledTimes(1);
+  });
+
   it('submits a goal using every currently connected agent ID, never a hardcoded one', async () => {
     mockFetchConnectedAgents.mockResolvedValue([
       { agent_id: 'qwen-coder', display_name: 'Qwen Coder', connection_id: 'c1', enabled: true, capabilities: [] },

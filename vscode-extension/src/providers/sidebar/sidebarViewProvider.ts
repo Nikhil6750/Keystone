@@ -3,6 +3,7 @@ import * as path from 'path';
 import { Logger } from '../../utils/logger';
 import { MessageBridge } from '../../messaging/messageBridge';
 import { getWebviewHtml } from '../../webview/getWebviewHtml';
+import { BackendProxy } from '../../api/backendProxy';
 
 /**
  * WebviewViewProvider for the Keystone Sidebar View (`keystone.sidebarView`).
@@ -36,7 +37,13 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.html = getWebviewHtml(webviewView.webview, this.extensionUri);
 
+    const backendProxy = new BackendProxy();
+    webviewView.onDidDispose(() => backendProxy.dispose());
+
     webviewView.webview.onDidReceiveMessage((data) => {
+      if (backendProxy.handleMessage(data, webviewView.webview)) {
+        return;
+      }
       MessageBridge.handleWebviewMessage(data, webviewView.webview);
     });
 

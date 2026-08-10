@@ -13,15 +13,6 @@ function getNonce(): string {
 }
 
 /**
- * Loopback-only origins the webview may reach via `fetch`/`EventSource`
- * for real Keystone backend calls (see `webview/src/api/config.ts`).
- * Deliberately narrow -- never a wildcard, never a remote host. The
- * webview otherwise has `default-src 'none'`: no other network access of
- * any kind is permitted.
- */
-const BACKEND_CONNECT_SRC = 'http://localhost:8000 http://127.0.0.1:8000';
-
-/**
  * Builds the CSP-hardened, asset-URI-rewritten HTML for the real Keystone
  * React webview bundle (`webview/dist/index.html`), shared by every
  * webview surface (sidebar view, editor panel) so they render the exact
@@ -39,7 +30,14 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   let html = fs.readFileSync(indexPath, 'utf8');
   const nonce = getNonce();
 
-  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; script-src 'nonce-${nonce}' ${webview.cspSource}; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; connect-src ${BACKEND_CONNECT_SRC};">`;
+  // No `connect-src` override: the webview never calls the Keystone
+  // backend directly (a VS Code webview's random-per-session
+  // `vscode-webview://` origin can never satisfy a static backend CORS
+  // allowlist). All backend HTTP/SSE traffic is proxied through the
+  // extension host via `postMessage` instead (see `src/api/backendProxy.ts`
+  // and `webview/src/api/keystoneClient.ts`), so `default-src 'none'`
+  // correctly blocks any other network access from inside the webview.
+  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; script-src 'nonce-${nonce}' ${webview.cspSource}; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource};">`;
 
   if (html.includes('<head>')) {
     html = html.replace('<head>', `<head>\n    ${cspMeta}`);

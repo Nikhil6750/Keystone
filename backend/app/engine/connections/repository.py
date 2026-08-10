@@ -2,8 +2,8 @@
 
 Storage-neutral, thread-safe in-memory implementations satisfying Stage 8C.3A
 referential integrity guarantees. Shares a single synchronization lock across
-repositories to guarantee AB-BA deadlock prevention. Frozen domain models
-and repository-controlled updates prevent direct reference mutation leaks.
+repositories to guarantee AB-BA deadlock prevention. Defensive deep copies
+on both write and read operations eliminate nested container mutation leaks.
 """
 
 from threading import RLock
@@ -35,7 +35,7 @@ class ConnectionRegistryCoordinator:
 
 
 class AgentConnectionRepository:
-    """Repository storing `AgentConnection` entities."""
+    """Repository storing `AgentConnection` entities with deep-copy state isolation."""
 
     def __init__(self, coordinator: ConnectionRegistryCoordinator | None = None) -> None:
         self._coordinator = coordinator or ConnectionRegistryCoordinator()
@@ -54,7 +54,7 @@ class AgentConnectionRepository:
                 raise DuplicateConnectionError(cid)
 
             if isinstance(payload, AgentConnection):
-                conn = payload
+                conn = payload.model_copy(deep=True)
             else:
                 conn = AgentConnection(
                     connection_id=cid,
@@ -66,15 +66,19 @@ class AgentConnectionRepository:
                 )
 
             self._connections[cid] = conn
-            return conn
+            return conn.model_copy(deep=True)
 
     def get(self, connection_id: str) -> AgentConnection | None:
         with self._coordinator.lock:
-            return self._connections.get(connection_id.strip())
+            conn = self._connections.get(connection_id.strip())
+            if conn is None:
+                return None
+            return conn.model_copy(deep=True)
 
     def list(self) -> list[AgentConnection]:
         with self._coordinator.lock:
-            return sorted(self._connections.values(), key=lambda c: c.connection_id)
+            ordered = sorted(self._connections.values(), key=lambda c: c.connection_id)
+            return [c.model_copy(deep=True) for c in ordered]
 
     def update(
         self, connection_id: str, updates: AgentConnectionUpdate
@@ -110,7 +114,7 @@ class AgentConnectionRepository:
                 updated_at=utc_now(),
             )
             self._connections[cid] = updated_conn
-            return updated_conn
+            return updated_conn.model_copy(deep=True)
 
     def delete(
         self, connection_id: str, agent_repo: "ConnectedAgentRepository"
@@ -131,7 +135,7 @@ class AgentConnectionRepository:
 
 
 class ConnectedAgentRepository:
-    """Repository storing `ConnectedAgent` entities with connection FK enforcement."""
+    """Repository storing `ConnectedAgent` entities with deep-copy state isolation."""
 
     def __init__(self, coordinator: ConnectionRegistryCoordinator | None = None) -> None:
         self._coordinator = coordinator or ConnectionRegistryCoordinator()
@@ -158,7 +162,7 @@ class ConnectedAgentRepository:
                 raise DuplicateAgentError(aid)
 
             if isinstance(payload, ConnectedAgent):
-                agent = payload
+                agent = payload.model_copy(deep=True)
             else:
                 agent = ConnectedAgent(
                     agent_id=aid,
@@ -171,11 +175,14 @@ class ConnectedAgentRepository:
                 )
 
             self._agents[aid] = agent
-            return agent
+            return agent.model_copy(deep=True)
 
     def get(self, agent_id: str) -> ConnectedAgent | None:
         with self._coordinator.lock:
-            return self._agents.get(agent_id.strip())
+            agent = self._agents.get(agent_id.strip())
+            if agent is None:
+                return None
+            return agent.model_copy(deep=True)
 
     def list(
         self, connection_id: str | None = None, enabled_only: bool = False
@@ -187,7 +194,8 @@ class ConnectedAgentRepository:
                 result = [a for a in result if a.connection_id == cid]
             if enabled_only:
                 result = [a for a in result if a.enabled]
-            return sorted(result, key=lambda a: a.agent_id)
+            ordered = sorted(result, key=lambda a: a.agent_id)
+            return [a.model_copy(deep=True) for a in ordered]
 
     def update(
         self, agent_id: str, updates: ConnectedAgentUpdate
@@ -234,7 +242,7 @@ class ConnectedAgentRepository:
                 updated_at=utc_now(),
             )
             self._agents[aid] = updated_agent
-            return updated_agent
+            return updated_agent.model_copy(deep=True)
 
     def delete(self, agent_id: str) -> bool:
         with self._coordinator.lock:

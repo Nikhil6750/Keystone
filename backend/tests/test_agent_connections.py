@@ -1,7 +1,7 @@
-"""Tests for Stage 8C.3A Dynamic Agent Connection Foundation (Hardened).
+"""Tests for Stage 8C.3A Dynamic Agent Connection Foundation (Hardened & Isolated).
 
 Verifies provider-neutral connection and agent entities, referential integrity,
-secret boundary enforcement, deadlock-free concurrency, mutation leakage prevention,
+secret boundary enforcement, deadlock-free concurrency, deep mutation state isolation,
 Router integration, and REST APIs.
 """
 
@@ -31,8 +31,9 @@ from app.engine.connections.models import (
     AgentConnection,
     AgentConnectionCreate,
     AgentConnectionStatus,
-    AgentConnectionUpdate,
+    ConnectedAgent,
     ConnectedAgentCreate,
+    ConnectedAgentUpdate,
     ConnectionKind,
 )
 from app.engine.connections.repository import (
@@ -357,6 +358,32 @@ def test_bridge_preserves_system_metadata_without_collision(
     assert desc.metadata["team"] == "backend"
 
 
+def test_bridge_excludes_unavailable_connections(
+    fresh_repos: tuple[AgentConnectionRepository, ConnectedAgentRepository],
+) -> None:
+    conn_repo, agent_repo = fresh_repos
+    conn_repo.register(
+        AgentConnectionCreate(
+            connection_id="unavail-conn",
+            display_name="Unavailable Conn",
+            provider_or_runtime="p1",
+            status=AgentConnectionStatus.UNAVAILABLE,
+        )
+    )
+    agent_repo.register(
+        ConnectedAgentCreate(
+            agent_id="agent-unavail",
+            display_name="Unavail Agent",
+            connection_id="unavail-conn",
+        ),
+        conn_repo,
+    )
+
+    bridge = ConnectedAgentCandidateBridge(conn_repo, agent_repo)
+    descriptors = bridge.get_descriptors()
+    assert "agent-unavail" not in descriptors
+
+
 # --- Referential Integrity & Concurrency -------------------------------------
 
 
@@ -481,7 +508,7 @@ def test_concurrent_registration_and_deletion(
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = list(pool.map(_register_conn, range(10)))
-    assert results.count(True) == 0  # All failed because shared-conn exists
+    assert results.count(True) == 0
 
     # 2. Concurrent Duplicate Agent Registration
     def _register_agent(idx: int) -> bool:
@@ -500,7 +527,7 @@ def test_concurrent_registration_and_deletion(
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         agent_results = list(pool.map(_register_agent, range(10)))
-    assert agent_results.count(True) == 1  # Exactly one registration succeeded
+    assert agent_results.count(True) == 1
 
     # 3. Concurrent Delete Guard
     def _try_delete_conn(_: int) -> bool:
@@ -511,58 +538,219 @@ def test_concurrent_registration_and_deletion(
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         delete_results = list(pool.map(_try_delete_conn, range(10)))
-    assert delete_results.count(True) == 0  # Blocked due to shared-agent
+    assert delete_results.count(True) == 0
 
 
-# --- Mutation Leakage Prevention ---------------------------------------------
+# --- Deep Mutation Isolation & Validation Lifetime Tests ----------------------
 
 
-def test_frozen_domain_models_prevent_direct_attribute_mutation(
+def test_copy_on_write_prevents_original_object_mutation(
     fresh_repos: tuple[AgentConnectionRepository, ConnectedAgentRepository],
 ) -> None:
     conn_repo, agent_repo = fresh_repos
     conn_repo.register(
         AgentConnectionCreate(
             connection_id="c1",
-            display_name="C1 Original",
+            display_name="C1",
             provider_or_runtime="p1",
         )
     )
-    retrieved = conn_repo.get("c1")
+
+    original_agent = ConnectedAgent(
+        agent_id="a1",
+        display_name="A1",
+        connection_id="c1",
+        capabilities=[AgentCapability.CODE_GENERATION],
+        metadata={"role": "coder"},
+    )
+    agent_repo.register(original_agent, conn_repo)
+
+    # Mutate original caller-owned object's nested containers
+    original_agent.metadata["role"] = "hacker"
+    original_agent.capabilities.append(AgentCapability.TEST_EXECUTION)
+
+    # Stored state must remain isolated from original caller object mutation
+    retrieved = agent_repo.get("a1")
     assert retrieved is not None
-
-    with pytest.raises(ValidationError):
-        retrieved.display_name = "Hacked Name"  # Frozen assignment fails!
-
-    assert conn_repo.get("c1").display_name == "C1 Original"
+    assert retrieved.metadata["role"] == "coder"
+    assert retrieved.capabilities == [AgentCapability.CODE_GENERATION]
 
 
-def test_repository_update_semantics(
+def test_get_mutation_safety(
     fresh_repos: tuple[AgentConnectionRepository, ConnectedAgentRepository],
 ) -> None:
     conn_repo, agent_repo = fresh_repos
-    created = conn_repo.register(
+    conn_repo.register(
         AgentConnectionCreate(
             connection_id="c1",
-            display_name="C1 Original",
+            display_name="C1",
+            provider_or_runtime="p1",
+        )
+    )
+    agent_repo.register(
+        ConnectedAgentCreate(
+            agent_id="a1",
+            display_name="A1",
+            connection_id="c1",
+            capabilities=[AgentCapability.CODE_GENERATION],
+            metadata={"role": "coder"},
+        ),
+        conn_repo,
+    )
+
+    retrieved = agent_repo.get("a1")
+    assert retrieved is not None
+
+    # Mutate nested containers on returned model instance
+    retrieved.metadata["api_key"] = "sk-should-not-persist"
+    retrieved.capabilities.append(AgentCapability.TEST_EXECUTION)
+
+    # Subsequent get must return pristine unmutated state
+    fresh = agent_repo.get("a1")
+    assert fresh is not None
+    assert "api_key" not in fresh.metadata
+    assert fresh.capabilities == [AgentCapability.CODE_GENERATION]
+
+
+def test_list_mutation_safety(
+    fresh_repos: tuple[AgentConnectionRepository, ConnectedAgentRepository],
+) -> None:
+    conn_repo, agent_repo = fresh_repos
+    conn_repo.register(
+        AgentConnectionCreate(
+            connection_id="c1",
+            display_name="C1",
+            provider_or_runtime="p1",
+        )
+    )
+    agent_repo.register(
+        ConnectedAgentCreate(
+            agent_id="a1",
+            display_name="A1",
+            connection_id="c1",
+            capabilities=[AgentCapability.CODE_GENERATION],
+            metadata={"role": "coder"},
+        ),
+        conn_repo,
+    )
+
+    items = agent_repo.list()
+    assert len(items) == 1
+
+    # Mutate nested containers on list result item
+    items[0].metadata["api_key"] = "sk-list-bypass"
+    items[0].capabilities.append(AgentCapability.TEST_EXECUTION)
+
+    # Fresh get and list must remain pristine
+    fresh_get = agent_repo.get("a1")
+    fresh_list = agent_repo.list()
+    assert fresh_get is not None
+    assert "api_key" not in fresh_get.metadata
+    assert fresh_get.capabilities == [AgentCapability.CODE_GENERATION]
+    assert "api_key" not in fresh_list[0].metadata
+    assert fresh_list[0].capabilities == [AgentCapability.CODE_GENERATION]
+
+
+def test_connection_metadata_mutation_safety(
+    fresh_repos: tuple[AgentConnectionRepository, ConnectedAgentRepository],
+) -> None:
+    conn_repo, _ = fresh_repos
+    conn_repo.register(
+        AgentConnectionCreate(
+            connection_id="c1",
+            display_name="C1",
+            provider_or_runtime="p1",
+            metadata={"env": "prod"},
+        )
+    )
+
+    retrieved = conn_repo.get("c1")
+    assert retrieved is not None
+
+    # Mutate metadata container on returned connection
+    retrieved.metadata["api_key"] = "secret-key"
+
+    fresh = conn_repo.get("c1")
+    assert fresh is not None
+    assert "api_key" not in fresh.metadata
+    assert fresh.metadata == {"env": "prod"}
+
+
+def test_validation_lifetime_and_bridge_output_integrity(
+    fresh_repos: tuple[AgentConnectionRepository, ConnectedAgentRepository],
+) -> None:
+    conn_repo, agent_repo = fresh_repos
+    conn_repo.register(
+        AgentConnectionCreate(
+            connection_id="c1",
+            display_name="C1",
             provider_or_runtime="p1",
             status=AgentConnectionStatus.CONNECTED,
         )
     )
-    t0 = created.created_at
-
-    updated = conn_repo.update(
-        "c1",
-        AgentConnectionUpdate(
-            display_name="C1 Updated",
-            status=AgentConnectionStatus.DISABLED,
+    agent_repo.register(
+        ConnectedAgentCreate(
+            agent_id="a1",
+            display_name="A1",
+            connection_id="c1",
+            capabilities=[AgentCapability.CODE_GENERATION],
+            metadata={"role": "coder"},
         ),
+        conn_repo,
     )
 
-    assert updated.display_name == "C1 Updated"
-    assert updated.status == AgentConnectionStatus.DISABLED
-    assert updated.created_at == t0
-    assert updated.updated_at >= t0
+    # Mutate a returned caller copy locally
+    copy = agent_repo.get("a1")
+    assert copy is not None
+    copy.metadata["api_key"] = "sk-local-only"
+    copy.capabilities.append(AgentCapability.TEST_EXECUTION)
+
+    # Generate descriptors from bridge
+    bridge = ConnectedAgentCandidateBridge(conn_repo, agent_repo)
+    descriptors = bridge.get_descriptors()
+
+    desc = descriptors["a1"]
+    assert "api_key" not in desc.metadata
+    assert desc.capabilities == [AgentCapability.CODE_GENERATION]
+
+
+def test_timestamps_unaffected_by_get_or_list(
+    fresh_repos: tuple[AgentConnectionRepository, ConnectedAgentRepository],
+) -> None:
+    conn_repo, agent_repo = fresh_repos
+    conn_repo.register(
+        AgentConnectionCreate(
+            connection_id="c1",
+            display_name="C1",
+            provider_or_runtime="p1",
+        )
+    )
+    agent = agent_repo.register(
+        ConnectedAgentCreate(
+            agent_id="a1",
+            display_name="A1",
+            connection_id="c1",
+        ),
+        conn_repo,
+    )
+
+    t0_created = agent.created_at
+    t0_updated = agent.updated_at
+
+    # Execute reads
+    g1 = agent_repo.get("a1")
+    l1 = agent_repo.list()
+
+    assert g1 is not None
+    assert g1.created_at == t0_created
+    assert g1.updated_at == t0_updated
+    assert l1[0].created_at == t0_created
+    assert l1[0].updated_at == t0_updated
+
+    # Only explicit repository update advances updated_at
+    updated = agent_repo.update("a1", ConnectedAgentUpdate(display_name="A1 New"))
+    assert updated.created_at == t0_created
+    assert updated.updated_at >= t0_updated
 
 
 # --- Router Bridge & Eligibility Tests ---------------------------------------
@@ -689,6 +877,20 @@ def test_router_bridge_and_eligibility(
     req_match = build_routing_request(task_match, candidate_agent_types=["code-agent"])
     decision_match = router.route(req_match, candidates)
     assert decision_match.selected_agent_type == "code-agent"
+
+    # Capability mismatch rejection check
+    task_mismatch = TaskSpec(
+        key="t2",
+        name="test",
+        task_type="testing",
+        required_capabilities=[AgentCapability.TEST_EXECUTION],
+    )
+    req_mismatch = build_routing_request(task_mismatch, candidate_agent_types=["code-agent"])
+    decision_mismatch = router.route(req_mismatch, candidates)
+    assert decision_mismatch.selected_agent_type is None
+    assert any(
+        c.agent_type == "code-agent" and not c.eligible for c in decision_mismatch.candidates
+    )
 
 
 # --- REST API Endpoints & Status Transitions ----------------------------------

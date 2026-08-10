@@ -8,6 +8,10 @@ from app.core.config import Settings, get_settings
 from app.database.session import get_db
 from app.engine.compensation import CompensationService
 from app.engine.compensation_registry import CompensationRegistry
+from app.engine.connections.repository import (
+    AgentConnectionRepository,
+    ConnectedAgentRepository,
+)
 from app.engine.orchestration.execution import (
     OrchestrationExecutionCoordinator,
     OrchestrationExecutionStore,
@@ -97,3 +101,25 @@ def get_orchestration_execution_coordinator(request: Request) -> OrchestrationEx
         request.app.state.orchestration_execution_coordinator
     )
     return coordinator
+
+
+def get_agent_connection_repository(request: Request) -> AgentConnectionRepository:
+    """Return the application's AgentConnectionRepository, created during lifespan startup."""
+    repo: AgentConnectionRepository | None = getattr(
+        request.app.state, "agent_connection_repository", None
+    )
+    if repo is None:
+        repo = AgentConnectionRepository()
+        request.app.state.agent_connection_repository = repo
+    return repo
+
+
+def get_connected_agent_repository(request: Request) -> ConnectedAgentRepository:
+    """Return the application's ConnectedAgentRepository, created during lifespan startup."""
+    repo: ConnectedAgentRepository | None = getattr(
+        request.app.state, "connected_agent_repository", None
+    )
+    if repo is None:
+        repo = ConnectedAgentRepository()
+        request.app.state.connected_agent_repository = repo
+    return repo

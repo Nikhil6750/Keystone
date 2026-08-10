@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.adapters.connection import AgentConnectionCache
 from app.adapters.factory import register_agents
 from app.api.errors import register_exception_handlers
+from app.api.routes.agent_connections import router as agent_connections_router
 from app.api.routes.agents import router as agents_router
 from app.api.routes.audit import router as audit_router
 from app.api.routes.health import router as health_router
@@ -21,6 +22,11 @@ from app.core.logging import configure_logging
 from app.database.init_db import initialize_database
 from app.database.session import SessionLocal
 from app.engine.compensation_registry import CompensationRegistry
+from app.engine.connections import (
+    AgentConnectionRepository,
+    ConnectedAgentCandidateBridge,
+    ConnectedAgentRepository,
+)
 from app.engine.demo_compensation import DEMO_COMPENSATION_HANDLER_NAME, DemoCompensationHandler
 from app.engine.manager.protocol import ManagerModel
 from app.engine.orchestration.events import OrchestrationEventSequence, OrchestrationEventSink
@@ -30,7 +36,7 @@ from app.engine.orchestration.execution import (
     ServiceFactory,
 )
 from app.engine.orchestration.models import OrchestrationRequest
-from app.engine.orchestration.runtime import RegistryCandidateProvider
+from app.engine.orchestration.runtime import STATIC_AGENT_DESCRIPTORS, RegistryCandidateProvider
 from app.engine.orchestration.service import EndToEndOrchestrationService
 from app.engine.registry import ExecutorRegistry
 from app.resilience.circuit_breaker import CircuitBreakerRegistry
@@ -45,29 +51,6 @@ settings = get_settings()
 def _build_orchestration_service_factory(app: FastAPI) -> ServiceFactory:
     """Returns the `ServiceFactory` the orchestration execution coordinator
     uses to build one fresh `EndToEndOrchestrationService` per execution.
-
-    Deliberately a factory, never a hardcoded provider instantiated inside
-    a route function (Part 14): reads the app's already-shared
-    `executor_registry`/`circuit_breaker_registry`/`agent_connection_cache`
-    from `app.state` at call time, and gives every execution its own DB
-    session (never the short-lived, request-scoped one an HTTP handler's
-    `Depends(get_db)` would provide -- that session closes when the HTTP
-    response is sent, long before a background execution finishes).
-
-    Candidate agent types come from the caller's own `available_agent_types`
-    on each `OrchestrationRequest`, never from a fixed list here --
-    `RegistryCandidateProvider` only returns candidates for the types
-    actually registered in the live `ExecutorRegistry`, so any dynamically
-    registered agent ID (never Claude/Codex/Gemini-specific) is exactly as
-    usable as a built-in one.
-
-    No `ManagerModel` is wired here by default (`manager_model=None`):
-    `ManagerOrchestrator` already falls back to deterministic Planner-only
-    behavior when none is configured (Stage 8A, unmodified) -- this keeps
-    application startup free of any live-provider dependency. A deployment
-    that wants a real Manager sets `app.state.orchestration_manager_model`
-    before serving requests (or a test overrides the coordinator dependency
-    entirely with its own factory using `FakeManagerModel`).
     """
 
     def factory(
@@ -76,9 +59,19 @@ def _build_orchestration_service_factory(app: FastAPI) -> ServiceFactory:
         event_sequence: OrchestrationEventSequence,
     ) -> tuple[EndToEndOrchestrationService, Callable[[], None]]:
         db = SessionLocal()
+        merged_descriptors = dict(STATIC_AGENT_DESCRIPTORS)
+        if hasattr(app.state, "connected_agent_repository") and hasattr(
+            app.state, "agent_connection_repository"
+        ):
+            bridge = ConnectedAgentCandidateBridge(
+                app.state.agent_connection_repository, app.state.connected_agent_repository
+            )
+            merged_descriptors.update(bridge.get_descriptors())
+
         candidate_provider = RegistryCandidateProvider(
             registry=app.state.executor_registry,
             agent_types=tuple(request.available_agent_types),
+            descriptors=merged_descriptors,
             connection_cache=app.state.agent_connection_cache,
             circuit_breakers=app.state.circuit_breaker_registry,
         )
@@ -102,17 +95,6 @@ def _build_orchestration_service_factory(app: FastAPI) -> ServiceFactory:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Log application startup/shutdown, initialize the database, and create the
-    per-application executor registry, circuit-breaker registry, retry policy,
-    and compensation-handler registry, then register only enabled-and-available
-    agent adapters (and the demo compensation handler, only when demo mode is
-    enabled).
-
-    Never launches a real agent process and never probes provider
-    authentication at startup; an unavailable or misconfigured optional agent
-    is logged and skipped, not fatal to startup. Never requires a
-    compensation handler to be configured for the application to start.
-    """
     logger.info(
         "%s v%s starting in %s mode", settings.app_name, settings.app_version, settings.environment
     )
@@ -139,10 +121,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.agent_connection_cache = AgentConnectionCache(
         cache_seconds=settings.agent_connection_cache_seconds
     )
-    # Stage 8C.2: orchestration execution store + coordinator. No
-    # ManagerModel is wired here by default -- see
-    # `_build_orchestration_service_factory`'s docstring. Not restart-safe
-    # (process-local, in-memory only); see `InMemoryOrchestrationExecutionStore`.
+    app.state.agent_connection_repository = AgentConnectionRepository()
+    app.state.connected_agent_repository = ConnectedAgentRepository()
     app.state.orchestration_manager_model = None
     app.state.orchestration_execution_store = InMemoryOrchestrationExecutionStore()
     app.state.orchestration_execution_coordinator = OrchestrationExecutionCoordinator(
@@ -175,6 +155,7 @@ app.include_router(agents_router, prefix="/api/v1")
 app.include_router(resilience_router, prefix="/api/v1")
 app.include_router(audit_router, prefix="/api/v1")
 app.include_router(orchestrations_router, prefix="/api/v1")
+app.include_router(agent_connections_router, prefix="/api/v1")
 
 
 @app.get("/")

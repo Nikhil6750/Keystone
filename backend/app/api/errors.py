@@ -16,6 +16,7 @@ from app.engine.compensation_exceptions import (
     InvalidCompensationStateError,
 )
 from app.engine.exceptions import InvalidWorkflowStateError, WorkflowNotFoundError
+from app.engine.orchestration.errors import OrchestrationExecutionNotFoundError
 from app.engine.registry import ExecutorNotRegisteredError
 from app.resilience.circuit_breaker import CircuitBreakerOpenError
 from app.schemas.errors import APIError, APIErrorCode, APIErrorEnvelope
@@ -119,6 +120,15 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
             content=_envelope(APIErrorCode.AGENT_VERIFICATION_IN_PROGRESS, str(exc)),
+        )
+
+    @app.exception_handler(OrchestrationExecutionNotFoundError)
+    async def _orchestration_execution_not_found(
+        _: Request, exc: OrchestrationExecutionNotFoundError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=_envelope(APIErrorCode.ORCHESTRATION_EXECUTION_NOT_FOUND, str(exc)),
         )
 
     @app.exception_handler(RequestValidationError)

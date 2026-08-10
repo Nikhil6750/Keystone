@@ -38,8 +38,19 @@ class OrchestrationPersistenceError(OrchestrationError):
     server-side diagnostics, never displayed to a caller."""
 
 
+class OrchestrationExecutionNotFoundError(OrchestrationError):
+    """Stage 8C.2: raised when a referenced execution ID does not exist in
+    the configured `OrchestrationExecutionStore`. Mirrors
+    `app.engine.exceptions.WorkflowNotFoundError`'s exact shape."""
+
+    def __init__(self, execution_id: str) -> None:
+        self.execution_id = execution_id
+        super().__init__(f"orchestration execution '{execution_id}' not found")
+
+
 __all__ = [
     "InvalidOrchestrationRequestError",
     "OrchestrationError",
+    "OrchestrationExecutionNotFoundError",
     "OrchestrationPersistenceError",
 ]

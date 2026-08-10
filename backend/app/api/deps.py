@@ -8,6 +8,10 @@ from app.core.config import Settings, get_settings
 from app.database.session import get_db
 from app.engine.compensation import CompensationService
 from app.engine.compensation_registry import CompensationRegistry
+from app.engine.orchestration.execution import (
+    OrchestrationExecutionCoordinator,
+    OrchestrationExecutionStore,
+)
 from app.engine.registry import ExecutorRegistry
 from app.engine.workflow_engine import WorkflowEngine
 from app.resilience.circuit_breaker import CircuitBreakerRegistry
@@ -74,3 +78,22 @@ def get_agent_connection_cache(request: Request) -> AgentConnectionCache:
     """Return the application's agent-connection cache, created during lifespan startup."""
     cache: AgentConnectionCache = request.app.state.agent_connection_cache
     return cache
+
+
+def get_orchestration_execution_store(request: Request) -> OrchestrationExecutionStore:
+    """Return the application's orchestration execution store, created
+    during lifespan startup. Overridden in tests exactly like every other
+    `app.state`-backed dependency here -- see `tests/conftest.py`."""
+    store: OrchestrationExecutionStore = request.app.state.orchestration_execution_store
+    return store
+
+
+def get_orchestration_execution_coordinator(request: Request) -> OrchestrationExecutionCoordinator:
+    """Return the application's orchestration execution coordinator,
+    created once during lifespan startup (never per-request: it owns the
+    only strong reference keeping background execution tasks alive -- see
+    `app.engine.orchestration.execution`)."""
+    coordinator: OrchestrationExecutionCoordinator = (
+        request.app.state.orchestration_execution_coordinator
+    )
+    return coordinator

@@ -49,6 +49,18 @@ for exactly what gap it closes and why.
   as positive evidence -- never merely because a chunk was retrieved or
   used.
 
+**Stage 8C.2 event instrumentation, purely observational.** `orchestrate()`
+optionally emits `OrchestrationEvent`s (`app.engine.orchestration.events`)
+at meaningful phase boundaries, to an injected `OrchestrationEventSink`
+(default: `NullEventSink`, a no-op -- every existing caller that never
+passes `event_sink=` observes zero behavior change). Every phase method
+below is completely unchanged by this: emission happens only in
+`orchestrate()` itself, after a phase's synchronous call already returned,
+using data that phase already computed -- never inside a phase method,
+never influencing what any phase decides. A sink failure is caught and
+logged, never re-raised (see `_emit`): instrumentation must never turn a
+verified success into a business failure.
+
 **Recovery scope, documented.** Recovery re-executes only the specific
 steps whose verification did not pass, as an independent recovery
 `Workflow` (their `TaskSpec.input_payload` is static -- the current
@@ -59,6 +71,7 @@ recovery-only compilation, is correct, not merely convenient; see
 not a redesign of Stage 4E's recovery semantics themselves.
 """
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -90,6 +103,13 @@ from app.engine.manager.validation import ManagerProposalValidator
 from app.engine.orchestration.compiler import compile_workflow_create, topological_order
 from app.engine.orchestration.errors import (
     OrchestrationPersistenceError,
+)
+from app.engine.orchestration.events import (
+    NullEventSink,
+    OrchestrationEvent,
+    OrchestrationEventSequence,
+    OrchestrationEventSink,
+    OrchestrationEventType,
 )
 from app.engine.orchestration.knowledge_adapter import (
     build_manager_knowledge_context,
@@ -126,6 +146,8 @@ from app.resilience.circuit_breaker import CircuitBreakerRegistry
 from app.resilience.retry import RetryPolicy
 from app.resilience.sleeper import RealSleeper, Sleeper
 from app.services import workflow_service
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_CIRCUIT_FAILURE_THRESHOLD = 3
 _DEFAULT_CIRCUIT_RECOVERY_TIMEOUT_SECONDS = 30.0
@@ -173,6 +195,8 @@ class EndToEndOrchestrationService:
         learning_persistence: LearningPersistenceService | None = None,
         context_budget: ContextBudget | None = None,
         knowledge_search_limit: int = _DEFAULT_KNOWLEDGE_SEARCH_LIMIT,
+        event_sink: OrchestrationEventSink | None = None,
+        event_sequence: OrchestrationEventSequence | None = None,
     ) -> None:
         self._db = db
         self._registry = registry
@@ -203,6 +227,38 @@ class EndToEndOrchestrationService:
         self._learning_persistence = learning_persistence or LearningPersistenceService()
         self._context_budget = context_budget or ContextBudget()
         self._knowledge_search_limit = knowledge_search_limit
+        self._event_sink = event_sink or NullEventSink()
+        self._event_sequence = event_sequence or OrchestrationEventSequence()
+
+    # --- Stage 8C.2: observational event emission ---------------------------
+
+    async def _emit(
+        self, execution_id: str, event_type: OrchestrationEventType, **fields: object
+    ) -> None:
+        """Build and emit one `OrchestrationEvent`, best-effort. Unlike
+        `StateSink` (deliberately fail-fast for its own, different, load-
+        bearing consumer), a broken/slow `OrchestrationEventSink` here is
+        caught and logged, never re-raised -- see module docstring. Never
+        called from inside a phase method; only from `orchestrate()`,
+        after the phase it describes already ran and decided everything
+        for itself."""
+        sequence = self._event_sequence.next()
+        event = OrchestrationEvent(
+            event_id=f"evt-{execution_id}-{sequence:04d}",
+            execution_id=execution_id,
+            sequence=sequence,
+            event_type=event_type,
+            timestamp=datetime.now(UTC),
+            **fields,  # type: ignore[arg-type]
+        )
+        try:
+            await self._event_sink.on_event(event)
+        except Exception:
+            logger.exception(
+                "orchestration_event_sink_failed event_type=%s execution_id=%s",
+                event_type.value,
+                execution_id,
+            )
 
     # --- Public entry point -------------------------------------------------
 
@@ -212,20 +268,37 @@ class EndToEndOrchestrationService:
         itself `async` -- every other phase is synchronous DB/CPU work,
         called directly (not offloaded), matching how `WorkflowEngine`
         itself is synchronous throughout this codebase today."""
+        execution_id = request.request_id
         warnings: list[str] = []
         issue_codes: list[str] = []
 
+        await self._emit(execution_id, OrchestrationEventType.EXECUTION_STARTED)
+
+        await self._emit(execution_id, OrchestrationEventType.KNOWLEDGE_STARTED)
         manager_knowledge_context, knowledge_result_count, adaptive_used, observation = (
             self._phase_a_knowledge(request)
         )
+        await self._emit(
+            execution_id,
+            OrchestrationEventType.KNOWLEDGE_COMPLETED,
+            message=f"knowledge_result_count={knowledge_result_count}",
+        )
 
+        await self._emit(execution_id, OrchestrationEventType.MANAGER_STARTED)
         manager_outcome = await self._phase_b_manager(request, manager_knowledge_context)
         plan = manager_outcome.plan
         warnings.extend(manager_outcome.warnings)
         issue_codes.extend(manager_outcome.validation_issue_codes)
+        await self._emit(
+            execution_id,
+            OrchestrationEventType.MANAGER_COMPLETED,
+            status=str(manager_outcome.manager_used),
+        )
+        if manager_outcome.fallback_used:
+            await self._emit(execution_id, OrchestrationEventType.MANAGER_FALLBACK)
 
         if not plan.tasks:
-            return self._result(
+            result = self._result(
                 request,
                 outcome=OrchestrationOutcome.RUNTIME_FAILURE,
                 workflow_id=None,
@@ -237,10 +310,20 @@ class EndToEndOrchestrationService:
                 warnings=[*warnings, "planner produced an empty task list"],
                 issue_codes=issue_codes,
             )
+            await self._emit_execution_completed(execution_id, result)
+            return result
 
+        await self._emit(
+            execution_id,
+            OrchestrationEventType.PLANNING_COMPLETED,
+            message=f"task_count={len(plan.tasks)}",
+        )
+
+        await self._emit(execution_id, OrchestrationEventType.ROUTING_STARTED)
         routing = self._phase_c_routing(request, plan)
         if routing is None:
-            return self._result(
+            await self._emit(execution_id, OrchestrationEventType.ROUTING_FAILED)
+            result = self._result(
                 request,
                 outcome=OrchestrationOutcome.NO_ELIGIBLE_ROUTE,
                 workflow_id=None,
@@ -252,8 +335,17 @@ class EndToEndOrchestrationService:
                 warnings=warnings,
                 issue_codes=issue_codes,
             )
+            await self._emit_execution_completed(execution_id, result)
+            return result
         agent_type_by_task_key, routing_context_by_task_key = routing
         selected_agent_types = tuple(sorted(set(agent_type_by_task_key.values())))
+        for task_key, agent_type in agent_type_by_task_key.items():
+            await self._emit(
+                execution_id,
+                OrchestrationEventType.ROUTING_TASK_SELECTED,
+                task_key=task_key,
+                agent_id=agent_type,
+            )
 
         try:
             workflow, step_to_task, results, learning_event_ids = self._phase_d_execute(
@@ -264,8 +356,16 @@ class EndToEndOrchestrationService:
                 "workflow creation/execution failed at the persistence layer"
             ) from exc
 
+        await self._emit(
+            execution_id, OrchestrationEventType.WORKFLOW_CREATED, workflow_id=workflow.id
+        )
+        await self._emit(
+            execution_id, OrchestrationEventType.WORKFLOW_STARTED, workflow_id=workflow.id
+        )
+        await self._emit_step_events(execution_id, workflow, step_to_task)
+
         if workflow.status == WorkflowStatus.FAILED and not results:
-            return self._result(
+            result = self._result(
                 request,
                 outcome=OrchestrationOutcome.RUNTIME_FAILURE,
                 workflow_id=workflow.id,
@@ -280,7 +380,10 @@ class EndToEndOrchestrationService:
                 attempt_count=self._count_attempts(workflow),
                 learning_event_ids=learning_event_ids,
             )
+            await self._emit_execution_completed(execution_id, result)
+            return result
 
+        await self._emit(execution_id, OrchestrationEventType.VERIFICATION_STARTED)
         (
             final_workflow,
             aggregated,
@@ -291,15 +394,33 @@ class EndToEndOrchestrationService:
             plan, workflow, step_to_task, results, agent_type_by_task_key,
             routing_context_by_task_key, learning_event_ids,
         )
+        await self._emit(
+            execution_id,
+            OrchestrationEventType.VERIFICATION_COMPLETED,
+            verification_status=(
+                aggregated.overall_status.value if aggregated is not None else None
+            ),
+        )
+        if recovery_used:
+            await self._emit(execution_id, OrchestrationEventType.RECOVERY_STARTED)
+            if recovery_action == RecoveryAction.FAIL:
+                await self._emit(execution_id, OrchestrationEventType.RECOVERY_EXHAUSTED)
+            else:
+                await self._emit(execution_id, OrchestrationEventType.RECOVERY_COMPLETED)
 
         retrieval_feedback_recorded = self._phase_g_feedback(
             observation, aggregated, final_workflow.id, request
+        )
+        await self._emit(
+            execution_id,
+            OrchestrationEventType.RETRIEVAL_FEEDBACK_COMPLETED,
+            status="recorded" if retrieval_feedback_recorded else "not_recorded",
         )
 
         outcome = self._determine_outcome(aggregated, recovery_action)
         attempt_count = self._count_attempts(final_workflow)
 
-        return self._result(
+        result = self._result(
             request,
             outcome=outcome,
             workflow_id=final_workflow.id,
@@ -318,6 +439,61 @@ class EndToEndOrchestrationService:
             learning_event_ids=all_learning_event_ids,
             retrieval_feedback_recorded=retrieval_feedback_recorded,
         )
+        await self._emit_execution_completed(execution_id, result)
+        return result
+
+    async def _emit_execution_completed(
+        self, execution_id: str, result: OrchestrationResult
+    ) -> None:
+        """Always `execution.completed` -- the async job pipeline itself
+        finished running without an unhandled exception, regardless of
+        `result.outcome` (a normal, expected result value, never conflated
+        with job/transport status; see `app.engine.orchestration.execution`
+        for the distinct job-status concept the API layer tracks)."""
+        await self._emit(
+            execution_id,
+            OrchestrationEventType.EXECUTION_COMPLETED,
+            status=result.outcome.value,
+            workflow_id=result.workflow_id,
+            safe_issue_codes=result.issue_codes,
+        )
+
+    async def _emit_step_events(
+        self, execution_id: str, workflow: Workflow, step_to_task: dict[str, TaskSpec]
+    ) -> None:
+        """Replays one `step.started` + one terminal `step.completed`/
+        `step.failed` per step, from each step's final attempt --
+        `WorkflowEngine.execute_workflow()` (Stage 2/3, unmodified) already
+        ran every step synchronously by the time this is called, so this is
+        an observational replay of what already happened, never a second
+        execution or a new decision."""
+        for step in sorted(workflow.steps, key=lambda s: s.position):
+            if not step.attempts:
+                continue
+            attempt = max(step.attempts, key=lambda a: a.attempt_number)
+            task = step_to_task.get(step.id)
+            await self._emit(
+                execution_id,
+                OrchestrationEventType.STEP_STARTED,
+                workflow_id=workflow.id,
+                task_key=task.key if task is not None else None,
+                agent_id=step.agent_type,
+                attempt_number=attempt.attempt_number,
+            )
+            completed_type = (
+                OrchestrationEventType.STEP_COMPLETED
+                if attempt.status == AttemptStatus.SUCCEEDED
+                else OrchestrationEventType.STEP_FAILED
+            )
+            await self._emit(
+                execution_id,
+                completed_type,
+                workflow_id=workflow.id,
+                task_key=task.key if task is not None else None,
+                agent_id=step.agent_type,
+                attempt_number=attempt.attempt_number,
+                status=attempt.status.value,
+            )
 
     # --- Phase A: Knowledge preparation -------------------------------------
 

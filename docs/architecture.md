@@ -555,13 +555,71 @@ Learning (`WorkflowEngine`'s own `learning_persistence` wiring, so a step's exec
 verification outcome are recorded together, once) → Retrieval feedback
 (`RetrievalFeedback`, constructed only with `verification_status=PASSED` as positive
 evidence — never merely because a chunk was retrieved or used).
-**Implementation status: implemented (`EndToEndOrchestrationService`), no API surface
-yet.** Authority is unchanged from the subsystems above: the Manager cannot bypass
-`Planner` or `Router`, cannot self-verify, and cannot mutate learning/retrieval-passport
-state directly; `Router` eligibility, `WorkflowEngine` state ownership, and Stage 4E
-verified-success semantics are all reused exactly as certified, never re-implemented.
-Stage 8C.2/8C.3 will add the FastAPI/CLI/extension surfaces that call this service; none
-exist yet.
+**Implementation status: implemented (`EndToEndOrchestrationService`).** Authority is
+unchanged from the subsystems above: the Manager cannot bypass `Planner` or `Router`,
+cannot self-verify, and cannot mutate learning/retrieval-passport state directly;
+`Router` eligibility, `WorkflowEngine` state ownership, and Stage 4E verified-success
+semantics are all reused exactly as certified, never re-implemented. Stage 8C.2 (below)
+adds the FastAPI/SSE surface that calls this service; Stage 8C.3 (CLI/VS Code/frontend
+wiring) does not exist yet.
+
+### `engine/orchestration/events.py`, `execution.py`, `api/routes/orchestrations.py` — Stage 8C.2
+
+Exposes Stage 8C.1 through a small, stable, provider-neutral HTTP API and an
+observability event stream, without redesigning anything above it:
+
+- **`POST /api/v1/orchestrations`** starts one execution as an isolated background
+  `asyncio.Task` (`OrchestrationExecutionCoordinator.start`) and returns `202 Accepted`
+  with an `execution_id` immediately — it never calls `await service.orchestrate(...)`
+  inline from the request handler. The public request body
+  (`OrchestrationExecutionCreate`) reuses `OrchestrationRequest`'s own contract types
+  (`RepositoryMetadata`, `RoutingConstraints`, `AgentCapability`) directly rather than a
+  parallel schema, and accepts only bounded, typed, `extra="forbid"` fields — no field
+  accepts arbitrary code, a shell command, an API key, a provider `Authorization`
+  header, a raw Manager prompt, or an arbitrary runtime object.
+- **`GET /api/v1/orchestrations/{execution_id}`** returns safe, observable state.
+  Transport/job status (`accepted`/`running`/`completed`/`failed`/`cancelled`,
+  `OrchestrationExecutionStatus`) and business outcome (`OrchestrationOutcome` —
+  `verified_success`/`no_eligible_route`/`recovery_exhausted`/...) are deliberately
+  separate fields, never collapsed: a `completed` job can carry any business outcome,
+  including a non-success one — the asynchronous execution still reached a valid
+  terminal *business* result.
+- **`GET /api/v1/orchestrations/{execution_id}/events`** streams `OrchestrationEvent`s
+  as Server-Sent Events (`text/event-stream`), replaying stored history first and then
+  following live pushes from a bounded, per-connection `asyncio.Queue` — never a
+  polling loop, never a second Manager/Workflow run just because a client (re)connects.
+
+**Event instrumentation is purely observational.** `EndToEndOrchestrationService
+.orchestrate()` optionally emits events to an injected `OrchestrationEventSink`
+(`app.engine.orchestration.events`, mirroring the existing `StateSink` pattern from
+`engine/workflow/events.py`) at meaningful phase boundaries only (`execution.started`,
+`manager.completed`/`manager.fallback`, `routing.task_selected` per task,
+`workflow.created`, `step.started`/`step.completed`/`step.failed`,
+`verification.completed`, `recovery.*`, `retrieval_feedback.completed`,
+`execution.completed`/`execution.failed`) — never inside a phase method, never
+influencing what any phase decides, and a sink failure is caught and logged, never
+re-raised: a broken event sink can never turn a verified success into a business
+failure. Every event field is bounded and typed (no `payload: dict[str, Any]` escape
+hatch) — chain-of-thought, a raw provider response, a prompt, an API key, an
+`Authorization` header, and unrestricted worker stdout/stderr can never reach an event
+or the SSE stream, structurally, not by a runtime filter alone.
+
+**Agent identifiers are open strings everywhere, never a fixed enum.** The API places
+no `CLAUDE`/`CODEX`/`GEMINI`-shaped constraint on `available_agent_types` or on any
+event's `agent_id` — any dynamically registered agent ID (`"deepseek-reviewer"`,
+`"my-openrouter-qwen-agent"`, a smoke-test's own `"keystone-live-fake-worker"`) is
+exactly as valid and exactly as routable as a built-in one, live-verified end to end in
+Stage 8C.1's own diagnostics and in this stage's API integration tests.
+
+**Implementation status: implemented, in-memory only.**
+`InMemoryOrchestrationExecutionStore` (execution records + bounded event history +
+bounded per-subscriber live queues) is explicitly **not restart-safe** — a process
+restart loses all execution/event history — and is deliberately built behind a
+storage-neutral `OrchestrationExecutionStore` Protocol so a future persistence-backed
+implementation can replace it without the coordinator or API layer changing. No
+database migration was introduced for this stage. No CLI, VS Code extension, or
+frontend wiring exists yet (Stage 8C.3); no OpenRouter/provider credential onboarding
+exists yet; no distributed queue/broker/multi-node fanout exists.
 
 ### `contracts/`
 Canonical, provider-neutral Pydantic v2 domain contracts shared across the engine, API,

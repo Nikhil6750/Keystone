@@ -509,6 +509,60 @@ commits — never before, and never for a transition that didn't actually commit
 this is **best-effort sequential coupling, not single-transaction atomicity**: the state
 transition and its audit event are two separate commits.
 
+### `engine/planning/`, `engine/routing/`, `engine/verification/`, `engine/learning/`, `engine/knowledge/`, `engine/adaptive_retrieval/` — Stages 4A–7.5
+The intelligence-layer subsystems `contracts/`'s Stage 4A note above says do not exist
+yet in this document's original text are, as of Stage 8B.1, all implemented and
+certified: a deterministic `Planner` (`engine/planning/planner.py`, goal → `WorkflowPlan`
+via rule-based templates, no LLM call), a `Router` (`engine/routing/router.py`, candidate
+eligibility + explainable scoring, no LLM call), Stage 4E verification/recovery
+(`engine/verification/`: `verify_one`/`aggregate`, `decide_recovery`/`reroute`), Stage 5
+learning (`engine/learning/`, `LearningEvent` → `AgentPassport`, persisted via
+`persistence/service.py::LearningPersistenceService`), a lexical `KnowledgeIndex`
+(`engine/knowledge/`, Stage 6A/6B, no embeddings), and Stage 7.5 adaptive retrieval
+(`engine/adaptive_retrieval/`, re-ranks Stage 6A's own candidates only, disabled by
+default). None of these call an external provider. This document's stale "Explicitly out
+of scope" list below still says otherwise for the self-learning RAG item; that note is now
+incorrect and is left as a known documentation gap outside this addition's scope — see
+Stage 8C.1 below for the first component that actually wires all of these together.
+
+### `engine/manager/` and `integrations/nemotron/` — Stage 8A/8B/8B.1
+`engine/manager/` is the one place in this codebase that talks to an LLM as advisory
+intelligence: `ManagerModel` (Protocol) → `ManagerOrchestrator` → the deterministic
+`Planner` above. A `ManagerResponse` is validated by `ManagerProposalValidator`
+(unknown agent/capability references, structural bounds, `extra="forbid"`) before any
+part of it can influence orchestration, and even a validated response only ever adjusts
+`RoutingConstraints.preferred_agent_types` (a ranking hint) — it can never grant
+`Router` eligibility it didn't already have, mark verification passed, or write learning/
+retrieval-passport state. `integrations/nemotron/` implements `ManagerModel` against
+NVIDIA Nemotron 3 Ultra's OpenAI-compatible hosted endpoint (the one exception to "Keystone
+never calls a provider's HTTP API" in "Explicitly out of scope" below — that line predates
+Stage 8B and is now specific to *agent execution*, not the advisory Manager). Manager
+unavailability/timeout/an invalid or rejected proposal all fall back to the unmodified
+`Planner` path — Keystone is never unusable because the Manager is down.
+
+### `engine/orchestration/` — Stage 8C.1
+The first application-service layer composing every subsystem above into one pipeline:
+Knowledge (`KnowledgeIndex.search` [+ `AdaptiveRetriever.retrieve`] → `ContextBuilder`) →
+Manager (`ManagerOrchestrator` → `Planner`, unmodified) → Router (`build_routing_request`
+→ `Router.route`, unmodified, per task) → Workflow (a new `compiler.py` topologically
+orders a `WorkflowPlan`'s DAG into the live position-ordered `WorkflowCreate` — no DAG
+support existed in the live engine before this — then `WorkflowEngine.execute_workflow`,
+unmodified) → Verification (`verify_one`/`aggregate`, invoked through `WorkflowEngine`'s
+own `VerificationResolver` seam) → Recovery (`decide_recovery`/`reroute`, bounded by
+`RecoveryPolicy.max_attempts`; a failed step's own `TaskSpec.input_payload` is static, so
+recovery re-executes just the failed subset as an independent recovery `Workflow`) →
+Learning (`WorkflowEngine`'s own `learning_persistence` wiring, so a step's execution and
+verification outcome are recorded together, once) → Retrieval feedback
+(`RetrievalFeedback`, constructed only with `verification_status=PASSED` as positive
+evidence — never merely because a chunk was retrieved or used).
+**Implementation status: implemented (`EndToEndOrchestrationService`), no API surface
+yet.** Authority is unchanged from the subsystems above: the Manager cannot bypass
+`Planner` or `Router`, cannot self-verify, and cannot mutate learning/retrieval-passport
+state directly; `Router` eligibility, `WorkflowEngine` state ownership, and Stage 4E
+verified-success semantics are all reused exactly as certified, never re-implemented.
+Stage 8C.2/8C.3 will add the FastAPI/CLI/extension surfaces that call this service; none
+exist yet.
+
 ### `contracts/`
 Canonical, provider-neutral Pydantic v2 domain contracts shared across the engine, API,
 CLI and extension clients — the stable vNext shapes for workflow graphs, agent adapters,

@@ -2,9 +2,14 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { vscodeApi } from '../services/vscodeApi';
 import {
   BackendUnavailableError,
+  activateRuntime,
+  createAgentConnection,
+  createConnectedAgent,
   fetchConnectedAgents,
+  fetchDetectedRuntimes,
   startOrchestration,
   subscribeToOrchestrationEvents,
+  updateConnectedAgent,
 } from './keystoneClient';
 
 /**
@@ -196,5 +201,165 @@ describe('keystoneClient (extension-host proxy transport)', () => {
     });
 
     expect(onEvent).toHaveBeenCalledWith(event);
+  });
+
+  describe('Stage 8C.3 Connect Agent transport', () => {
+    it('fetchDetectedRuntimes reads GET /agents and unwraps the {items,count} envelope', async () => {
+      vi.spyOn(vscodeApi, 'postMessage');
+      const promise = fetchDetectedRuntimes();
+      const sent = lastPostedMessage();
+      expect(sent.method).toBe('GET');
+      expect(sent.path).toBe('/agents');
+
+      dispatchHostMessage({
+        type: 'KEYSTONE_API_RESPONSE',
+        requestId: sent.requestId,
+        networkError: false,
+        ok: true,
+        status: 200,
+        body: { items: [{ agent_type: 'claude_code', installation_status: 'installed' }], count: 1 },
+      });
+
+      await expect(promise).resolves.toEqual([
+        { agent_type: 'claude_code', installation_status: 'installed' },
+      ]);
+    });
+
+    it('fetchDetectedRuntimes tolerates an unusual response shape as an empty list, never throwing', async () => {
+      vi.spyOn(vscodeApi, 'postMessage');
+      const promise = fetchDetectedRuntimes();
+      const sent = lastPostedMessage();
+
+      dispatchHostMessage({
+        type: 'KEYSTONE_API_RESPONSE',
+        requestId: sent.requestId,
+        networkError: false,
+        ok: true,
+        status: 200,
+        body: null,
+      });
+
+      await expect(promise).resolves.toEqual([]);
+    });
+
+    it('activateRuntime posts to the exact runtime_id path and rejects on a non-OK response', async () => {
+      vi.spyOn(vscodeApi, 'postMessage');
+      const promise = activateRuntime('claude_code');
+      const sent = lastPostedMessage();
+      expect(sent.method).toBe('POST');
+      expect(sent.path).toBe('/runtime-connections/claude_code/activate');
+
+      dispatchHostMessage({
+        type: 'KEYSTONE_API_RESPONSE',
+        requestId: sent.requestId,
+        networkError: false,
+        ok: false,
+        status: 404,
+        body: { error: { message: 'unknown runtime' } },
+      });
+
+      await expect(promise).rejects.toThrow(/HTTP 404/);
+    });
+
+    it('createAgentConnection sends the connection payload and returns the created connection', async () => {
+      vi.spyOn(vscodeApi, 'postMessage');
+      const promise = createAgentConnection({
+        connection_id: 'claude-code-local',
+        display_name: 'Claude Code (local)',
+        connection_kind: 'installed_runtime',
+        provider_or_runtime: 'claude_code',
+      });
+      const sent = lastPostedMessage();
+      expect(sent.method).toBe('POST');
+      expect(sent.path).toBe('/agent-connections');
+      expect(sent.body).toEqual({
+        connection_id: 'claude-code-local',
+        display_name: 'Claude Code (local)',
+        connection_kind: 'installed_runtime',
+        provider_or_runtime: 'claude_code',
+      });
+
+      const created = { ...(sent.body as object), status: 'connected' };
+      dispatchHostMessage({
+        type: 'KEYSTONE_API_RESPONSE',
+        requestId: sent.requestId,
+        networkError: false,
+        ok: true,
+        status: 201,
+        body: created,
+      });
+
+      await expect(promise).resolves.toEqual(created);
+    });
+
+    it('createAgentConnection surfaces the backend error message on a real (non-network) failure', async () => {
+      vi.spyOn(vscodeApi, 'postMessage');
+      const promise = createAgentConnection({
+        connection_id: 'dup',
+        display_name: 'Dup',
+        connection_kind: 'custom',
+        provider_or_runtime: 'dup',
+      });
+      const sent = lastPostedMessage();
+
+      dispatchHostMessage({
+        type: 'KEYSTONE_API_RESPONSE',
+        requestId: sent.requestId,
+        networkError: false,
+        ok: false,
+        status: 409,
+        body: { error: { message: "AgentConnection 'dup' is already registered" } },
+      });
+
+      await expect(promise).rejects.toThrow(/already registered/);
+    });
+
+    it('createConnectedAgent never invents capabilities -- it sends exactly the caller-supplied list', async () => {
+      vi.spyOn(vscodeApi, 'postMessage');
+      const promise = createConnectedAgent({
+        agent_id: 'claude-work',
+        display_name: 'Claude Work',
+        connection_id: 'claude-code-local',
+        capabilities: ['code_generation', 'test_execution'],
+      });
+      const sent = lastPostedMessage();
+      expect(sent.method).toBe('POST');
+      expect(sent.path).toBe('/connected-agents');
+      expect((sent.body as { capabilities: string[] }).capabilities).toEqual([
+        'code_generation',
+        'test_execution',
+      ]);
+
+      dispatchHostMessage({
+        type: 'KEYSTONE_API_RESPONSE',
+        requestId: sent.requestId,
+        networkError: false,
+        ok: true,
+        status: 201,
+        body: sent.body,
+      });
+
+      await expect(promise).resolves.toEqual(sent.body);
+    });
+
+    it('updateConnectedAgent issues a real PATCH request, not a POST workaround', async () => {
+      vi.spyOn(vscodeApi, 'postMessage');
+      const promise = updateConnectedAgent('claude-work', { enabled: false });
+      const sent = lastPostedMessage();
+      expect(sent.method).toBe('PATCH');
+      expect(sent.path).toBe('/connected-agents/claude-work');
+      expect(sent.body).toEqual({ enabled: false });
+
+      dispatchHostMessage({
+        type: 'KEYSTONE_API_RESPONSE',
+        requestId: sent.requestId,
+        networkError: false,
+        ok: true,
+        status: 200,
+        body: { agent_id: 'claude-work', enabled: false },
+      });
+
+      await expect(promise).resolves.toEqual({ agent_id: 'claude-work', enabled: false });
+    });
   });
 });

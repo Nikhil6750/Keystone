@@ -1764,6 +1764,233 @@ body {
   border-radius: 999px;
 }
 
+/* --- Connect Agent: runtime discovery + connect forms --- */
+
+.connect-loading-text,
+.connect-form-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--muted-fg);
+  margin: 0;
+}
+
+.connect-error-text {
+  font-size: 0.78rem;
+  color: var(--status-red);
+  margin: 0;
+}
+
+.runtime-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.runtime-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.runtime-row-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.runtime-row-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--fg-color);
+}
+
+.runtime-row-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.74rem;
+}
+
+.runtime-row-status-ok {
+  color: var(--status-green);
+}
+
+.runtime-row-status-missing {
+  color: var(--muted-fg);
+}
+
+.btn-connect-runtime {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--button-fg);
+  background-color: var(--button-bg);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btn-connect-runtime:hover:not(:disabled) {
+  background-color: var(--accent-hover);
+}
+
+.btn-connect-runtime:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.connect-agent-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.connect-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: var(--muted-fg);
+}
+
+.connect-form-field input {
+  padding: 7px 10px;
+  font-size: 0.82rem;
+  color: var(--fg-color);
+  background-color: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+
+.connect-form-field input:focus-visible {
+  outline: 1px solid var(--input-focus);
+  outline-offset: -1px;
+}
+
+.connect-capability-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.connect-capability-badge {
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  color: var(--badge-fg);
+  background-color: var(--badge-bg);
+  border-radius: 999px;
+  text-transform: capitalize;
+}
+
+.connect-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.connect-success {
+  align-items: flex-start;
+}
+
+.connect-success-icon {
+  color: var(--status-green);
+}
+
+.spin {
+  animation: keystone-spin 0.9s linear infinite;
+}
+
+@keyframes keystone-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* --- Connect Agent: connected-agent management list --- */
+
+.agent-management-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.agent-management-heading {
+  font-size: 0.74rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted-fg);
+  margin: 0;
+}
+
+.agent-management-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.agent-management-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.agent-management-item:hover {
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+.agent-management-name {
+  font-size: 0.8rem;
+  color: var(--fg-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-management-id {
+  color: var(--muted-fg);
+  font-weight: 400;
+}
+
+.agent-management-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.agent-enabled-icon {
+  color: var(--status-green);
+}
+
+.agent-disabled-icon {
+  color: var(--muted-fg);
+}
+
 /* --- Execution progress --- */
 
 .execution-progress-view {

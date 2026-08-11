@@ -4,11 +4,15 @@ import { InstalledSignInView } from './InstalledSignInView';
 import { ApiByokView } from './ApiByokView';
 import { LocalRuntimeView } from './LocalRuntimeView';
 import { CustomRuntimeView } from './CustomRuntimeView';
+import { AgentManagementList } from './AgentManagementList';
+import type { ConnectedAgentSummary } from '../../types/keystone';
 
 export type ConnectCategory = 'installed' | 'api' | 'local' | 'custom';
 
 export interface ConnectAgentViewProps {
   onClose: () => void;
+  connectedAgents: ConnectedAgentSummary[];
+  onAgentsChanged: () => void;
 }
 
 const CATEGORIES: { id: ConnectCategory; title: string; description: string; icon: React.ReactNode }[] = [
@@ -40,24 +44,35 @@ const CATEGORIES: { id: ConnectCategory; title: string; description: string; ico
 
 /**
  * The secondary "Connect Agent" surface. Category buttons only -- no
- * provider logos or brand-specific chrome on the first screen. Each
- * category opens a generic, honest detail view; none of them can report a
- * successful connection today (see each sub-view's own docstring).
+ * provider logos or brand-specific chrome on the first screen. "Installed
+ * / Sign in" is the one category backed by a real connector (Stage 8C.3);
+ * API/BYOK, Local, and Custom create real connection/agent metadata but
+ * have no execution adapter yet -- see each sub-view's own docstring.
  */
-export const ConnectAgentView: React.FC<ConnectAgentViewProps> = ({ onClose }) => {
+export const ConnectAgentView: React.FC<ConnectAgentViewProps> = ({
+  onClose,
+  connectedAgents,
+  onAgentsChanged,
+}) => {
   const [category, setCategory] = useState<ConnectCategory | null>(null);
 
   if (category === 'installed') {
-    return <InstalledSignInView onBack={() => setCategory(null)} />;
+    return (
+      <InstalledSignInView
+        onBack={() => setCategory(null)}
+        onAgentsChanged={onAgentsChanged}
+        existingAgents={connectedAgents}
+      />
+    );
   }
   if (category === 'api') {
-    return <ApiByokView onBack={() => setCategory(null)} />;
+    return <ApiByokView onBack={() => setCategory(null)} onAgentsChanged={onAgentsChanged} />;
   }
   if (category === 'local') {
-    return <LocalRuntimeView onBack={() => setCategory(null)} />;
+    return <LocalRuntimeView onBack={() => setCategory(null)} onAgentsChanged={onAgentsChanged} />;
   }
   if (category === 'custom') {
-    return <CustomRuntimeView onBack={() => setCategory(null)} />;
+    return <CustomRuntimeView onBack={() => setCategory(null)} onAgentsChanged={onAgentsChanged} />;
   }
 
   return (
@@ -67,6 +82,7 @@ export const ConnectAgentView: React.FC<ConnectAgentViewProps> = ({ onClose }) =
         Back
       </button>
       <h2 className="connect-agent-heading">Connect Agent</h2>
+      <AgentManagementList agents={connectedAgents} onAgentsChanged={onAgentsChanged} />
       <div className="connect-category-grid">
         {CATEGORIES.map((c) => (
           <button

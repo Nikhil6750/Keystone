@@ -53,10 +53,12 @@ export const KeystoneHome: React.FC = () => {
         />
         <div className="keystone-body">
           <ConnectAgentView
+            connectedAgents={agents}
             onClose={() => {
               setScreen('home');
               refetch();
             }}
+            onAgentsChanged={refetch}
           />
         </div>
       </div>

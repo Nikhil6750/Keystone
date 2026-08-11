@@ -1,9 +1,15 @@
 import { vscodeApi } from '../services/vscodeApi';
 import type {
+  AgentConnection,
+  AgentConnectionCreateInput,
+  ConnectedAgent,
+  ConnectedAgentCreateInput,
   ConnectedAgentSummary,
+  DetectedRuntime,
   OrchestrationEvent,
   OrchestrationExecutionAccepted,
   OrchestrationExecutionRead,
+  RuntimeActivationResult,
 } from '../types/keystone';
 
 /**
@@ -146,7 +152,9 @@ function nextId(): string {
  * failure (relayed `networkError: true`) or for a request that never gets
  * a response at all within `REQUEST_TIMEOUT_MS`.
  */
-function apiRequest(method: 'GET' | 'POST', path: string, body?: unknown): Promise<ApiResponseMessage> {
+type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+
+function apiRequest(method: HttpMethod, path: string, body?: unknown): Promise<ApiResponseMessage> {
   ensureListener();
   const requestId = nextId();
 
@@ -188,6 +196,103 @@ export async function fetchConnectedAgents(): Promise<ConnectedAgentSummary[]> {
   }
   const body = response.body;
   return Array.isArray(body) ? (body as ConnectedAgentSummary[]) : [];
+}
+
+/**
+ * Installed/configured runtime *adapter* availability (`GET /api/v1/
+ * agents`) -- never a user-created agent identity (see
+ * `fetchConnectedAgents`). Drives the "Installed / Sign in" category's
+ * runtime list: what Keystone can detect on this machine, truthfully,
+ * before the user has connected anything.
+ */
+export async function fetchDetectedRuntimes(): Promise<DetectedRuntime[]> {
+  const response = await apiRequest('GET', '/agents');
+  if (!response.ok) {
+    return [];
+  }
+  const body = response.body as { items?: unknown } | null;
+  return body && Array.isArray(body.items) ? (body.items as DetectedRuntime[]) : [];
+}
+
+/**
+ * Deliberately activates one detected-but-not-yet-enabled installed
+ * runtime (Connect Agent -> Installed / Sign in -> Connect). Never
+ * fabricates success: the backend only registers the runtime if its
+ * executable is genuinely found on PATH, then runs one real verification
+ * and returns truthful installation/authentication/connection status.
+ */
+export async function activateRuntime(runtimeId: string): Promise<RuntimeActivationResult> {
+  const response = await apiRequest('POST', `/runtime-connections/${encodeURIComponent(runtimeId)}/activate`);
+  if (!response.ok) {
+    throw new Error(`Unable to activate '${runtimeId}' (HTTP ${response.status}).`);
+  }
+  return response.body as RuntimeActivationResult;
+}
+
+export async function fetchAgentConnections(): Promise<AgentConnection[]> {
+  const response = await apiRequest('GET', '/agent-connections');
+  if (!response.ok) {
+    return [];
+  }
+  return Array.isArray(response.body) ? (response.body as AgentConnection[]) : [];
+}
+
+/**
+ * Registers a new integration connection. `input` is a plain, already-
+ * validated metadata payload -- see `AgentConnectionCreateInput`'s own
+ * type: there is no field here a caller could put a credential into. A
+ * real BYOK credential never reaches this function; it stays in VS Code
+ * `SecretStorage` via the extension host (see `secretsClient.ts`).
+ */
+export async function createAgentConnection(input: AgentConnectionCreateInput): Promise<AgentConnection> {
+  const response = await apiRequest('POST', '/agent-connections', input);
+  if (!response.ok) {
+    const body = response.body as { error?: { message?: string } } | null;
+    throw new Error(body?.error?.message || `Unable to create connection (HTTP ${response.status}).`);
+  }
+  return response.body as AgentConnection;
+}
+
+export async function deleteAgentConnection(connectionId: string): Promise<void> {
+  const response = await apiRequest('DELETE', `/agent-connections/${encodeURIComponent(connectionId)}`);
+  if (!response.ok) {
+    throw new Error(`Unable to delete connection '${connectionId}' (HTTP ${response.status}).`);
+  }
+}
+
+/** Registers a new Keystone agent identity backed by an existing
+ * connection. Capabilities must come from the caller's own already-
+ * truthful source (e.g. a `DetectedRuntime.capabilities` list) -- this
+ * function never invents or defaults a capability list. */
+export async function createConnectedAgent(input: ConnectedAgentCreateInput): Promise<ConnectedAgent> {
+  const response = await apiRequest('POST', '/connected-agents', input);
+  if (!response.ok) {
+    const body = response.body as { error?: { message?: string } } | null;
+    throw new Error(body?.error?.message || `Unable to create agent (HTTP ${response.status}).`);
+  }
+  return response.body as ConnectedAgent;
+}
+
+export async function updateConnectedAgent(
+  agentId: string,
+  updates: { enabled?: boolean; display_name?: string }
+): Promise<ConnectedAgent> {
+  const response = await apiRequest(
+    'PATCH',
+    `/connected-agents/${encodeURIComponent(agentId)}`,
+    updates
+  );
+  if (!response.ok) {
+    throw new Error(`Unable to update agent '${agentId}' (HTTP ${response.status}).`);
+  }
+  return response.body as ConnectedAgent;
+}
+
+export async function deleteConnectedAgent(agentId: string): Promise<void> {
+  const response = await apiRequest('DELETE', `/connected-agents/${encodeURIComponent(agentId)}`);
+  if (!response.ok) {
+    throw new Error(`Unable to remove agent '${agentId}' (HTTP ${response.status}).`);
+  }
 }
 
 /**

@@ -2,7 +2,7 @@
   "name": "keystone-vscode-extension",
   "displayName": "Keystone AI Orchestrator",
   "description": "Keystone AI Agent Orchestration Platform - VS Code Extension Foundation",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "keystone-ai",
   "repository": {
     "type": "git",
@@ -53,7 +53,8 @@
     "build:webview": "npm --prefix webview run build",
     "build:extension": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p ./",
     "build": "npm run build:webview && npm run build:extension",
-    "package": "npm run build && vsce package",
+    "verify:package": "node scripts/verify-package.js",
+    "package": "npm run build && npm run verify:package && vsce package",
     "install:vscode": "powershell -ExecutionPolicy Bypass -File scripts/install-vscode.ps1",
     "typecheck": "tsc -p ./ && npm --prefix webview run typecheck",
     "test": "npm --prefix webview run test"

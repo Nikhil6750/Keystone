@@ -244,11 +244,22 @@ export async function fetchAgentConnections(): Promise<AgentConnection[]> {
  * real BYOK credential never reaches this function; it stays in VS Code
  * `SecretStorage` via the extension host (see `secretsClient.ts`).
  */
+/**
+ * The real backend error message/code (`{error:{code,message}}}`, see
+ * `app.schemas.errors.APIErrorEnvelope`) when the response body carries
+ * one, so a 400/404/409/422/500 reads as an actual, specific reason
+ * (Stage 8C.3 error taxonomy) instead of a bare "HTTP 409" -- falling
+ * back to that generic form only when the body doesn't have one.
+ */
+function backendErrorMessage(response: ApiResponseMessage, fallback: string): string {
+  const body = response.body as { error?: { message?: string } } | null;
+  return body?.error?.message || fallback;
+}
+
 export async function createAgentConnection(input: AgentConnectionCreateInput): Promise<AgentConnection> {
   const response = await apiRequest('POST', '/agent-connections', input);
   if (!response.ok) {
-    const body = response.body as { error?: { message?: string } } | null;
-    throw new Error(body?.error?.message || `Unable to create connection (HTTP ${response.status}).`);
+    throw new Error(backendErrorMessage(response, `Unable to create connection (HTTP ${response.status}).`));
   }
   return response.body as AgentConnection;
 }
@@ -256,7 +267,9 @@ export async function createAgentConnection(input: AgentConnectionCreateInput): 
 export async function deleteAgentConnection(connectionId: string): Promise<void> {
   const response = await apiRequest('DELETE', `/agent-connections/${encodeURIComponent(connectionId)}`);
   if (!response.ok) {
-    throw new Error(`Unable to delete connection '${connectionId}' (HTTP ${response.status}).`);
+    throw new Error(
+      backendErrorMessage(response, `Unable to delete connection '${connectionId}' (HTTP ${response.status}).`)
+    );
   }
 }
 
@@ -267,8 +280,7 @@ export async function deleteAgentConnection(connectionId: string): Promise<void>
 export async function createConnectedAgent(input: ConnectedAgentCreateInput): Promise<ConnectedAgent> {
   const response = await apiRequest('POST', '/connected-agents', input);
   if (!response.ok) {
-    const body = response.body as { error?: { message?: string } } | null;
-    throw new Error(body?.error?.message || `Unable to create agent (HTTP ${response.status}).`);
+    throw new Error(backendErrorMessage(response, `Unable to create agent (HTTP ${response.status}).`));
   }
   return response.body as ConnectedAgent;
 }
@@ -283,7 +295,9 @@ export async function updateConnectedAgent(
     updates
   );
   if (!response.ok) {
-    throw new Error(`Unable to update agent '${agentId}' (HTTP ${response.status}).`);
+    throw new Error(
+      backendErrorMessage(response, `Unable to update agent '${agentId}' (HTTP ${response.status}).`)
+    );
   }
   return response.body as ConnectedAgent;
 }
@@ -291,14 +305,20 @@ export async function updateConnectedAgent(
 export async function deleteConnectedAgent(agentId: string): Promise<void> {
   const response = await apiRequest('DELETE', `/connected-agents/${encodeURIComponent(agentId)}`);
   if (!response.ok) {
-    throw new Error(`Unable to remove agent '${agentId}' (HTTP ${response.status}).`);
+    throw new Error(
+      backendErrorMessage(response, `Unable to remove agent '${agentId}' (HTTP ${response.status}).`)
+    );
   }
 }
 
 /**
  * Starts one orchestration execution. `availableAgentTypes` is the full
  * set of currently connected agent IDs -- Keystone's Router decides which
- * of them to use; the caller never picks one in advance.
+ * of them to use; the caller never picks one in advance. `workspace_root`
+ * is never set here -- the extension host (`backendProxy.ts`) injects the
+ * real currently-open VS Code workspace folder itself, since the webview
+ * has no access to that API and must never guess or derive one from
+ * `goal`.
  */
 export async function startOrchestration(
   goal: string,
@@ -309,7 +329,7 @@ export async function startOrchestration(
     available_agent_types: availableAgentTypes,
   });
   if (!response.ok) {
-    throw new Error(`Keystone rejected the request (HTTP ${response.status}).`);
+    throw new Error(backendErrorMessage(response, `Keystone rejected the request (HTTP ${response.status}).`));
   }
   return response.body as OrchestrationExecutionAccepted;
 }
@@ -319,7 +339,9 @@ export async function fetchOrchestrationResult(
 ): Promise<OrchestrationExecutionRead> {
   const response = await apiRequest('GET', `/orchestrations/${encodeURIComponent(executionId)}`);
   if (!response.ok) {
-    throw new Error(`Unable to read the execution result (HTTP ${response.status}).`);
+    throw new Error(
+      backendErrorMessage(response, `Unable to read the execution result (HTTP ${response.status}).`)
+    );
   }
   return response.body as OrchestrationExecutionRead;
 }

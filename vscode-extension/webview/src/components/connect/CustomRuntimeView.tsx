@@ -31,7 +31,6 @@ function slugify(value: string): string {
 export const CustomRuntimeView: React.FC<CustomRuntimeViewProps> = ({ onBack, onAgentsChanged }) => {
   const [runtimeName, setRuntimeName] = useState('');
   const [description, setDescription] = useState('');
-  const [agentName, setAgentName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -39,9 +38,8 @@ export const CustomRuntimeView: React.FC<CustomRuntimeViewProps> = ({ onBack, on
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     const runtimeClean = runtimeName.trim();
-    const agentClean = agentName.trim();
-    if (!runtimeClean || !agentClean) {
-      setError('Runtime name and agent name are required.');
+    if (!runtimeClean) {
+      setError('Runtime name is required.');
       return;
     }
 
@@ -57,10 +55,10 @@ export const CustomRuntimeView: React.FC<CustomRuntimeViewProps> = ({ onBack, on
         metadata: description.trim() ? { description: description.trim() } : undefined,
       }).catch(async () => ({ connection_id: connectionId }) as { connection_id: string });
 
-      const agentId = slugify(agentClean) || connectionId;
+      const agentId = `${slugify(runtimeClean)}-agent`;
       await createConnectedAgent({
         agent_id: agentId,
-        display_name: agentClean,
+        display_name: runtimeClean,
         connection_id: connection.connection_id,
         capabilities: [],
       });
@@ -126,16 +124,6 @@ export const CustomRuntimeView: React.FC<CustomRuntimeViewProps> = ({ onBack, on
             disabled={submitting}
           />
         </label>
-        <label className="connect-form-field">
-          <span>Agent name</span>
-          <input
-            type="text"
-            value={agentName}
-            onChange={(e) => setAgentName(e.target.value)}
-            disabled={submitting}
-            required
-          />
-        </label>
         {error && (
           <p className="connect-error-text" role="alert">
             {error}
@@ -143,7 +131,7 @@ export const CustomRuntimeView: React.FC<CustomRuntimeViewProps> = ({ onBack, on
         )}
         <div className="connect-form-actions">
           <button type="submit" className="btn-connect-agent" disabled={submitting}>
-            {submitting ? <Loader2 size={13} className="spin" /> : 'Save connection'}
+            {submitting ? <Loader2 size={13} className="spin" /> : 'Connect'}
           </button>
         </div>
       </form>

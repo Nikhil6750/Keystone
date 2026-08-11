@@ -1791,6 +1791,34 @@ body {
   gap: 6px;
 }
 
+.runtime-other-details {
+  margin-top: 4px;
+}
+
+.runtime-other-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 4px;
+  font-size: 0.76rem;
+  font-weight: 500;
+  color: var(--muted-fg);
+  cursor: pointer;
+  list-style: none;
+}
+
+.runtime-other-summary::-webkit-details-marker {
+  display: none;
+}
+
+.runtime-other-details[open] .runtime-other-summary svg {
+  transform: rotate(180deg);
+}
+
+.runtime-other-details .runtime-list {
+  margin-top: 6px;
+}
+
 .runtime-row {
   display: flex;
   align-items: center;

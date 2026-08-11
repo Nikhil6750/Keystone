@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, XCircle, Loader2, ChevronDown } from 'lucide-react';
 import {
   activateRuntime,
   createAgentConnection,
@@ -20,12 +20,19 @@ export interface InstalledSignInViewProps extends CategoryDetailViewProps {
 
 type Step =
   | { kind: 'list' }
-  | { kind: 'activating'; runtime: DetectedRuntime }
-  | { kind: 'naming'; runtime: DetectedRuntime; connection: AgentConnection }
-  | { kind: 'done'; agentId: string };
+  | { kind: 'connecting'; runtime: DetectedRuntime }
+  | { kind: 'done'; runtime: DetectedRuntime; agentId: string };
+
+/**
+ * Runtime identities Keystone never surfaces as a normal "connect this"
+ * option: a demo/simulation adapter is developer-only, not a real agent a
+ * user came here to connect. Backend-driven exclusion by design (no static
+ * per-vendor branch) -- this is the one, deliberately narrow exception.
+ */
+const HIDDEN_RUNTIME_TYPES = new Set(['demo']);
 
 function suggestAgentId(runtimeType: string, taken: Set<string>): string {
-  const base = `${runtimeType.replace(/_/g, '-')}-work`;
+  const base = runtimeType.replace(/_/g, '-');
   if (!taken.has(base)) return base;
   let n = 2;
   while (taken.has(`${base}-${n}`)) n += 1;
@@ -40,6 +47,14 @@ function suggestAgentId(runtimeType: string, taken: Set<string>): string {
  * identity creation, all against the real backend. Never fabricates
  * availability -- a runtime not found on PATH always reads "Not detected,"
  * never a fake "Connect" affordance.
+ *
+ * One click, no naming screen: `connection_id`/`agent_id`/`display_name`
+ * are all derived deterministically from the runtime's own id
+ * (`suggestAgentId`) -- Connection and Agent still exist as separate
+ * backend entities (Connection != Agent), just never surfaced to the user
+ * during this normal flow. Power users who want a custom name/second
+ * identity on the same connection belong behind a future Advanced ->
+ * Agent profiles surface, not here.
  */
 export const InstalledSignInView: React.FC<InstalledSignInViewProps> = ({
   onBack,
@@ -51,14 +66,13 @@ export const InstalledSignInView: React.FC<InstalledSignInViewProps> = ({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [step, setStep] = useState<Step>({ kind: 'list' });
   const [actionError, setActionError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     Promise.all([fetchDetectedRuntimes(), fetchAgentConnections()])
       .then(([detected, conns]) => {
         if (cancelled) return;
-        setRuntimes(detected);
+        setRuntimes(detected.filter((r) => !HIDDEN_RUNTIME_TYPES.has(r.agent_type)));
         setConnections(conns);
       })
       .catch(() => {
@@ -72,8 +86,7 @@ export const InstalledSignInView: React.FC<InstalledSignInViewProps> = ({
 
   const handleConnect = async (runtime: DetectedRuntime) => {
     setActionError(null);
-    setBusy(true);
-    setStep({ kind: 'activating', runtime });
+    setStep({ kind: 'connecting', runtime });
     try {
       const activation = await activateRuntime(runtime.agent_type);
       if (activation.installation_status !== 'installed') {
@@ -107,29 +120,36 @@ export const InstalledSignInView: React.FC<InstalledSignInViewProps> = ({
         }
       }
 
-      setStep({ kind: 'naming', runtime, connection });
+      const taken = new Set(existingAgents.map((a) => a.agent_id));
+      let agentId = suggestAgentId(runtime.agent_type, taken);
+      try {
+        await createConnectedAgent({
+          agent_id: agentId,
+          display_name: runtime.display_name,
+          connection_id: connection.connection_id,
+          capabilities: runtime.capabilities,
+        });
+      } catch {
+        // Extremely unlikely (another connect attempt racing the same
+        // suggested id) -- retry once with the next deterministic suffix
+        // rather than surface a raw "already exists" error for a screen
+        // the user never typed an id into.
+        agentId = suggestAgentId(runtime.agent_type, new Set([...taken, agentId]));
+        await createConnectedAgent({
+          agent_id: agentId,
+          display_name: runtime.display_name,
+          connection_id: connection.connection_id,
+          capabilities: runtime.capabilities,
+        });
+      }
+
+      onAgentsChanged();
+      setStep({ kind: 'done', runtime, agentId });
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Unable to connect this runtime.');
       setStep({ kind: 'list' });
-    } finally {
-      setBusy(false);
     }
   };
-
-  if (step.kind === 'naming') {
-    return (
-      <NameAgentForm
-        runtime={step.runtime}
-        connection={step.connection}
-        existingAgents={existingAgents}
-        onBack={() => setStep({ kind: 'list' })}
-        onCreated={(agentId) => {
-          onAgentsChanged();
-          setStep({ kind: 'done', agentId });
-        }}
-      />
-    );
-  }
 
   if (step.kind === 'done') {
     return (
@@ -138,12 +158,9 @@ export const InstalledSignInView: React.FC<InstalledSignInViewProps> = ({
         <div className="connect-category-detail connect-success">
           <CheckCircle2 size={28} className="connect-success-icon" />
           <p>
-            <strong>{step.agentId}</strong> is connected and ready to use.
+            <strong>{step.runtime.display_name}</strong> connected.
           </p>
           <div className="connect-form-actions">
-            <button type="button" className="btn-connect-agent" onClick={() => setStep({ kind: 'list' })}>
-              Connect another agent
-            </button>
             <button type="button" className="btn-link" onClick={onBack}>
               Done
             </button>
@@ -153,9 +170,13 @@ export const InstalledSignInView: React.FC<InstalledSignInViewProps> = ({
     );
   }
 
+  const busy = step.kind === 'connecting';
+  const detected = (runtimes ?? []).filter((r) => r.installation_status === 'installed');
+  const other = (runtimes ?? []).filter((r) => r.installation_status !== 'installed');
+
   return (
     <div className="connect-agent-view">
-      <button type="button" className="connect-agent-back-btn" onClick={onBack}>
+      <button type="button" className="connect-agent-back-btn" onClick={onBack} disabled={busy}>
         <ArrowLeft size={13} />
         Back
       </button>
@@ -175,18 +196,36 @@ export const InstalledSignInView: React.FC<InstalledSignInViewProps> = ({
           <Loader2 size={14} className="spin" /> Checking installed runtimes...
         </p>
       )}
-      {runtimes !== null && (
-        <ul className="runtime-list" aria-label="Installed runtimes">
-          {runtimes.map((runtime) => (
-            <RuntimeRow
-              key={runtime.agent_type}
-              runtime={runtime}
-              busy={busy && step.kind === 'activating' && step.runtime.agent_type === runtime.agent_type}
-              disabled={busy}
-              onConnect={() => void handleConnect(runtime)}
-            />
-          ))}
-        </ul>
+      {runtimes !== null && detected.length > 0 && (
+        <>
+          <p className="agent-management-heading">Detected on this machine</p>
+          <ul className="runtime-list" aria-label="Installed runtimes">
+            {detected.map((runtime) => (
+              <RuntimeRow
+                key={runtime.agent_type}
+                runtime={runtime}
+                busy={busy && step.kind === 'connecting' && step.runtime.agent_type === runtime.agent_type}
+                disabled={busy}
+                onConnect={() => void handleConnect(runtime)}
+              />
+            ))}
+          </ul>
+        </>
+      )}
+      {runtimes !== null && detected.length === 0 && !loadError && (
+        <p className="connect-form-hint">No supported runtime was detected on this machine.</p>
+      )}
+      {other.length > 0 && (
+        <details className="runtime-other-details">
+          <summary className="runtime-other-summary">
+            <ChevronDown size={13} /> Other supported connectors ({other.length})
+          </summary>
+          <ul className="runtime-list" aria-label="Other supported connectors">
+            {other.map((runtime) => (
+              <RuntimeRow key={runtime.agent_type} runtime={runtime} busy={false} disabled onConnect={() => {}} />
+            ))}
+          </ul>
+        </details>
       )}
     </div>
   );
@@ -206,8 +245,8 @@ const RuntimeRow: React.FC<{
         <span className="runtime-row-name">{runtime.display_name}</span>
         {installed ? (
           <span className="runtime-row-status runtime-row-status-ok">
-            <CheckCircle2 size={12} /> Installed
-            {runtime.authentication_status === 'authenticated' && ' · Authenticated'}
+            <CheckCircle2 size={12} />
+            {runtime.authentication_status === 'authenticated' ? 'Installed · Signed in' : 'Installed'}
           </span>
         ) : (
           <span className="runtime-row-status runtime-row-status-missing">
@@ -221,99 +260,5 @@ const RuntimeRow: React.FC<{
         </button>
       ) : null}
     </li>
-  );
-};
-
-const NameAgentForm: React.FC<{
-  runtime: DetectedRuntime;
-  connection: AgentConnection;
-  existingAgents: ConnectedAgentSummary[];
-  onBack: () => void;
-  onCreated: (agentId: string) => void;
-}> = ({ runtime, connection, existingAgents, onBack, onCreated }) => {
-  const taken = new Set(existingAgents.map((a) => a.agent_id));
-  const [agentId, setAgentId] = useState(() => suggestAgentId(runtime.agent_type, taken));
-  const [displayName, setDisplayName] = useState(() => `${runtime.display_name} agent`);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    const cleanId = agentId.trim();
-    if (!cleanId) {
-      setError('Agent ID is required.');
-      return;
-    }
-    if (taken.has(cleanId)) {
-      setError(`An agent named '${cleanId}' already exists.`);
-      return;
-    }
-    setSubmitting(true);
-    setError(null);
-    try {
-      await createConnectedAgent({
-        agent_id: cleanId,
-        display_name: displayName.trim() || cleanId,
-        connection_id: connection.connection_id,
-        capabilities: runtime.capabilities,
-      });
-      onCreated(cleanId);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to create this agent.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="connect-agent-view">
-      <button type="button" className="connect-agent-back-btn" onClick={onBack} disabled={submitting}>
-        <ArrowLeft size={13} />
-        Back
-      </button>
-      <h2 className="connect-agent-heading">Name this agent</h2>
-      <p className="connect-form-hint">
-        Connected via <strong>{connection.display_name}</strong>. You can create more than one agent on
-        this connection.
-      </p>
-      <form className="connect-agent-form" onSubmit={(e) => void handleSubmit(e)}>
-        <label className="connect-form-field">
-          <span>Agent name</span>
-          <input
-            type="text"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            disabled={submitting}
-          />
-        </label>
-        <label className="connect-form-field">
-          <span>Agent ID</span>
-          <input
-            type="text"
-            value={agentId}
-            onChange={(e) => setAgentId(e.target.value)}
-            disabled={submitting}
-            required
-          />
-        </label>
-        <div className="connect-capability-list" aria-label="Capabilities">
-          {runtime.capabilities.map((cap) => (
-            <span key={cap} className="connect-capability-badge">
-              {cap.replace(/_/g, ' ')}
-            </span>
-          ))}
-        </div>
-        {error && (
-          <p className="connect-error-text" role="alert">
-            {error}
-          </p>
-        )}
-        <div className="connect-form-actions">
-          <button type="submit" className="btn-connect-agent" disabled={submitting}>
-            {submitting ? <Loader2 size={13} className="spin" /> : 'Create agent'}
-          </button>
-        </div>
-      </form>
-    </div>
   );
 };

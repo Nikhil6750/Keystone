@@ -35,12 +35,18 @@ function slugify(value: string): string {
  * they list, they can be removed) but not yet executable -- the Router
  * will never select one, because `ExecutorRegistry` has no adapter
  * registered for it. This is stated plainly in the UI, not hidden.
+ *
+ * One click, no naming screen: like Installed/Sign-in, `connection_id`/
+ * `agent_id`/`display_name` are all derived from the provider string the
+ * user already typed -- Connection and Agent still exist as separate
+ * backend entities, just never surfaced here. A custom agent name/second
+ * identity on the same connection belongs behind a future Advanced ->
+ * Agent profiles surface.
  */
 export const ApiByokView: React.FC<ApiByokViewProps> = ({ onBack, onAgentsChanged }) => {
   const [provider, setProvider] = useState('');
   const [model, setModel] = useState('');
   const [credential, setCredential] = useState('');
-  const [agentName, setAgentName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -48,9 +54,8 @@ export const ApiByokView: React.FC<ApiByokViewProps> = ({ onBack, onAgentsChange
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     const providerClean = provider.trim();
-    const agentClean = agentName.trim();
-    if (!providerClean || !agentClean) {
-      setError('Provider and agent name are required.');
+    if (!providerClean) {
+      setError('Provider / compatible endpoint is required.');
       return;
     }
 
@@ -81,10 +86,10 @@ export const ApiByokView: React.FC<ApiByokViewProps> = ({ onBack, onAgentsChange
         return { connection_id: connectionId } as { connection_id: string };
       });
 
-      const agentId = slugify(agentClean) || connectionId;
+      const agentId = `${slugify(providerClean)}-agent`;
       await createConnectedAgent({
         agent_id: agentId,
-        display_name: agentClean,
+        display_name: providerClean,
         connection_id: connection.connection_id,
         model_id: model.trim() || null,
         // No generic API executor exists yet to report truthful
@@ -168,17 +173,6 @@ export const ApiByokView: React.FC<ApiByokViewProps> = ({ onBack, onAgentsChange
             disabled={submitting}
           />
         </label>
-        <label className="connect-form-field">
-          <span>Agent name</span>
-          <input
-            type="text"
-            value={agentName}
-            onChange={(e) => setAgentName(e.target.value)}
-            placeholder="e.g. qwen-coder"
-            disabled={submitting}
-            required
-          />
-        </label>
         {error && (
           <p className="connect-error-text" role="alert">
             {error}
@@ -186,7 +180,7 @@ export const ApiByokView: React.FC<ApiByokViewProps> = ({ onBack, onAgentsChange
         )}
         <div className="connect-form-actions">
           <button type="submit" className="btn-connect-agent" disabled={submitting}>
-            {submitting ? <Loader2 size={13} className="spin" /> : 'Save connection'}
+            {submitting ? <Loader2 size={13} className="spin" /> : 'Connect'}
           </button>
         </div>
       </form>

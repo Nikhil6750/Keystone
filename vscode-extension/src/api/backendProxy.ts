@@ -95,14 +95,49 @@ export class BackendProxy {
   }
 
   private async handleApiRequest(message: ApiRequestMessage, webview: vscode.Webview): Promise<void> {
+    // A real coding-agent step needs a real, persistent directory to work
+    // in -- never a temp directory whose contents vanish before anyone
+    // can see them (Stage 8C.3), and never guessed/derived from the goal
+    // text. `vscode.workspace.workspaceFolders` (the currently open
+    // folder) is the only source; if the user has not opened one, this
+    // request is rejected here, before the backend is ever called, with a
+    // truthful, actionable message instead of a silent temp-dir fallback.
+    let requestBody = message.body;
+    if (message.method === 'POST' && message.path === '/orchestrations') {
+      const folders = vscode.workspace.workspaceFolders;
+      if (!folders || folders.length === 0) {
+        Logger.info('Orchestration submission blocked: no workspace folder is open');
+        void vscode.window
+          .showWarningMessage('Open a folder to let Keystone build files.', 'Open Folder')
+          .then((selection) => {
+            if (selection === 'Open Folder') {
+              void vscode.commands.executeCommand('vscode.openFolder');
+            }
+          });
+        void webview.postMessage({
+          type: 'KEYSTONE_API_RESPONSE',
+          requestId: message.requestId,
+          networkError: false,
+          ok: false,
+          status: 400,
+          body: { error: { code: 'NO_WORKSPACE_OPEN', message: 'Open a folder to let Keystone build files.' } },
+        });
+        return;
+      }
+      requestBody = {
+        ...(typeof message.body === 'object' && message.body !== null ? message.body : {}),
+        workspace_root: folders[0].uri.fsPath,
+      };
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
     try {
       const response = await fetch(`${BACKEND_BASE_URL}${BACKEND_API_PREFIX}${message.path}`, {
         method: message.method,
-        headers: message.body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
-        body: message.body !== undefined ? JSON.stringify(message.body) : undefined,
+        headers: requestBody !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+        body: requestBody !== undefined ? JSON.stringify(requestBody) : undefined,
         signal: controller.signal,
       });
 

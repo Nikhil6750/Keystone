@@ -31,7 +31,6 @@ const LOOPBACK_ENDPOINT_PATTERN = /^https?:\/\/(127\.0\.0\.1|\[::1\]|localhost)(
 export const LocalRuntimeView: React.FC<LocalRuntimeViewProps> = ({ onBack, onAgentsChanged }) => {
   const [runtime, setRuntime] = useState('');
   const [endpoint, setEndpoint] = useState('http://127.0.0.1:11434');
-  const [agentName, setAgentName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -40,9 +39,8 @@ export const LocalRuntimeView: React.FC<LocalRuntimeViewProps> = ({ onBack, onAg
     event.preventDefault();
     const runtimeClean = runtime.trim();
     const endpointClean = endpoint.trim();
-    const agentClean = agentName.trim();
-    if (!runtimeClean || !agentClean) {
-      setError('Runtime name and agent name are required.');
+    if (!runtimeClean) {
+      setError('Runtime name is required.');
       return;
     }
     if (!LOOPBACK_ENDPOINT_PATTERN.test(endpointClean)) {
@@ -62,10 +60,10 @@ export const LocalRuntimeView: React.FC<LocalRuntimeViewProps> = ({ onBack, onAg
         metadata: { endpoint: endpointClean },
       }).catch(async () => ({ connection_id: connectionId }) as { connection_id: string });
 
-      const agentId = slugify(agentClean) || connectionId;
+      const agentId = `${slugify(runtimeClean)}-agent`;
       await createConnectedAgent({
         agent_id: agentId,
-        display_name: agentClean,
+        display_name: runtimeClean,
         connection_id: connection.connection_id,
         capabilities: [],
       });
@@ -131,17 +129,6 @@ export const LocalRuntimeView: React.FC<LocalRuntimeViewProps> = ({ onBack, onAg
             required
           />
         </label>
-        <label className="connect-form-field">
-          <span>Agent name</span>
-          <input
-            type="text"
-            value={agentName}
-            onChange={(e) => setAgentName(e.target.value)}
-            placeholder="e.g. local-llama"
-            disabled={submitting}
-            required
-          />
-        </label>
         {error && (
           <p className="connect-error-text" role="alert">
             {error}
@@ -149,7 +136,7 @@ export const LocalRuntimeView: React.FC<LocalRuntimeViewProps> = ({ onBack, onAg
         )}
         <div className="connect-form-actions">
           <button type="submit" className="btn-connect-agent" disabled={submitting}>
-            {submitting ? <Loader2 size={13} className="spin" /> : 'Save connection'}
+            {submitting ? <Loader2 size={13} className="spin" /> : 'Connect'}
           </button>
         </div>
       </form>

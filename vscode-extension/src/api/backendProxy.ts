@@ -73,6 +73,10 @@ function isSseUnsubscribeMessage(message: unknown): message is SseUnsubscribeMes
 export class BackendProxy {
   private readonly activeStreams = new Map<string, AbortController>();
 
+  public constructor() {
+    Logger.info(`Backend proxy initialized (target: ${BACKEND_BASE_URL})`);
+  }
+
   /** Returns true if the message was a backend-proxy message and was handled. */
   public handleMessage(message: unknown, webview: vscode.Webview): boolean {
     if (isApiRequestMessage(message)) {

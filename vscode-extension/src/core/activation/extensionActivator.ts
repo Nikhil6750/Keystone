@@ -32,6 +32,7 @@ export class ExtensionActivator {
     );
     context.subscriptions.push(sidebarDisposable);
     ExtensionLifecycle.register(sidebarDisposable);
+    Logger.info(`Sidebar view provider registered (${SidebarViewProvider.viewType})`);
 
     // Status Bar
     const statusBar = new KeystoneStatusBarItem();

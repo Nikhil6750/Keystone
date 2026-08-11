@@ -51,11 +51,12 @@
     "compile": "tsc -p ./",
     "watch": "tsc -w -p ./",
     "build:webview": "npm --prefix webview run build",
-    "build:extension": "tsc -p ./",
+    "build:extension": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p ./",
     "build": "npm run build:webview && npm run build:extension",
     "package": "npm run build && vsce package",
     "install:vscode": "powershell -ExecutionPolicy Bypass -File scripts/install-vscode.ps1",
-    "typecheck": "tsc -p ./ && npm --prefix webview run typecheck"
+    "typecheck": "tsc -p ./ && npm --prefix webview run typecheck",
+    "test": "npm --prefix webview run test"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

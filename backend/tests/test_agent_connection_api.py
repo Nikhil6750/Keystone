@@ -81,7 +81,11 @@ async def test_verify_response_includes_supported_capabilities(client: AsyncClie
     response = await client.post("/api/v1/agents/demo/verify")
 
     assert response.status_code == 200
-    assert response.json()["capabilities"] == ["workflow_step_execution"]
+    # Derived from `STATIC_AGENT_DESCRIPTORS` (the same declaration the
+    # Router's own eligibility check reads) rather than a separate, thinner
+    # capability table -- see `app.services.agent_availability
+    # .capabilities_for`.
+    assert response.json()["capabilities"] == ["code_generation", "general_reasoning"]
 
 
 async def test_duplicate_concurrent_verification_returns_409(

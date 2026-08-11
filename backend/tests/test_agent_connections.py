@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from app.api.deps import (
     get_agent_connection_repository,
     get_connected_agent_repository,
+    get_executor_registry,
 )
 from app.contracts.enums import AgentCapability, AgentStatus
 from app.contracts.planning import TaskSpec
@@ -65,6 +66,13 @@ def client(
     conn_repo, agent_repo = fresh_repos
     app.dependency_overrides[get_agent_connection_repository] = lambda: conn_repo
     app.dependency_overrides[get_connected_agent_repository] = lambda: agent_repo
+    # `create_connected_agent` aliases an installed-runtime agent's executor
+    # into the live `ExecutorRegistry` (Stage 8C.3 Connect Agent) -- this
+    # fixture predates that and never ran the app lifespan that would
+    # otherwise populate `app.state.executor_registry`, so it needs its own
+    # isolated registry override here, same as the shared `conftest.py`
+    # `client` fixture already does for every other route that needs one.
+    app.dependency_overrides[get_executor_registry] = lambda: ExecutorRegistry()
     test_client = TestClient(app)
     yield test_client
     app.dependency_overrides.clear()

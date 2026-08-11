@@ -2,7 +2,7 @@
   "name": "keystone-vscode-extension",
   "displayName": "Keystone AI Orchestrator",
   "description": "Keystone AI Agent Orchestration Platform - VS Code Extension Foundation",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "keystone-ai",
   "repository": {
     "type": "git",

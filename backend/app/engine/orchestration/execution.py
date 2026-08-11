@@ -55,6 +55,7 @@ from app.engine.orchestration.events import (
 )
 from app.engine.orchestration.models import OrchestrationRequest, OrchestrationResult
 from app.engine.orchestration.service import EndToEndOrchestrationService
+from app.resilience.circuit_breaker import CircuitBreakerOpenError
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,15 @@ _DEFAULT_SUBSCRIBER_QUEUE_SIZE = 200
 _SAFE_SUMMARY_EXCEPTION_TYPES: tuple[type[Exception], ...] = (
     OrchestrationPersistenceError,
     ManagerError,
+    # `WorkflowEngine.execute_workflow()`'s own documented contract: it
+    # raises this when a step's circuit was already open before its first
+    # attempt (recovery-cycle re-opens are already caught closer to the
+    # source in `service.py::_run_recovery_cycle`, producing a normal
+    # `RecoveryAction.FAIL` outcome instead of reaching here at all -- this
+    # entry is the outer safety net for the same exception type escaping
+    # any other call site). `str(exc)` is just an agent_type name, safe to
+    # surface.
+    CircuitBreakerOpenError,
 )
 
 

@@ -3,13 +3,19 @@ covering the Stage 8C.1 required scenarios (Part 10).
 """
 
 import uuid
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.contracts.enums import AgentCapability
+from app.contracts.enums import AgentCapability, BenchmarkEvaluatorType
+from app.contracts.planning import TaskSpec, WorkflowPlan
+from app.contracts.routing import RoutingRequest
+from app.contracts.verification import VerificationResult, VerificationStatus
 from app.engine.adaptive_retrieval.feedback import InMemoryRetrievalFeedbackRepository
 from app.engine.adaptive_retrieval.policy import AdaptiveRetrievalPolicy
 from app.engine.adaptive_retrieval.reranking import AdaptiveRetriever
+from app.engine.executor import StepExecutionRequest
 from app.engine.knowledge.index import KnowledgeIndex
 from app.engine.knowledge.models import KnowledgeChunk, KnowledgeDocument
 from app.engine.manager.errors import ManagerUnavailableError
@@ -17,12 +23,13 @@ from app.engine.manager.fake import FakeManagerModel
 from app.engine.manager.models import ManagerResponse, ManagerTaskProposal
 from app.engine.orchestration.models import OrchestrationOutcome, OrchestrationRequest
 from app.engine.orchestration.runtime import StaticCandidateProvider
-from app.engine.orchestration.service import EndToEndOrchestrationService
+from app.engine.orchestration.service import EndToEndOrchestrationService, _RoutingContext
 from app.engine.registry import ExecutorRegistry
 from app.engine.routing.availability import CandidateAgent
-from app.engine.verification.recovery import RecoveryAction, RecoveryPolicy
+from app.engine.verification.recovery import RecoveryAction, RecoveryDecision, RecoveryPolicy
 from app.models.enums import WorkflowStatus
 from app.persistence.service import build_event_id
+from app.resilience.circuit_breaker import CircuitBreakerRegistry, CircuitState
 from tests.support.executors import FailingExecutor, RecordingExecutor
 from tests.support.orchestration_fakes import RICH_SUCCESS_OUTPUT, build_candidate
 
@@ -377,6 +384,85 @@ async def test_runtime_failure_produces_correct_outcome(db_session: Session) -> 
 
     assert result.outcome == OrchestrationOutcome.RUNTIME_FAILURE
     assert result.final_workflow_state == WorkflowStatus.FAILED
+
+
+# --- Regression: circuit breaker opening during recovery is a safe stop, ----
+# --- never an unhandled exception (Stage 8C.3 usability hardening) ----------
+
+
+async def test_run_recovery_cycle_returns_none_on_circuit_breaker_open_not_a_crash(
+    db_session: Session,
+) -> None:
+    """Directly exercises `_run_recovery_cycle` with the breaker for its
+    target agent type already open (e.g. tripped moments earlier by a
+    different task, or a previous orchestration sharing the same
+    process-wide `CircuitBreakerRegistry`): `engine.execute_workflow()`'s
+    very first `before_call()` check raises `CircuitBreakerOpenError`
+    before the executor is ever invoked. Previously this propagated
+    uncaught out of `_run_recovery_cycle`, reported as a bare
+    "CircuitBreakerOpenError: an unexpected internal error occurred"
+    instead of the same bounded `None` ("cannot recover right now")
+    return every other cause already produces here (see `reroute()`
+    finding no eligible candidate, just above)."""
+
+    class _NeverCalledExecutor:
+        def execute(self, request: StepExecutionRequest) -> dict[str, Any]:
+            raise AssertionError("must never be called -- the breaker is already open")
+
+    registry = ExecutorRegistry()
+    registry.register("demo", _NeverCalledExecutor())
+    breakers = CircuitBreakerRegistry(failure_threshold=1, recovery_timeout_seconds=999)
+    breakers.get_or_create("demo").record_failure()
+    assert breakers.get_or_create("demo").snapshot().state == CircuitState.OPEN
+
+    service = _service(
+        db_session,
+        registry=registry,
+        candidates=[build_candidate("demo")],
+        circuit_breakers=breakers,
+    )
+
+    task = TaskSpec(key="t1", name="task one", task_type="code_generation")
+    plan = WorkflowPlan(
+        plan_id="plan-regress-1", goal="goal", tasks=[task], created_at=datetime.now(UTC)
+    )
+    step_id = "step-1"
+    results = {
+        step_id: VerificationResult(
+            verification_id="v1",
+            workflow_id="wf-1",
+            step_id=step_id,
+            status=VerificationStatus.FAILED,
+            evaluator_type=BenchmarkEvaluatorType.UNIT_TEST,
+            failure_reason="insufficient",
+            created_at=datetime.now(UTC),
+        )
+    }
+    routing_context_by_task_key = {
+        "t1": _RoutingContext(
+            request=RoutingRequest(task_type="code_generation"),
+            candidates=[build_candidate("demo")],
+        )
+    }
+    decision = RecoveryDecision(
+        action=RecoveryAction.RETRY_SAME,
+        reason="verification failed",
+        attempt_number=1,
+        verification_status=VerificationStatus.FAILED,
+    )
+
+    # Must not raise -- returns None, exactly like every other "cannot
+    # recover right now" cause this method already handles.
+    cycle = service._run_recovery_cycle(  # noqa: SLF001 - intentional white-box test
+        plan,
+        {step_id: task},
+        results,
+        {"t1": "demo"},
+        routing_context_by_task_key,
+        decision,
+        attempt_number=1,
+    )
+    assert cycle is None
 
 
 # --- 15. Timeout classification ----------------------------------------------

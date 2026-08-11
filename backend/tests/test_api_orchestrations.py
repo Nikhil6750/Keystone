@@ -17,6 +17,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
+from sqlalchemy.pool import StaticPool
 
 from app.api.deps import get_orchestration_execution_coordinator, get_orchestration_execution_store
 from app.database.base import Base
@@ -44,7 +45,14 @@ _TERMINAL_EVENT_TYPES = {"execution.completed", "execution.failed", "execution.c
 
 @pytest.fixture
 def api_db_engine() -> Engine:
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    # `StaticPool` is required for an in-memory SQLite engine used across
+    # threads -- see the identical fixture/comment in
+    # `test_orchestration_execution.py::healthy_db_engine`.
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     enable_sqlite_foreign_keys(engine)
     Base.metadata.create_all(bind=engine)
     return engine

@@ -15,6 +15,12 @@ class StepExecutionRequest:
     step_input: dict[str, Any]
     workflow_input: dict[str, Any]
     previous_step_outputs: dict[str, dict[str, Any]]
+    # Already-validated absolute directory a real local-CLI executor's
+    # subprocess runs in (see `app.adapters.workspace.validate_workspace_root`
+    # and `OrchestrationRequest.workspace_root`) -- `None` falls back to an
+    # ephemeral, auto-deleted temp directory (see `SubprocessRunner`),
+    # never derived from prompt/goal text.
+    workspace_root: str | None = None
 
 
 class StepExecutionError(Exception):

@@ -26,6 +26,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.adapters.workspace import WorkspaceValidationError, validate_workspace_root
 from app.contracts.adapter import RepositoryMetadata
 from app.contracts.enums import AgentCapability
 from app.contracts.routing import RoutingConstraints
@@ -48,10 +49,13 @@ def _not_blank(value: str, field_name: str) -> str:
 class OrchestrationRequest(BaseModel):
     """One bounded, provider-neutral request to run a developer goal
     through the full Keystone pipeline. Contains only what the wired
-    subsystems actually need -- no raw secrets, credentials, absolute
-    filesystem paths, or unbounded collections (the same discipline
-    `ManagerRequest` already enforces for the fields this type shares with
-    it)."""
+    subsystems actually need -- no raw secrets, credentials, or unbounded
+    collections (the same discipline `ManagerRequest` already enforces for
+    the fields this type shares with it). `workspace_root` is the one
+    deliberate exception to "no absolute filesystem paths": a real local-
+    CLI agent step needs *some* directory to actually work in (Stage
+    8C.3), and this is the only source for it -- an executor's subprocess
+    cwd is never derived from `goal` or any other free-text field."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -64,6 +68,7 @@ class OrchestrationRequest(BaseModel):
     routing_constraints: RoutingConstraints = Field(default_factory=RoutingConstraints)
     recovery_context: ManagerRecoveryContext | None = None
     knowledge_query: str | None = None
+    workspace_root: str | None = None
 
     @field_validator("request_id")
     @classmethod
@@ -72,6 +77,16 @@ class OrchestrationRequest(BaseModel):
         if len(value) > MAX_IDENTIFIER_LENGTH:
             raise ValueError(f"request_id must not exceed {MAX_IDENTIFIER_LENGTH} characters")
         return value
+
+    @field_validator("workspace_root")
+    @classmethod
+    def _workspace_root_valid(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        try:
+            return validate_workspace_root(value)
+        except WorkspaceValidationError as exc:
+            raise ValueError(str(exc)) from exc
 
     @field_validator("goal")
     @classmethod

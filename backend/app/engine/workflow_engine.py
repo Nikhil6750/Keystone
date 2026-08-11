@@ -155,9 +155,11 @@ class WorkflowEngine:
         auto_compensate_on_failure: bool = False,
         learning_persistence: LearningPersistenceService | None = None,
         verification_resolver: VerificationResolver | None = None,
+        workspace_root: str | None = None,
     ) -> None:
         self._db = db
         self._registry = registry
+        self._workspace_root = workspace_root
         self._circuit_breakers = circuit_breakers or CircuitBreakerRegistry(
             failure_threshold=_DEFAULT_FAILURE_THRESHOLD,
             recovery_timeout_seconds=_DEFAULT_RECOVERY_TIMEOUT_SECONDS,
@@ -590,6 +592,7 @@ class WorkflowEngine:
                     step_input=dict(step.input_payload),
                     workflow_input=context.workflow_input,
                     previous_step_outputs=context.previous_step_outputs,
+                    workspace_root=self._workspace_root,
                 )
                 output = _ensure_json_compatible(executor.execute(request))
             except StepExecutionError as exc:

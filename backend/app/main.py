@@ -16,6 +16,7 @@ from app.api.routes.audit import router as audit_router
 from app.api.routes.health import router as health_router
 from app.api.routes.orchestrations import router as orchestrations_router
 from app.api.routes.resilience import router as resilience_router
+from app.api.routes.runtime_connections import router as runtime_connections_router
 from app.api.routes.workflows import router as workflows_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
@@ -162,6 +163,7 @@ app.include_router(resilience_router, prefix="/api/v1")
 app.include_router(audit_router, prefix="/api/v1")
 app.include_router(orchestrations_router, prefix="/api/v1")
 app.include_router(agent_connections_router, prefix="/api/v1")
+app.include_router(runtime_connections_router, prefix="/api/v1")
 
 
 @app.get("/")

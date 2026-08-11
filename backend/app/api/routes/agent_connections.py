@@ -1,10 +1,13 @@
 """FastAPI routes for Stage 8C.3A Agent Connections & Connected Agents."""
 
+import logging
+
 from fastapi import APIRouter, Depends, status
 
 from app.api.deps import (
     get_agent_connection_repository,
     get_connected_agent_repository,
+    get_executor_registry,
 )
 from app.engine.connections.exceptions import (
     AgentNotFoundError,
@@ -17,13 +20,60 @@ from app.engine.connections.models import (
     ConnectedAgent,
     ConnectedAgentCreate,
     ConnectedAgentUpdate,
+    ConnectionKind,
 )
 from app.engine.connections.repository import (
     AgentConnectionRepository,
     ConnectedAgentRepository,
 )
+from app.engine.registry import ExecutorNotRegisteredError, ExecutorRegistry
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["agent-connections"])
+
+
+def _alias_executor_for_installed_runtime_agent(
+    agent: ConnectedAgent,
+    conn: AgentConnection,
+    registry: ExecutorRegistry,
+) -> None:
+    """For an `installed_runtime` connection whose underlying
+    `provider_or_runtime` already has a live executor registered (via
+    startup config or `POST /runtime-connections/{id}/activate`), makes
+    that same executor instance reachable under the new agent's own
+    `agent_id` too.
+
+    This is the one missing link between "a ConnectedAgent identity exists"
+    and "the Router can actually route to it": `ExecutorRegistry` is keyed
+    by whatever string the caller asks for, and the orchestration engine
+    looks up `registry.get(selected_agent_type)` using the *agent's* id
+    (`app.engine.workflow_engine`), not the canonical runtime name -- so
+    without this alias, a dynamic agent like `claude-work` would never be
+    executable even though `claude_code` itself is registered. A missing
+    or not-yet-activated runtime is not an error here: the agent identity
+    still gets created (Connection != Agent), it just is not yet
+    executable, exactly like every other connection kind without a live
+    executor.
+    """
+    if conn.connection_kind != ConnectionKind.INSTALLED_RUNTIME:
+        return
+    try:
+        underlying_executor = registry.get(conn.provider_or_runtime)
+    except ExecutorNotRegisteredError:
+        logger.info(
+            "connected_agent_executor_alias_skipped agent_id=%s provider_or_runtime=%s "
+            "reason=runtime_not_activated",
+            agent.agent_id,
+            conn.provider_or_runtime,
+        )
+        return
+    registry.register(agent.agent_id, underlying_executor, replace=True)
+    logger.info(
+        "connected_agent_executor_aliased agent_id=%s provider_or_runtime=%s",
+        agent.agent_id,
+        conn.provider_or_runtime,
+    )
 
 
 @router.post(
@@ -106,9 +156,21 @@ def create_connected_agent(
     data: ConnectedAgentCreate,
     conn_repo: AgentConnectionRepository = Depends(get_agent_connection_repository),  # noqa: B008
     agent_repo: ConnectedAgentRepository = Depends(get_connected_agent_repository),  # noqa: B008
+    registry: ExecutorRegistry = Depends(get_executor_registry),  # noqa: B008
 ) -> ConnectedAgent:
-    """Registers a new connected agent identity referencing a valid connection_id."""
-    return agent_repo.register(data, conn_repo)
+    """Registers a new connected agent identity referencing a valid connection_id.
+
+    For an `installed_runtime` connection whose runtime is already
+    activated, also makes the agent immediately executable by the Router
+    (see `_alias_executor_for_installed_runtime_agent`) -- otherwise the
+    identity is still created, just not yet executable, same as any other
+    connection kind.
+    """
+    agent = agent_repo.register(data, conn_repo)
+    conn = conn_repo.get(agent.connection_id)
+    if conn is not None:
+        _alias_executor_for_installed_runtime_agent(agent, conn, registry)
+    return agent
 
 
 @router.get(

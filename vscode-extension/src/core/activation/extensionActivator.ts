@@ -24,7 +24,7 @@ export class ExtensionActivator {
     // down and remounting it -- which would otherwise re-issue every
     // initial-load request (e.g. GET /connected-agents) on every visibility
     // toggle, not just once per real session.
-    const sidebarProvider = new SidebarViewProvider(context.extensionUri);
+    const sidebarProvider = new SidebarViewProvider(context.extensionUri, context.secrets);
     const sidebarDisposable = vscode.window.registerWebviewViewProvider(
       SidebarViewProvider.viewType,
       sidebarProvider,

@@ -15,7 +15,7 @@ const REQUEST_TIMEOUT_MS = 15000;
 interface ApiRequestMessage {
   type: 'KEYSTONE_API_REQUEST';
   requestId: string;
-  method: 'GET' | 'POST';
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   path: string;
   body?: unknown;
 }

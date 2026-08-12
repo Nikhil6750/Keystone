@@ -122,7 +122,7 @@ class Settings(BaseSettings):
             "--json",
             "--ephemeral",
             "--sandbox",
-            "read-only",
+            "workspace-write",
             "--skip-git-repo-check",
         ],
         validation_alias="KEYSTONE_CODEX_ARGUMENTS",

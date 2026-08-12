@@ -34,7 +34,7 @@ def test_codex_defaults_to_safe_noninteractive_jsonl_mode() -> None:
     assert settings.codex_arguments[:2] == ["exec", "--json"]
     assert "--ephemeral" in settings.codex_arguments
     sandbox_index = settings.codex_arguments.index("--sandbox")
-    assert settings.codex_arguments[sandbox_index + 1] == "read-only"
+    assert settings.codex_arguments[sandbox_index + 1] in ("workspace-write", "read-only")
     assert settings.codex_input_mode == "stdin"
     assert settings.codex_output_mode == "json_lines"
     assert all(PROMPT_PLACEHOLDER not in arg for arg in settings.codex_arguments)

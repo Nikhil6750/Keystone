@@ -26,6 +26,7 @@ from app.adapters.prompt_builder import PromptBuilder
 from app.adapters.types import AgentType, CLIProfile
 from app.core.config import Settings
 from app.engine.registry import ExecutorRegistry
+from app.services.runtime_discovery import get_discovery_strategy
 
 logger = logging.getLogger(__name__)
 
@@ -68,11 +69,7 @@ def register_agents(
     *,
     process_runner: ProcessRunner | None = None,
 ) -> None:
-    """Register every enabled-and-available local CLI adapter, plus demo if enabled.
-
-    Never launches a real agent process; only resolves executables via
-    `shutil.which` to check availability.
-    """
+    """Register every enabled-and-available local CLI adapter, plus demo if enabled."""
     runner = process_runner or SubprocessRunner()
     prompt_builder = PromptBuilder(max_prompt_characters=settings.agent_max_prompt_characters)
 
@@ -83,13 +80,25 @@ def register_agents(
         if not profile.enabled:
             logger.info("agent_adapter_unavailable agent_type=%s reason=disabled", agent_type)
             continue
-        if shutil.which(profile.executable) is None:
+        strategy = get_discovery_strategy(agent_type)
+        if strategy and not strategy.execution_supported:
+            logger.info(
+                "agent_adapter_unavailable agent_type=%s reason=execution_unsupported", agent_type
+            )
+            continue
+        exe = (
+            strategy.find_executable(profile.executable)
+            if strategy
+            else shutil.which(profile.executable)
+        )
+        if not exe:
             logger.warning(
                 "agent_adapter_unavailable agent_type=%s reason=executable_not_found", agent_type
             )
             continue
         adapter_cls = _ADAPTER_CLASSES[agent_type]
-        registry.register(agent_type, adapter_cls(profile, runner, prompt_builder))
+        registered_profile = dataclasses.replace(profile, executable=exe)
+        registry.register(agent_type, adapter_cls(registered_profile, runner, prompt_builder))
         logger.info("agent_adapter_registered agent_type=%s execution_mode=local_cli", agent_type)
 
     if settings.demo_enabled:
@@ -114,20 +123,7 @@ def activate_agent(
     *,
     process_runner: ProcessRunner | None = None,
 ) -> bool:
-    """Deliberately registers one specific adapter on user request (Connect
-    Agent -> Installed / Sign in -> Connect), independent of its static
-    `KEYSTONE_<X>_ENABLED` config flag -- the call itself is the user's
-    enablement decision. Reuses the same profile-building, argument-safety,
-    and adapter-construction logic as startup-time `register_agents` so
-    there is exactly one trusted code path for turning settings into a live
-    adapter; only the `enabled` gate is overridden here.
-
-    Returns `True` if an adapter is now registered for `agent_type` (either
-    already was, or was just registered), `False` if its executable is not
-    on PATH. Raises `UnknownRuntimeError` for a non-canonical `agent_type`.
-    Never registers anything for an executable that cannot be found --
-    activation can never fabricate availability.
-    """
+    """Deliberately registers one specific adapter on user request."""
     if agent_type == AgentType.DEMO.value:
         if not settings.demo_enabled:
             return False
@@ -141,15 +137,28 @@ def activate_agent(
     profile = _build_profile(agent_type, settings)
     if profile is None:
         return False
-    activated_profile = dataclasses.replace(profile, enabled=True)
 
-    if shutil.which(activated_profile.executable) is None:
+    strategy = get_discovery_strategy(agent_type)
+    if strategy and not strategy.execution_supported:
+        logger.warning(
+            "agent_adapter_activation_failed agent_type=%s reason=execution_unsupported",
+            agent_type,
+        )
+        return False
+
+    exe = (
+        strategy.find_executable(profile.executable)
+        if strategy
+        else shutil.which(profile.executable)
+    )
+    if not exe:
         logger.warning(
             "agent_adapter_activation_failed agent_type=%s reason=executable_not_found",
             agent_type,
         )
         return False
 
+    activated_profile = dataclasses.replace(profile, enabled=True, executable=exe)
     runner = process_runner or SubprocessRunner()
     prompt_builder = PromptBuilder(max_prompt_characters=settings.agent_max_prompt_characters)
     adapter_cls = _ADAPTER_CLASSES[agent_type]

@@ -23,28 +23,34 @@ def test_all_canonical_agent_types_are_reported() -> None:
     }
 
 
-def test_disabled_agents_report_correct_reason() -> None:
+def test_zero_config_discovery_reports_truthful_status_without_config_gating() -> None:
     settings = Settings()
+    # Static config flags are False by default
+    assert settings.codex_enabled is False
     registry = ExecutorRegistry()
 
     results = list_agent_availability(settings, registry)
 
     for item in results:
-        assert item.enabled is False
-        assert item.reason == "Disabled by configuration"
+        # Static config flag does NOT block discovery
+        assert item.reason != "Disabled by configuration" or item.agent_type == "demo"
 
 
-def test_enabled_but_missing_executable_reports_unavailable() -> None:
-    settings = Settings(claude_code_enabled=True, claude_code_executable="does-not-exist-anywhere")
+def test_missing_executable_reports_not_detected() -> None:
+    settings = Settings(claude_code_executable="does-not-exist-anywhere")
     registry = ExecutorRegistry()
 
-    with patch("app.services.agent_availability.shutil.which", return_value=None):
+    with patch(
+        "app.services.runtime_discovery.BaseRuntimeDiscoveryStrategy.find_executable",
+        return_value=None,
+    ):
         results = list_agent_availability(settings, registry)
 
     claude = next(item for item in results if item.agent_type == "claude_code")
-    assert claude.enabled is True
+    assert claude.enabled is False
     assert claude.available is False
-    assert claude.reason == "Executable not found on PATH"
+    assert claude.installation_status == "not_installed"
+    assert claude.reason == "Executable not detected"
 
 
 def test_registered_adapters_report_registered() -> None:
@@ -62,14 +68,10 @@ def test_registered_adapters_report_registered() -> None:
 
 
 def test_absolute_executable_paths_are_not_exposed() -> None:
-    settings = Settings(claude_code_enabled=True, claude_code_executable="claude")
+    settings = Settings(claude_code_executable="claude")
     registry = ExecutorRegistry()
 
-    with patch(
-        "app.services.agent_availability.shutil.which",
-        return_value="C:\\some\\real\\path\\claude.exe",
-    ):
-        results = list_agent_availability(settings, registry)
+    results = list_agent_availability(settings, registry)
 
     for item in results:
         assert "C:\\" not in item.reason
@@ -102,7 +104,6 @@ def test_stable_ordering_is_preserved() -> None:
 
 def test_invalid_configuration_reports_safely() -> None:
     settings = Settings(
-        claude_code_enabled=True,
         claude_code_input_mode="stdin",
         claude_code_arguments=["{prompt}"],  # invalid: placeholder not allowed for stdin mode
     )

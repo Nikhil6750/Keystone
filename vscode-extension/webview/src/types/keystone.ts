@@ -36,6 +36,8 @@ export interface DetectedRuntime {
   version: string | null;
   last_checked_at: string | null;
   capabilities: string[];
+  product_kind?: string;
+  execution_supported?: boolean;
 }
 
 /** Mirrors `POST /runtime-connections/{runtime_id}/activate`
@@ -54,6 +56,8 @@ export interface RuntimeActivationResult {
   last_checked_at: string | null;
   reason: string;
   capabilities: string[];
+  product_kind?: string;
+  execution_supported?: boolean;
 }
 
 export type ConnectionKind = 'installed_runtime' | 'api' | 'local' | 'custom';

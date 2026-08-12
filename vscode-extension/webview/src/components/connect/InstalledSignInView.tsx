@@ -23,12 +23,6 @@ type Step =
   | { kind: 'connecting'; runtime: DetectedRuntime }
   | { kind: 'done'; runtime: DetectedRuntime; agentId: string };
 
-/**
- * Runtime identities Keystone never surfaces as a normal "connect this"
- * option: a demo/simulation adapter is developer-only, not a real agent a
- * user came here to connect. Backend-driven exclusion by design (no static
- * per-vendor branch) -- this is the one, deliberately narrow exception.
- */
 const HIDDEN_RUNTIME_TYPES = new Set(['demo']);
 
 function suggestAgentId(runtimeType: string, taken: Set<string>): string {
@@ -39,23 +33,6 @@ function suggestAgentId(runtimeType: string, taken: Set<string>): string {
   return `${base}-${n}`;
 }
 
-/**
- * Installed/subscription runtime connector -- the one Connect Agent
- * category backed by a real, end-to-end connector (Stage 8C.3): discovery
- * (`GET /api/v1/agents`), deliberate activation (`POST /runtime-
- * connections/{id}/activate`), connection creation, and Keystone agent
- * identity creation, all against the real backend. Never fabricates
- * availability -- a runtime not found on PATH always reads "Not detected,"
- * never a fake "Connect" affordance.
- *
- * One click, no naming screen: `connection_id`/`agent_id`/`display_name`
- * are all derived deterministically from the runtime's own id
- * (`suggestAgentId`) -- Connection and Agent still exist as separate
- * backend entities (Connection != Agent), just never surfaced to the user
- * during this normal flow. Power users who want a custom name/second
- * identity on the same connection belong behind a future Advanced ->
- * Agent profiles surface, not here.
- */
 export const InstalledSignInView: React.FC<InstalledSignInViewProps> = ({
   onBack,
   onAgentsChanged,
@@ -94,6 +71,11 @@ export const InstalledSignInView: React.FC<InstalledSignInViewProps> = ({
         setStep({ kind: 'list' });
         return;
       }
+      if (activation.execution_supported === false) {
+        setActionError(`${runtime.display_name} is installed as an IDE but does not expose a supported headless execution interface.`);
+        setStep({ kind: 'list' });
+        return;
+      }
 
       const connectionId = `${runtime.agent_type}-local`;
       let connection = connections.find((c) => c.connection_id === connectionId) ?? null;
@@ -107,10 +89,6 @@ export const InstalledSignInView: React.FC<InstalledSignInViewProps> = ({
           });
           setConnections((prev) => [...prev, connection as AgentConnection]);
         } catch {
-          // Idempotent: another connect attempt may have just created the
-          // same connection_id first. Re-fetch rather than treat this as
-          // a hard failure -- Stage 8C.3 requires "duplicate connection
-          // != fatal backend-unavailable state."
           const refreshed = await fetchAgentConnections();
           setConnections(refreshed);
           connection = refreshed.find((c) => c.connection_id === connectionId) ?? null;
@@ -130,10 +108,6 @@ export const InstalledSignInView: React.FC<InstalledSignInViewProps> = ({
           capabilities: runtime.capabilities,
         });
       } catch {
-        // Extremely unlikely (another connect attempt racing the same
-        // suggested id) -- retry once with the next deterministic suffix
-        // rather than surface a raw "already exists" error for a screen
-        // the user never typed an id into.
         agentId = suggestAgentId(runtime.agent_type, new Set([...taken, agentId]));
         await createConnectedAgent({
           agent_id: agentId,
@@ -238,6 +212,25 @@ const RuntimeRow: React.FC<{
   onConnect: () => void;
 }> = ({ runtime, busy, disabled, onConnect }) => {
   const installed = runtime.installation_status === 'installed';
+  const executionSupported = runtime.execution_supported !== false;
+
+  let statusLabel = 'Installed';
+  if (installed) {
+    if (!executionSupported) {
+      statusLabel = 'Installed · Execution adapter unavailable';
+    } else if (runtime.authentication_status === 'authenticated') {
+      statusLabel = 'Installed · Authenticated';
+    } else if (runtime.authentication_status === 'unauthenticated') {
+      statusLabel = 'Installed · Sign in required';
+    }
+  }
+
+  let buttonLabel = 'Connect';
+  if (!executionSupported) {
+    buttonLabel = 'Execution adapter unavailable';
+  } else if (runtime.authentication_status === 'unauthenticated') {
+    buttonLabel = 'Sign in';
+  }
 
   return (
     <li className="runtime-row">
@@ -246,7 +239,7 @@ const RuntimeRow: React.FC<{
         {installed ? (
           <span className="runtime-row-status runtime-row-status-ok">
             <CheckCircle2 size={12} />
-            {runtime.authentication_status === 'authenticated' ? 'Installed · Signed in' : 'Installed'}
+            {statusLabel}
           </span>
         ) : (
           <span className="runtime-row-status runtime-row-status-missing">
@@ -255,8 +248,13 @@ const RuntimeRow: React.FC<{
         )}
       </div>
       {installed ? (
-        <button type="button" className="btn-connect-runtime" disabled={disabled} onClick={onConnect}>
-          {busy ? <Loader2 size={13} className="spin" /> : 'Connect'}
+        <button
+          type="button"
+          className="btn-connect-runtime"
+          disabled={disabled || !executionSupported}
+          onClick={onConnect}
+        >
+          {busy ? <Loader2 size={13} className="spin" /> : buttonLabel}
         </button>
       ) : null}
     </li>

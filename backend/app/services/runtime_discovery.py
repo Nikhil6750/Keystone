@@ -298,8 +298,8 @@ class AntigravityDiscoveryStrategy(BaseRuntimeDiscoveryStrategy):
                 ("Programs", "Antigravity IDE", "Antigravity IDE.exe"),
                 ("Programs", "antigravity", "antigravity.exe"),
             ],
-            product_kind="ide",
-            execution_supported=False,
+            product_kind="agent_cli",
+            execution_supported=True,
             supports_sign_in=False,
         )
 
@@ -321,12 +321,10 @@ class AntigravityDiscoveryStrategy(BaseRuntimeDiscoveryStrategy):
                 reason="Executable not detected on PATH or well-known locations",
             )
 
-        is_agy_cli = (
-            exe.endswith("agy")
-            or exe.endswith("agy.exe")
-            or exe.endswith("agy.cmd")
-            or exe == "mock"
-        )
+        exe_lower = exe.lower()
+        is_ide_launcher = "ide" in exe_lower or "antigravity.exe" in exe_lower
+        is_agy_cli = "agy" in exe_lower or exe_lower == "mock" or not is_ide_launcher
+
         product_kind = "agent_cli" if is_agy_cli else "ide"
         execution_supported = is_agy_cli
 

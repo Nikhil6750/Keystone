@@ -51,7 +51,10 @@ def test_gemini_discovery_strategy_separate_from_antigravity():
     assert gemini_strat is not None
     assert antigravity_strat.runtime_type != gemini_strat.runtime_type
     assert antigravity_strat.display_name != gemini_strat.display_name
-    assert antigravity_strat.product_kind != gemini_strat.product_kind
+
+    antigravity_disc = antigravity_strat.discover()
+    gemini_disc = gemini_strat.discover()
+    assert antigravity_disc.runtime_type != gemini_disc.runtime_type
 
 
 def test_find_executable_custom_path_override(tmp_path: Path):

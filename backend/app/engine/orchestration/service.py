@@ -112,6 +112,7 @@ from app.engine.orchestration.events import (
     OrchestrationEventSink,
     OrchestrationEventType,
 )
+from app.engine.orchestration.evidence_collector import WorkspaceEvidenceCollector
 from app.engine.orchestration.knowledge_adapter import (
     build_manager_knowledge_context,
     build_retrieval_observation,
@@ -653,13 +654,32 @@ class EndToEndOrchestrationService:
     def _make_verification_resolver(
         self, step_to_task: dict[str, TaskSpec], results_out: dict[str, VerificationResult]
     ) -> Callable[[WorkflowStep, StepAttempt], VerificationStatus | None]:
+        # Only ever constructed when a real, validated `workspace_root` is
+        # present (Stage 8C.3 P1 fix) -- every existing caller/test that
+        # never sets `OrchestrationRequest.workspace_root` sees zero
+        # behavior change, since `evidence_collector` then stays `None` and
+        # `build_observed_outcome` receives exactly the executor's own
+        # `output_payload`, unmodified, just as before.
+        evidence_collector = (
+            WorkspaceEvidenceCollector(self._workspace_root)
+            if self._workspace_root is not None
+            else None
+        )
+
         def resolver(step: WorkflowStep, attempt: StepAttempt) -> VerificationStatus | None:
             if attempt.status != AttemptStatus.SUCCEEDED:
                 return None
             task = step_to_task.get(step.id)
             if task is None or task.expected_outcome is None:
                 return None
-            observed = build_observed_outcome(attempt.output_payload)
+            payload = dict(attempt.output_payload) if attempt.output_payload else {}
+            if evidence_collector is not None:
+                # "if trustworthy structured evidence already present:
+                # consume it; else if real workspace execution: collect
+                # objective evidence" -- `collect()` never overwrites a key
+                # `payload` already has.
+                payload.update(evidence_collector.collect(task.expected_outcome, payload))
+            observed = build_observed_outcome(payload)
             result = verify_one(
                 task.expected_outcome,
                 observed,

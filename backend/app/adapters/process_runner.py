@@ -50,8 +50,16 @@ class ProcessRunner(Protocol):
         timeout_seconds: float,
         max_output_characters: int,
         env_overrides: dict[str, str] | None = None,
+        cwd: str | None = None,
     ) -> ProcessResult:
         """Run `executable` with `arguments`, returning its result on success.
+
+        `cwd`, when given, must already exist and is used as-is -- never
+        created or deleted by this call (the caller, e.g. a real coding
+        agent step, owns that directory's lifetime; typically the user's
+        own VS Code workspace). `None` (the default -- verification/auth-
+        check calls that do no real project work) falls back to a fresh,
+        isolated temp directory that this call creates and deletes itself.
 
         Raises `AgentUnavailableError` if the executable cannot be resolved,
         `AgentTimeoutError` if it exceeds `timeout_seconds`, `AgentProcessError`
@@ -120,6 +128,7 @@ class SubprocessRunner:
         timeout_seconds: float,
         max_output_characters: int,
         env_overrides: dict[str, str] | None = None,
+        cwd: str | None = None,
     ) -> ProcessResult:
         resolved = shutil.which(executable)
         if resolved is None:
@@ -128,7 +137,14 @@ class SubprocessRunner:
         command = [resolved, *arguments]
         env = _restricted_environment(env_overrides)
 
-        work_dir = tempfile.mkdtemp(prefix="keystone-agent-")
+        # A real, already-validated caller-supplied directory (typically
+        # the user's own VS Code workspace) is used as-is and left alone
+        # afterward -- only the fallback temp directory this call creates
+        # itself is ever cleaned up. Without this, every real coding-agent
+        # call ran (and its output vanished) inside a directory nothing
+        # could ever inspect afterward.
+        work_dir = cwd if cwd is not None else tempfile.mkdtemp(prefix="keystone-agent-")
+        owns_work_dir = cwd is None
         try:
             try:
                 if stdin_text is not None:
@@ -166,7 +182,8 @@ class SubprocessRunner:
                     f"'{executable}' failed to start: {exc.__class__.__name__}"
                 ) from exc
         finally:
-            _cleanup_temp_dir(work_dir)
+            if owns_work_dir:
+                _cleanup_temp_dir(work_dir)
 
         stdout = completed.stdout or ""
         stderr = _bound_text(completed.stderr or "", _STDERR_LIMIT)

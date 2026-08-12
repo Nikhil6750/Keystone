@@ -46,12 +46,20 @@ class LocalCLIAdapter:
 
     def execute(self, request: StepExecutionRequest) -> dict[str, Any]:
         prompt = self._prompt_builder.build(request)
-        result = self._run_process(prompt)
+        result = self._run_process(prompt, cwd=request.workspace_root)
         return self._build_result(result)
 
-    def _run_process(self, prompt: str) -> ProcessResult:
+    def _run_process(self, prompt: str, *, cwd: str | None = None) -> ProcessResult:
         """Build the argument list/stdin from the profile and invoke the
-        shared, secure `ProcessRunner` — identical for every provider."""
+        shared, secure `ProcessRunner` — identical for every provider.
+
+        `cwd` is only ever passed by `execute()` (real project work, using
+        the already-validated workspace directory the orchestration
+        request carried) -- `verify_connection()`'s own call below
+        deliberately omits it, since a harmless headless verification
+        prompt has no project to work in and should keep using an
+        ephemeral, auto-deleted directory.
+        """
         if self._profile.input_mode is InputMode.PROMPT_ARGUMENT:
             arguments = [
                 prompt if arg == PROMPT_PLACEHOLDER else arg for arg in self._profile.arguments
@@ -67,6 +75,7 @@ class LocalCLIAdapter:
             stdin_text=stdin_text,
             timeout_seconds=self._profile.timeout_seconds,
             max_output_characters=self._profile.max_output_characters,
+            cwd=cwd,
         )
 
     def _build_result(self, result: ProcessResult) -> dict[str, Any]:

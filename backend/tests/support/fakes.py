@@ -48,6 +48,7 @@ class FakeProcessRunner:
         timeout_seconds: float,
         max_output_characters: int,
         env_overrides: dict[str, str] | None = None,
+        cwd: str | None = None,
     ) -> ProcessResult:
         self.calls.append((executable, list(arguments)))
         if self.error is not None:

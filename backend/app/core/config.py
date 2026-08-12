@@ -79,8 +79,24 @@ class Settings(BaseSettings):
     claude_code_executable: str = Field(
         default="claude", validation_alias="KEYSTONE_CLAUDE_CODE_EXECUTABLE"
     )
+    # `--permission-mode acceptEdits`: verified live (Stage 8C.3) that
+    # without it, a headless `-p` call has no human to approve a Write/Edit
+    # tool call, so the CLI silently *skips the file write* while still
+    # returning `is_error: false` and a plausible-sounding text result
+    # ("The write was blocked pending your approval...") -- a real coding
+    # task would report success and produce zero files. `acceptEdits`
+    # auto-approves file create/edit operations specifically -- confirmed
+    # narrower than `--dangerously-skip-permissions`/`bypassPermissions`,
+    # which also auto-approves arbitrary Bash tool calls; this flag does
+    # not.
     claude_code_arguments: list[str] = Field(
-        default_factory=lambda: ["-p", "--output-format", "json"],
+        default_factory=lambda: [
+            "-p",
+            "--output-format",
+            "json",
+            "--permission-mode",
+            "acceptEdits",
+        ],
         validation_alias="KEYSTONE_CLAUDE_CODE_ARGUMENTS",
     )
     claude_code_input_mode: str = Field(

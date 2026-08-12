@@ -131,6 +131,51 @@ def register_exception_handlers(app: FastAPI) -> None:
             content=_envelope(APIErrorCode.ORCHESTRATION_EXECUTION_NOT_FOUND, str(exc)),
         )
 
+    from app.engine.connections.exceptions import (
+        AgentNotFoundError,
+        ConnectionHasDependentAgentsError,
+        ConnectionNotFoundError,
+        DuplicateAgentError,
+        DuplicateConnectionError,
+    )
+
+    @app.exception_handler(ConnectionNotFoundError)
+    async def _connection_not_found(_: Request, exc: ConnectionNotFoundError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=_envelope(APIErrorCode.AGENT_CONNECTION_NOT_FOUND, str(exc)),
+        )
+
+    @app.exception_handler(AgentNotFoundError)
+    async def _agent_not_found(_: Request, exc: AgentNotFoundError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=_envelope(APIErrorCode.CONNECTED_AGENT_NOT_FOUND, str(exc)),
+        )
+
+    @app.exception_handler(DuplicateConnectionError)
+    async def _duplicate_connection(_: Request, exc: DuplicateConnectionError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=_envelope(APIErrorCode.AGENT_CONNECTION_EXISTS, str(exc)),
+        )
+
+    @app.exception_handler(DuplicateAgentError)
+    async def _duplicate_agent(_: Request, exc: DuplicateAgentError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=_envelope(APIErrorCode.CONNECTED_AGENT_EXISTS, str(exc)),
+        )
+
+    @app.exception_handler(ConnectionHasDependentAgentsError)
+    async def _connection_has_dependents(
+        _: Request, exc: ConnectionHasDependentAgentsError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=_envelope(APIErrorCode.AGENT_CONNECTION_HAS_DEPENDENTS, str(exc)),
+        )
+
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
         return JSONResponse(

@@ -57,6 +57,20 @@ STATIC_AGENT_DESCRIPTORS: dict[str, AgentDescriptor] = {
             AgentCapability.REFACTORING,
             AgentCapability.TEST_GENERATION,
             AgentCapability.FILE_EDITING,
+            # Claude Code is a full agentic coding CLI: it can run a test
+            # suite as part of its own tool use (`pytest`, `npm test`, ...)
+            # and reason generally about a goal, not just generate code --
+            # both were previously missing from this declaration, which
+            # made ordinary "implement + verify" and testing-category plan
+            # templates (`app.engine.planning.templates`, both of which
+            # require `TEST_EXECUTION`) permanently unroutable to it
+            # regardless of connection status. Purely additive: never
+            # removes a capability, so it can only make more tasks
+            # routable, never fewer.
+            AgentCapability.GENERAL_REASONING,
+            AgentCapability.TEST_EXECUTION,
+            AgentCapability.PLANNING,
+            AgentCapability.DOCUMENTATION,
         ],
     ),
     AgentType.CODEX.value: AgentDescriptor(
@@ -153,11 +167,23 @@ class RegistryCandidateProvider:
                 # cannot be safely routed -- skip rather than fabricate
                 # capabilities/display metadata for it.
                 continue
+            # A dynamic Connect-Agent identity (e.g. "claude-work") is
+            # usually not itself the key the connection cache or circuit
+            # breaker were populated/tripped under -- `POST
+            # /agents/{agent_type}/verify` and `.../runtime-connections/
+            # {runtime_id}/activate` both only ever know the canonical
+            # runtime name ("claude_code"). `ConnectedAgentCandidateBridge`
+            # already stamps that canonical name into `descriptor.metadata
+            # ["provider_or_runtime"]`, so fall back to it -- checked only
+            # second, after the agent's own id -- instead of leaving every
+            # dynamic agent stuck at `AgentStatus.UNKNOWN` (ineligible, see
+            # `scorer.eligibility_violation`) forever.
+            fallback_key = descriptor.metadata.get("provider_or_runtime")
             result.append(
                 CandidateAgent(
                     descriptor=descriptor,
-                    status=self._status_for(agent_type),
-                    circuit_state=self._circuit_state_for(agent_type),
+                    status=self._status_for(agent_type, fallback_key),
+                    circuit_state=self._circuit_state_for(agent_type, fallback_key),
                 )
             )
         return result
@@ -169,18 +195,25 @@ class RegistryCandidateProvider:
             return False
         return True
 
-    def _status_for(self, agent_type: str) -> AgentStatus:
+    def _status_for(self, agent_type: str, fallback_key: object) -> AgentStatus:
         if self.connection_cache is None:
             return AgentStatus.UNKNOWN
         state = self.connection_cache.get(agent_type)
+        if state is None and fallback_key is not None:
+            state = self.connection_cache.get(str(fallback_key))
         if state is None:
             return AgentStatus.UNKNOWN
         return _CONNECTION_STATUS_TO_AGENT_STATUS.get(state.connection_status, AgentStatus.UNKNOWN)
 
-    def _circuit_state_for(self, agent_type: str) -> CircuitState:
+    def _circuit_state_for(self, agent_type: str, fallback_key: object) -> CircuitState:
         if self.circuit_breakers is None:
             return CircuitState.CLOSED
-        return self.circuit_breakers.get_or_create(agent_type).snapshot().state
+        # Unlike connection status, a circuit breaker always tracks the
+        # shared underlying process (every dynamic agent aliased onto the
+        # same runtime trips and recovers together), so the canonical key
+        # -- when known -- is authoritative, not just a fallback.
+        key = str(fallback_key) if fallback_key is not None else agent_type
+        return self.circuit_breakers.get_or_create(key).snapshot().state
 
 
 def default_candidate_agent_types() -> Iterable[str]:

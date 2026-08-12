@@ -8,6 +8,6 @@ import { Logger } from '../utils/logger';
 export function registerOpenWorkspaceCommand(context: vscode.ExtensionContext): vscode.Disposable {
   return vscode.commands.registerCommand('keystone.openWorkspace', () => {
     Logger.info('Executing command: keystone.openWorkspace');
-    WorkspaceController.createOrShow(context.extensionUri);
+    WorkspaceController.createOrShow(context.extensionUri, context.secrets);
   });
 }

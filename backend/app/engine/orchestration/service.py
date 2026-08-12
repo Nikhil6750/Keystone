@@ -71,6 +71,7 @@ recovery-only compilation, is correct, not merely convenient; see
 not a redesign of Stage 4E's recovery semantics themselves.
 """
 
+import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -111,6 +112,7 @@ from app.engine.orchestration.events import (
     OrchestrationEventSink,
     OrchestrationEventType,
 )
+from app.engine.orchestration.evidence_collector import WorkspaceEvidenceCollector
 from app.engine.orchestration.knowledge_adapter import (
     build_manager_knowledge_context,
     build_retrieval_observation,
@@ -142,7 +144,7 @@ from app.models.step_attempt import StepAttempt
 from app.models.workflow import Workflow
 from app.models.workflow_step import WorkflowStep
 from app.persistence.service import LearningPersistenceService, build_event_id
-from app.resilience.circuit_breaker import CircuitBreakerRegistry
+from app.resilience.circuit_breaker import CircuitBreakerOpenError, CircuitBreakerRegistry
 from app.resilience.retry import RetryPolicy
 from app.resilience.sleeper import RealSleeper, Sleeper
 from app.services import workflow_service
@@ -200,6 +202,7 @@ class EndToEndOrchestrationService:
     ) -> None:
         self._db = db
         self._registry = registry
+        self._workspace_root: str | None = None
         self._candidate_provider = candidate_provider
         self._knowledge_index = knowledge_index
         self._adaptive_retriever = adaptive_retriever
@@ -269,6 +272,12 @@ class EndToEndOrchestrationService:
         called directly (not offloaded), matching how `WorkflowEngine`
         itself is synchronous throughout this codebase today."""
         execution_id = request.request_id
+        # Already validated by `OrchestrationRequest`'s own field validator
+        # (absolute, exists, is a directory) -- read once here and handed
+        # to every `WorkflowEngine` this orchestration constructs (Phase D
+        # and any recovery cycle), never re-derived from `goal` or any
+        # other free-text field.
+        self._workspace_root = request.workspace_root
         warnings: list[str] = []
         issue_codes: list[str] = []
 
@@ -348,8 +357,21 @@ class EndToEndOrchestrationService:
             )
 
         try:
-            workflow, step_to_task, results, learning_event_ids = self._phase_d_execute(
-                plan, agent_type_by_task_key
+            # Offloaded to a worker thread: a real local-CLI agent call
+            # underneath `WorkflowEngine.execute_workflow()` blocks
+            # synchronously on `subprocess.run()` for the CLI's full
+            # duration (see `SubprocessRunner`) -- calling it directly on
+            # this coroutine, as before, froze the *entire* single-
+            # threaded event loop for that whole span, so an unrelated
+            # concurrent request (another orchestration, even a plain
+            # health check) could not be served and timed out client-side
+            # as a false "Keystone backend is unavailable." `self._db`
+            # (a `Session` from `SessionLocal()`) is exclusively owned by
+            # this one execution's call chain, never touched concurrently
+            # from another thread, so moving its synchronous use here is
+            # safe.
+            workflow, step_to_task, results, learning_event_ids = await asyncio.to_thread(
+                self._phase_d_execute, plan, agent_type_by_task_key
             )
         except SQLAlchemyError as exc:
             raise OrchestrationPersistenceError(
@@ -390,7 +412,8 @@ class EndToEndOrchestrationService:
             recovery_used,
             recovery_action,
             all_learning_event_ids,
-        ) = self._phase_e_verify_and_recover(
+        ) = await asyncio.to_thread(
+            self._phase_e_verify_and_recover,
             plan, workflow, step_to_task, results, agent_type_by_task_key,
             routing_context_by_task_key, learning_event_ids,
         )
@@ -615,6 +638,7 @@ class EndToEndOrchestrationService:
             sleeper=self._sleeper,
             learning_persistence=self._learning_persistence,
             verification_resolver=resolver,
+            workspace_root=self._workspace_root,
         )
         executed = engine.execute_workflow(workflow.id)
         learning_event_ids = self._collect_learning_event_ids(executed)
@@ -630,13 +654,32 @@ class EndToEndOrchestrationService:
     def _make_verification_resolver(
         self, step_to_task: dict[str, TaskSpec], results_out: dict[str, VerificationResult]
     ) -> Callable[[WorkflowStep, StepAttempt], VerificationStatus | None]:
+        # Only ever constructed when a real, validated `workspace_root` is
+        # present (Stage 8C.3 P1 fix) -- every existing caller/test that
+        # never sets `OrchestrationRequest.workspace_root` sees zero
+        # behavior change, since `evidence_collector` then stays `None` and
+        # `build_observed_outcome` receives exactly the executor's own
+        # `output_payload`, unmodified, just as before.
+        evidence_collector = (
+            WorkspaceEvidenceCollector(self._workspace_root)
+            if self._workspace_root is not None
+            else None
+        )
+
         def resolver(step: WorkflowStep, attempt: StepAttempt) -> VerificationStatus | None:
             if attempt.status != AttemptStatus.SUCCEEDED:
                 return None
             task = step_to_task.get(step.id)
             if task is None or task.expected_outcome is None:
                 return None
-            observed = build_observed_outcome(attempt.output_payload)
+            payload = dict(attempt.output_payload) if attempt.output_payload else {}
+            if evidence_collector is not None:
+                # "if trustworthy structured evidence already present:
+                # consume it; else if real workspace execution: collect
+                # objective evidence" -- `collect()` never overwrites a key
+                # `payload` already has.
+                payload.update(evidence_collector.collect(task.expected_outcome, payload))
+            observed = build_observed_outcome(payload)
             result = verify_one(
                 task.expected_outcome,
                 observed,
@@ -818,8 +861,28 @@ class EndToEndOrchestrationService:
             sleeper=self._sleeper,
             learning_persistence=self._learning_persistence,
             verification_resolver=resolver,
+            workspace_root=self._workspace_root,
         )
-        executed = engine.execute_workflow(recovery_workflow.id)
+        try:
+            executed = engine.execute_workflow(recovery_workflow.id)
+        except CircuitBreakerOpenError:
+            # The breaker opening mid-recovery is a real, safe stop
+            # condition -- identical in effect to `reroute()` finding no
+            # eligible candidate above (`return None`), not a service
+            # failure. Left uncaught, this previously escaped as an
+            # unhandled exception all the way to
+            # `OrchestrationExecutionCoordinator._run()`'s generic
+            # `except Exception`, which reports a bare
+            # "CircuitBreakerOpenError: an unexpected internal error
+            # occurred" instead of the bounded, already-typed
+            # `RecoveryAction.FAIL` outcome this same method already
+            # produces for every other "can't recover right now" case.
+            logger.warning(
+                "recovery_cycle_circuit_breaker_open plan_id=%s attempt_number=%d",
+                plan.plan_id,
+                attempt_number,
+            )
+            return None
         learning_event_ids = self._collect_learning_event_ids(executed)
         return (
             executed,

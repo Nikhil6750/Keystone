@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.contracts.adapter import AgentDescriptor
 from app.contracts.enums import AgentCapability, AgentStatus, RuntimeKind
@@ -185,7 +186,19 @@ async def test_store_slow_subscriber_is_dropped_not_blocking() -> None:
 
 @pytest.fixture
 def healthy_db_engine() -> Engine:
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    # `StaticPool` is required, not optional, for an in-memory SQLite
+    # engine used across threads: without it, each connection checkout
+    # opens its own private `:memory:` database, so the coordinator's
+    # orchestration -- now offloaded to a worker thread via
+    # `asyncio.to_thread` (Stage 8C.3 usability hardening, so a real
+    # long-running agent call can no longer freeze the whole event loop)
+    # -- would see a blank database missing every table `create_all()`
+    # just created on this thread.
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     enable_sqlite_foreign_keys(engine)
     Base.metadata.create_all(bind=engine)
     return engine

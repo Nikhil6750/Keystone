@@ -28,22 +28,33 @@ _DISPLAY_NAMES: dict[str, str] = {
     AgentType.DEMO.value: "Demo Agent",
 }
 
-_CAPABILITIES: dict[str, list[str]] = {
-    AgentType.CLAUDE_CODE.value: ["workflow_step_execution"],
-    AgentType.CODEX.value: ["workflow_step_execution"],
-    AgentType.GEMINI.value: [],
-    AgentType.ANTIGRAVITY.value: ["workflow_step_execution"],
-    AgentType.DEMO.value: ["workflow_step_execution"],
-}
-
-
 def display_name_for(agent_type: str) -> str:
     return _DISPLAY_NAMES.get(agent_type, agent_type)
 
 
 def capabilities_for(agent_type: str) -> list[str]:
-    """Return a fresh API-safe capability list for one canonical agent type."""
-    return list(_CAPABILITIES.get(agent_type, []))
+    """Return a fresh API-safe capability list for one canonical agent type.
+
+    Single source of truth: `app.engine.orchestration.runtime
+    .STATIC_AGENT_DESCRIPTORS` -- the same declaration the Router's own
+    eligibility check (`app.engine.routing.scorer`) reads. This module
+    previously kept its own, separate, much thinner capability table here
+    (every agent type but Gemini flattened to one opaque
+    `"workflow_step_execution"` string); that duplication meant a client
+    deriving a Connect-Agent identity's capabilities from `GET /api/v1/
+    agents` (the only capability data an API client can see) would build an
+    identity the Router could never actually route real tasks to, no
+    matter how genuinely capable the underlying runtime was. Imported
+    lazily to avoid a module import cycle (`runtime` does not import this
+    module, so this is only a style choice for locality, not a cycle
+    workaround).
+    """
+    from app.engine.orchestration.runtime import STATIC_AGENT_DESCRIPTORS
+
+    descriptor = STATIC_AGENT_DESCRIPTORS.get(agent_type)
+    if descriptor is None:
+        return []
+    return [capability.value for capability in descriptor.capabilities]
 
 
 @dataclass(frozen=True)
@@ -110,7 +121,25 @@ def _cli_availability(
         agent_type, cache
     )
 
-    if not profile.enabled:
+    # A live registration (from a deliberate `activate_agent` call -- see
+    # `app.adapters.factory` -- as well as startup-time config) is itself
+    # proof the runtime is enabled, even when the static config flag never
+    # changed: the registry, not the flag, is the source of truth for "is
+    # this runtime active right now."
+    effective_enabled = profile.enabled or registered
+    if not effective_enabled:
+        # Installation detection is a harmless, read-only PATH lookup --
+        # independent of whether the runtime has been deliberately
+        # connected yet. Reporting it truthfully here (instead of always
+        # `UNKNOWN`) is what lets Connect Agent's "Installed / Sign in"
+        # screen show "Installed" + a real `[Connect]` action for a
+        # genuinely-present-but-not-yet-activated runtime, rather than
+        # looking identical to one that was never installed at all.
+        pre_activation_installation_status = (
+            InstallationStatus.INSTALLED
+            if shutil.which(profile.executable) is not None
+            else InstallationStatus.NOT_INSTALLED
+        )
         return AgentAvailability(
             agent_type=agent_type,
             display_name=display_name_for(agent_type),
@@ -119,7 +148,7 @@ def _cli_availability(
             registered=registered,
             execution_mode="local_cli",
             reason="Disabled by configuration",
-            installation_status=InstallationStatus.UNKNOWN,
+            installation_status=pre_activation_installation_status,
             authentication_status=AuthenticationStatus.UNKNOWN,
             connection_status=ConnectionStatus.DISABLED,
             version=None,

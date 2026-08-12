@@ -46,6 +46,12 @@ class OrchestrationExecutionCreate(BaseModel):
     knowledge_query: str | None = None
     available_agent_types: list[str] = Field(default_factory=list)
     available_capabilities: list[AgentCapability] = Field(default_factory=list)
+    # The client's own currently open project folder (Stage 8C.3), e.g.
+    # `vscode.workspace.workspaceFolders[0]` -- the only source a real
+    # local-CLI agent step's subprocess cwd ever comes from. Re-validated
+    # (absolute, exists, is a directory) by `OrchestrationRequest`'s own
+    # field validator, not just trusted here.
+    workspace_root: str | None = None
 
     @field_validator("goal")
     @classmethod
@@ -145,6 +151,7 @@ def orchestration_execution_create_to_kwargs(data: OrchestrationExecutionCreate)
         "available_capabilities": list(data.available_capabilities),
         "routing_constraints": data.routing_constraints or RoutingConstraints(),
         "knowledge_query": data.knowledge_query,
+        "workspace_root": data.workspace_root,
     }
 
 

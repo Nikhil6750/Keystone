@@ -81,11 +81,22 @@ def verify_agent(
         cache.end_verification(agent_type)
 
 
+def _is_registered(registry: ExecutorRegistry, agent_type: str) -> bool:
+    try:
+        registry.get(agent_type)
+    except ExecutorNotRegisteredError:
+        return False
+    return True
+
+
 def _run_verification(
     agent_type: str, settings: Settings, registry: ExecutorRegistry
 ) -> AgentConnectionState:
     display_name = display_name_for(agent_type)
-    enabled = _profile_enabled(agent_type, settings)
+    # A live registration (from a deliberate `activate_agent` call, in
+    # addition to startup-time config) is itself proof the runtime is
+    # enabled -- see the identical rationale in `agent_availability.py`.
+    enabled = _profile_enabled(agent_type, settings) or _is_registered(registry, agent_type)
 
     if not enabled:
         return AgentConnectionState(

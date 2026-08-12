@@ -39,8 +39,8 @@ def test_antigravity_discovery_strategy_attributes():
     assert strategy is not None
     assert strategy.runtime_type == "antigravity"
     assert strategy.display_name == "Google Antigravity"
-    assert strategy.product_kind == "ide"
-    assert strategy.execution_supported is False
+    assert strategy.product_kind == "agent_cli"
+    assert strategy.execution_supported is True
     assert strategy.supports_sign_in is False
 
 

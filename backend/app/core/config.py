@@ -111,9 +111,10 @@ class Settings(BaseSettings):
 
     # --- Codex ---
     # Live-verified against Codex CLI 0.146.0. Always uses non-interactive JSONL
-    # execution, an ephemeral session, and a read-only sandbox. The prompt is sent
-    # via stdin; the isolated process working directory is intentionally not a Git
-    # repository, so the non-interactive command explicitly skips that check.
+    # execution, an ephemeral session, and a workspace-write sandbox so unattended
+    # coding steps can edit their validated workspace. The prompt is sent via stdin;
+    # a fresh workspace need not be a Git repository, so the non-interactive command
+    # explicitly skips that check.
     codex_enabled: bool = Field(default=False, validation_alias="KEYSTONE_CODEX_ENABLED")
     codex_executable: str = Field(default="codex", validation_alias="KEYSTONE_CODEX_EXECUTABLE")
     codex_arguments: list[str] = Field(

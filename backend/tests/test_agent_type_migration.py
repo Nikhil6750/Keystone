@@ -48,7 +48,7 @@ def test_a_persisted_gemini_workflow_step_is_never_silently_executed_via_antigra
         executable="agy",
         arguments=["-p", "{prompt}"],
         input_mode="prompt_argument",
-        output_mode="json",
+        output_mode="text",
         timeout_seconds=5.0,
         max_output_characters=1000,
     )

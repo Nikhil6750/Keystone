@@ -119,14 +119,14 @@ def test_workflow_succeeds_through_antigravity_adapter(
         agent_type="antigravity",
         enabled=True,
         executable="agy",
-        arguments=["-p", "--output-format", "json", "{prompt}"],
+        arguments=["-p", "{prompt}"],
         input_mode="prompt_argument",
-        output_mode="json",
+        output_mode="text",
         timeout_seconds=300.0,
         max_output_characters=50000,
     )
     runner = FakeProcessRunner(
-        result=ProcessResult(exit_code=0, stdout=json.dumps({"result": "KEYSTONE_OK"}), stderr="")
+        result=ProcessResult(exit_code=0, stdout="KEYSTONE_OK", stderr="")
     )
     executor_registry.register(
         "antigravity",

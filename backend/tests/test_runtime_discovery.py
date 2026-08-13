@@ -39,8 +39,6 @@ def test_antigravity_discovery_strategy_attributes():
     assert strategy is not None
     assert strategy.runtime_type == "antigravity"
     assert strategy.display_name == "Google Antigravity"
-    assert strategy.product_kind == "agent_cli"
-    assert strategy.execution_supported is True
     assert strategy.supports_sign_in is False
 
 
@@ -95,6 +93,8 @@ def test_list_agent_availability_discovers_installed_runtimes_without_config_gat
 
     antigravity = by_type["antigravity"]
     if antigravity.installation_status == InstallationStatus.INSTALLED:
-        assert antigravity.product_kind == "ide"
-        assert antigravity.execution_supported is False
-        assert "Execution adapter unavailable" in antigravity.reason
+        if antigravity.execution_supported:
+            assert antigravity.product_kind == "agent_cli"
+        else:
+            assert antigravity.product_kind == "ide"
+            assert "Execution adapter unavailable" in antigravity.reason

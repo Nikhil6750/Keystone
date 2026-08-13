@@ -64,12 +64,9 @@ def test_antigravity_profile_builds_successfully_with_prompt_argument_defaults()
     assert profile.input_mode.value == "prompt_argument"
 
 
-def test_antigravity_1_1_10_binds_prompt_value_to_print_flag() -> None:
-    """`agy --print` is a value flag; stdin is not the print prompt in 1.1.10."""
+def test_antigravity_1_1_10_uses_exact_headless_argv_shape() -> None:
     settings = Settings()
 
     assert settings.antigravity_input_mode == "prompt_argument"
-    print_index = settings.antigravity_arguments.index("--print")
-    assert settings.antigravity_arguments[print_index + 1] == PROMPT_PLACEHOLDER
-    assert "--sandbox" in settings.antigravity_arguments
-    assert settings.antigravity_arguments[:2] == ["--output-format", "json"]
+    assert settings.antigravity_arguments == ["-p", PROMPT_PLACEHOLDER]
+    assert settings.antigravity_output_mode == "text"

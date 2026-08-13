@@ -290,18 +290,75 @@ class AntigravityDiscoveryStrategy(BaseRuntimeDiscoveryStrategy):
         super().__init__(
             runtime_type=AgentType.ANTIGRAVITY.value,
             display_name="Google Antigravity",
-            default_binary="antigravity-ide",
+            default_binary="agy",
             candidate_subpaths=[
-                ("npm", "agy.cmd"),
-                ("npm", "agy"),
+                ("agy", "bin", "agy.exe"),
                 ("Programs", "Antigravity IDE", "bin", "antigravity-ide.cmd"),
                 ("Programs", "Antigravity IDE", "Antigravity IDE.exe"),
+                ("Antigravity IDE", "bin", "antigravity-ide.cmd"),
+                ("Antigravity IDE", "Antigravity IDE.exe"),
                 ("Programs", "antigravity", "antigravity.exe"),
             ],
             product_kind="agent_cli",
             execution_supported=True,
             supports_sign_in=False,
         )
+
+    @staticmethod
+    def _is_ide_launcher(executable_path: str) -> bool:
+        normalized = executable_path.lower()
+        name = Path(executable_path).name.lower()
+        return (
+            "antigravity-ide" in normalized
+            or "antigravity ide" in normalized
+            or name in {"antigravity.exe", "antigravity.cmd"}
+        )
+
+    def find_executable(self, configured_executable: str | None = None) -> str | None:
+        """Return an `agy` CLI whenever one exists, with the IDE as fallback.
+
+        The Windows CLI fallback is intentionally narrow and derived only from
+        `%LOCALAPPDATA%`; discovery never scans user data or credential stores.
+        """
+        configured_ide: str | None = None
+        if configured_executable:
+            resolved_configured = shutil.which(configured_executable)
+            if not resolved_configured and Path(configured_executable).is_file():
+                resolved_configured = str(Path(configured_executable).resolve())
+            if resolved_configured:
+                if self._is_ide_launcher(resolved_configured):
+                    configured_ide = resolved_configured
+                else:
+                    return resolved_configured
+
+        path_agy = shutil.which("agy")
+        if path_agy:
+            return path_agy
+
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            agy_fallback = Path(local_app_data, "agy", "bin", "agy.exe")
+            if agy_fallback.is_file():
+                return str(agy_fallback.resolve())
+
+        if configured_ide:
+            return configured_ide
+
+        path_ide = shutil.which("antigravity-ide")
+        if path_ide:
+            return path_ide
+
+        ide_subpaths = self._candidate_subpaths[1:]
+        for env_var in ("LOCALAPPDATA", "PROGRAMFILES", "PROGRAMFILES(X86)"):
+            root_value = os.environ.get(env_var)
+            if not root_value:
+                continue
+            root = Path(root_value)
+            for subpath in ide_subpaths:
+                candidate = root.joinpath(*subpath)
+                if candidate.is_file():
+                    return str(candidate.resolve())
+        return None
 
     def discover(
         self, configured_executable: str | None = None, runner: ProcessRunner | None = None
@@ -321,12 +378,9 @@ class AntigravityDiscoveryStrategy(BaseRuntimeDiscoveryStrategy):
                 reason="Executable not detected on PATH or well-known locations",
             )
 
-        exe_lower = exe.lower()
-        is_ide_launcher = "ide" in exe_lower or "antigravity.exe" in exe_lower
-        is_agy_cli = "agy" in exe_lower or exe_lower == "mock" or not is_ide_launcher
-
-        product_kind = "agent_cli" if is_agy_cli else "ide"
-        execution_supported = is_agy_cli
+        is_ide_launcher = self._is_ide_launcher(exe)
+        product_kind = "ide" if is_ide_launcher else "agent_cli"
+        execution_supported = not is_ide_launcher
 
         version = self.probe_version(exe, runner)
         auth = self.probe_authentication(exe, runner)

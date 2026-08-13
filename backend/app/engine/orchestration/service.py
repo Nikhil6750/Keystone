@@ -601,20 +601,59 @@ class EndToEndOrchestrationService:
         routing_context_by_task_key: dict[str, _RoutingContext] = {}
         candidates = self._candidate_provider.candidates()
 
+        from app.engine.planning.compiler import CompiledTaskNode, TargetFileOwnership, ComplexityLevel
+        from app.engine.routing.organization import AgentOrganizationCompiler
+
+        compiled_nodes = []
         for task in plan.tasks:
+            payload = task.input_payload or {}
+            ownership_str = payload.get("target_files_ownership", "UNKNOWN")
+            try:
+                ownership = TargetFileOwnership(ownership_str)
+            except ValueError:
+                ownership = TargetFileOwnership.UNKNOWN
+
+            comp_str = payload.get("estimated_complexity", "SIMPLE")
+            try:
+                complexity = ComplexityLevel(comp_str)
+            except ValueError:
+                complexity = ComplexityLevel.SIMPLE
+
+            node = CompiledTaskNode(
+                task_id=task.key,
+                task_type=task.task_type,
+                title=task.name,
+                objective=payload.get("objective", task.name),
+                dependencies=task.depends_on,
+                required_capabilities=task.required_capabilities,
+                target_files=payload.get("target_files", []),
+                target_files_ownership=ownership,
+                parallel_safe=payload.get("parallel_safe", False),
+                estimated_complexity=complexity,
+            )
+            compiled_nodes.append(node)
+
+        org_compiler = AgentOrganizationCompiler(router=self._router)
+        team = org_compiler.assemble_team(compiled_nodes, candidates)
+
+        if not team.assignments:
+            return None
+
+        for task in plan.tasks:
+            assignment = team.assignments.get(task.key)
+            if not assignment or not assignment.selected_agent_type:
+                return None
+            agent_type_by_task_key[task.key] = assignment.selected_agent_type
             routing_request = build_routing_request(
                 task,
                 candidate_agent_types=request.available_agent_types or None,
                 constraints=request.routing_constraints,
                 repository=request.repository,
             )
-            decision = self._router.route(routing_request, candidates)
-            if not decision.selected_agent_type:
-                return None
-            agent_type_by_task_key[task.key] = decision.selected_agent_type
             routing_context_by_task_key[task.key] = _RoutingContext(
                 request=routing_request, candidates=candidates
             )
+
         return agent_type_by_task_key, routing_context_by_task_key
 
     # --- Phase D: Workflow compile + execute -----------------------------------
@@ -640,7 +679,20 @@ class EndToEndOrchestrationService:
             verification_resolver=resolver,
             workspace_root=self._workspace_root,
         )
-        executed = engine.execute_workflow(workflow.id)
+        watcher = None
+        if self._workspace_root:
+            from app.services.workspace_watcher import WorkspaceWatcher
+            watcher = WorkspaceWatcher(self._workspace_root)
+            watcher.start()
+
+        try:
+            executed = engine.execute_workflow(workflow.id)
+            if watcher is not None:
+                watcher.poll_now()
+        finally:
+            if watcher is not None:
+                watcher.stop()
+
         learning_event_ids = self._collect_learning_event_ids(executed)
         return executed, step_to_task, results, learning_event_ids
 

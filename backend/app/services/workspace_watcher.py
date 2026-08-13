@@ -1,0 +1,188 @@
+"""Live Workspace File Activity Monitor.
+
+Bounded, workspace-scoped, symlink-safe file activity monitor for live project execution.
+Observes file creation, modification, and deletion within the approved workspace.
+Excludes .git, node_modules, .venv, dist, build, and cache directories.
+Never reads or logs file contents.
+Emits safe file_activity events with relative paths and activity type.
+"""
+
+import asyncio
+import os
+from collections.abc import Callable
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+EXCLUDED_DIR_NAMES = {
+    ".git",
+    "node_modules",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    "__pycache__",
+    ".cache",
+    ".idea",
+    ".vscode",
+}
+
+
+class FileActivityEvent:
+    """Safe event representing live workspace file activity."""
+
+    def __init__(
+        self,
+        relative_path: str,
+        activity: str,  # "created" | "modified" | "deleted"
+        task_id: str | None = None,
+        agent_id: str | None = None,
+        timestamp: str | None = None,
+    ) -> None:
+        self.relative_path = relative_path
+        self.activity = activity
+        self.task_id = task_id
+        self.agent_id = agent_id
+        self.timestamp = timestamp or datetime.now(UTC).isoformat()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "relative_path": self.relative_path,
+            "activity": self.activity,
+            "task_id": self.task_id,
+            "agent_id": self.agent_id,
+            "timestamp": self.timestamp,
+        }
+
+
+class WorkspaceWatcher:
+    """Symlink-safe, bounded workspace activity watcher."""
+
+    def __init__(
+        self,
+        workspace_root: str | Path,
+        on_activity: Callable[[FileActivityEvent], None] | None = None,
+        poll_interval: float = 1.0,
+    ) -> None:
+        self.workspace_root = Path(workspace_root).resolve()
+        self.on_activity = on_activity
+        self.poll_interval = poll_interval
+        self._running = False
+        self._task: asyncio.Task[None] | None = None
+        self._snapshot: dict[str, float] = {}
+        self.active_task_id: str | None = None
+        self.active_agent_id: str | None = None
+
+    def start(self) -> None:
+        """Start polling workspace for changes."""
+        if self._running:
+            return
+        self._running = True
+        self._snapshot = self._take_snapshot()
+        self._task = asyncio.create_task(self._poll_loop())
+
+    def stop(self) -> None:
+        """Stop polling workspace."""
+        self._running = False
+        if self._task and not self._task.done():
+            self._task.cancel()
+
+    def set_active_context(self, task_id: str | None, agent_id: str | None) -> None:
+        """Update active task and agent context for event attribution."""
+        self.active_task_id = task_id
+        self.active_agent_id = agent_id
+
+    def poll_now(self) -> list[FileActivityEvent]:
+        """Perform a single immediate check for changes and emit events."""
+        current = self._take_snapshot()
+        events: list[FileActivityEvent] = []
+
+        # Created or modified
+        for rel_path, mtime in current.items():
+            if rel_path not in self._snapshot:
+                events.append(
+                    FileActivityEvent(
+                        relative_path=rel_path,
+                        activity="created",
+                        task_id=self.active_task_id,
+                        agent_id=self.active_agent_id,
+                    )
+                )
+            elif mtime > self._snapshot[rel_path]:
+                events.append(
+                    FileActivityEvent(
+                        relative_path=rel_path,
+                        activity="modified",
+                        task_id=self.active_task_id,
+                        agent_id=self.active_agent_id,
+                    )
+                )
+
+        # Deleted
+        for rel_path in self._snapshot:
+            if rel_path not in current:
+                events.append(
+                    FileActivityEvent(
+                        relative_path=rel_path,
+                        activity="deleted",
+                        task_id=self.active_task_id,
+                        agent_id=self.active_agent_id,
+                    )
+                )
+
+        self._snapshot = current
+
+        if self.on_activity:
+            for event in events:
+                self.on_activity(event)
+
+        return events
+
+    async def _poll_loop(self) -> None:
+        while self._running:
+            try:
+                await asyncio.sleep(self.poll_interval)
+                self.poll_now()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                pass
+
+    def _take_snapshot(self) -> dict[str, float]:
+        """Scan workspace for file modification timestamps safely."""
+        snapshot: dict[str, float] = {}
+        if not self.workspace_root.exists() or not self.workspace_root.is_dir():
+            return snapshot
+
+        try:
+            for root, dirs, files in os.walk(str(self.workspace_root), followlinks=False):
+                # Exclude directories in-place
+                dirs[:] = [d for d in dirs if d not in EXCLUDED_DIR_NAMES and not d.startswith(".")]
+
+                root_path = Path(root)
+                # Symlink safety check: ensure root_path remains inside workspace_root
+                try:
+                    resolved_root = root_path.resolve()
+                    if not resolved_root.is_relative_to(self.workspace_root):
+                        continue
+                except ValueError:
+                    continue
+
+                for f in files:
+                    file_path = root_path / f
+                    try:
+                        resolved_file = file_path.resolve()
+                        if not resolved_file.is_relative_to(self.workspace_root):
+                            continue
+                        rel_path = str(resolved_file.relative_to(self.workspace_root)).replace("\\", "/")
+                        mtime = file_path.stat().st_mtime
+                        snapshot[rel_path] = mtime
+                    except (OSError, ValueError):
+                        continue
+        except OSError:
+            pass
+
+        return snapshot
+
+
+__all__ = ["EXCLUDED_DIR_NAMES", "FileActivityEvent", "WorkspaceWatcher"]

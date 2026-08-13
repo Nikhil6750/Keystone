@@ -81,16 +81,17 @@ def register_agents(
             logger.info("agent_adapter_unavailable agent_type=%s reason=disabled", agent_type)
             continue
         strategy = get_discovery_strategy(agent_type)
-        if strategy and not strategy.execution_supported:
-            logger.info(
-                "agent_adapter_unavailable agent_type=%s reason=execution_unsupported", agent_type
-            )
-            continue
-        exe = (
-            strategy.find_executable(profile.executable)
-            if strategy
-            else shutil.which(profile.executable)
-        )
+        if strategy:
+            disc = strategy.discover(profile.executable, runner=runner)
+            if not disc.execution_supported:
+                logger.info(
+                    "agent_adapter_unavailable agent_type=%s reason=execution_unsupported",
+                    agent_type,
+                )
+                continue
+            exe = disc.executable_path
+        else:
+            exe = shutil.which(profile.executable)
         if not exe:
             logger.warning(
                 "agent_adapter_unavailable agent_type=%s reason=executable_not_found", agent_type
@@ -138,19 +139,20 @@ def activate_agent(
     if profile is None:
         return False
 
+    runner = process_runner or SubprocessRunner()
     strategy = get_discovery_strategy(agent_type)
-    if strategy and not strategy.execution_supported:
-        logger.warning(
-            "agent_adapter_activation_failed agent_type=%s reason=execution_unsupported",
-            agent_type,
-        )
-        return False
+    if strategy:
+        disc = strategy.discover(profile.executable, runner=runner)
+        if not disc.execution_supported:
+            logger.warning(
+                "agent_adapter_activation_failed agent_type=%s reason=execution_unsupported",
+                agent_type,
+            )
+            return False
+        exe = disc.executable_path
+    else:
+        exe = shutil.which(profile.executable)
 
-    exe = (
-        strategy.find_executable(profile.executable)
-        if strategy
-        else shutil.which(profile.executable)
-    )
     if not exe:
         logger.warning(
             "agent_adapter_activation_failed agent_type=%s reason=executable_not_found",

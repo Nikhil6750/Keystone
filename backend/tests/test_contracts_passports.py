@@ -34,9 +34,7 @@ def test_task_type_and_repository_metrics_are_independent_buckets() -> None:
     passport = AgentPassport.model_validate(
         {
             "agent_type": "claude_code",
-            "task_type_metrics": {
-                "code_generation": {"execution_count": 5, "success_count": 4}
-            },
+            "task_type_metrics": {"code_generation": {"execution_count": 5, "success_count": 4}},
             "repository_metrics": {"repo-a": {"execution_count": 1, "low_sample_size": True}},
             "updated_at": datetime.now(UTC),
         }

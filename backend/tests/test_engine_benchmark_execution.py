@@ -92,12 +92,14 @@ def test_runner_multiple_cases_multiple_agents_repetitions() -> None:
         observed_outcome=ObservedOutcome(data={"output": "wrong"}),
     )
 
-    executor = FakeBenchmarkExecutor({
-        ("claude", "c1"): obs1,
-        ("claude", "c2"): obs1,
-        ("codex", "c1"): obs2,
-        ("codex", "c2"): obs2,
-    })
+    executor = FakeBenchmarkExecutor(
+        {
+            ("claude", "c1"): obs1,
+            ("claude", "c2"): obs1,
+            ("codex", "c1"): obs2,
+            ("codex", "c2"): obs2,
+        }
+    )
 
     runner = BenchmarkRunner()
     results, metrics = runner.run_suite(suite, ["codex", "claude"], executor)
@@ -150,11 +152,13 @@ def test_runner_handles_execution_failure_timeout_and_cancel() -> None:
         failure_category=FailureCategory.CANCELLED,
     )
 
-    executor = FakeBenchmarkExecutor({
-        ("agent-fail", "c1"): obs_fail,
-        ("agent-timeout", "c1"): obs_timeout,
-        ("agent-cancel", "c1"): obs_cancel,
-    })
+    executor = FakeBenchmarkExecutor(
+        {
+            ("agent-fail", "c1"): obs_fail,
+            ("agent-timeout", "c1"): obs_timeout,
+            ("agent-cancel", "c1"): obs_cancel,
+        }
+    )
 
     runner = BenchmarkRunner()
     results, metrics = runner.run_suite(

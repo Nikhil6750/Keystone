@@ -18,8 +18,7 @@ class BenchmarkExecutor(Protocol):
         agent_type: str,
         case: BenchmarkCase,
         repetition: int,
-    ) -> BenchmarkExecutionObservation:
-        ...
+    ) -> BenchmarkExecutionObservation: ...
 
 
 class FakeBenchmarkExecutor:

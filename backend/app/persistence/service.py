@@ -154,9 +154,7 @@ class LearningPersistenceService:
     ) -> dict[str, LearningPassport]:
         """Rebuild passports for all distinct agents present in execution history."""
         now = updated_at or datetime.now(UTC)
-        distinct_agents = session.scalars(
-            select(LearningEventRecord.agent_type).distinct()
-        ).all()
+        distinct_agents = session.scalars(select(LearningEventRecord.agent_type).distinct()).all()
 
         passports: dict[str, LearningPassport] = {}
         for agent_type in distinct_agents:

@@ -45,9 +45,7 @@ class KnowledgeIndex:
         self._chunks: dict[str, KnowledgeChunk] = {}
         self._chunk_ids_by_document: dict[str, set[str]] = {}
 
-    def upsert_document(
-        self, document: KnowledgeDocument, chunks: list[KnowledgeChunk]
-    ) -> None:
+    def upsert_document(self, document: KnowledgeDocument, chunks: list[KnowledgeChunk]) -> None:
         """Add `document` (or replace it, if `document.document_id` is
         already indexed) together with its `chunks`. Any chunk previously
         indexed for this `document_id` that is not part of the new

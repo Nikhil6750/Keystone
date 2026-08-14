@@ -45,9 +45,7 @@ class AgentConnectionRepository:
     def coordinator(self) -> ConnectionRegistryCoordinator:
         return self._coordinator
 
-    def register(
-        self, payload: AgentConnectionCreate | AgentConnection
-    ) -> AgentConnection:
+    def register(self, payload: AgentConnectionCreate | AgentConnection) -> AgentConnection:
         with self._coordinator.lock:
             cid = payload.connection_id.strip()
             if cid in self._connections:
@@ -80,9 +78,7 @@ class AgentConnectionRepository:
             ordered = sorted(self._connections.values(), key=lambda c: c.connection_id)
             return [c.model_copy(deep=True) for c in ordered]
 
-    def update(
-        self, connection_id: str, updates: AgentConnectionUpdate
-    ) -> AgentConnection:
+    def update(self, connection_id: str, updates: AgentConnectionUpdate) -> AgentConnection:
         with self._coordinator.lock:
             cid = connection_id.strip()
             existing = self._connections.get(cid)
@@ -90,17 +86,11 @@ class AgentConnectionRepository:
                 raise ConnectionNotFoundError(cid)
 
             new_display = (
-                updates.display_name
-                if updates.display_name is not None
-                else existing.display_name
+                updates.display_name if updates.display_name is not None else existing.display_name
             )
-            new_status = (
-                updates.status if updates.status is not None else existing.status
-            )
+            new_status = updates.status if updates.status is not None else existing.status
             new_meta = (
-                dict(updates.metadata)
-                if updates.metadata is not None
-                else dict(existing.metadata)
+                dict(updates.metadata) if updates.metadata is not None else dict(existing.metadata)
             )
 
             updated_conn = AgentConnection(
@@ -116,9 +106,7 @@ class AgentConnectionRepository:
             self._connections[cid] = updated_conn
             return updated_conn.model_copy(deep=True)
 
-    def delete(
-        self, connection_id: str, agent_repo: "ConnectedAgentRepository"
-    ) -> bool:
+    def delete(self, connection_id: str, agent_repo: "ConnectedAgentRepository") -> bool:
         with self._coordinator.lock:
             cid = connection_id.strip()
             if cid not in self._connections:
@@ -126,9 +114,7 @@ class AgentConnectionRepository:
 
             dependent_agents = agent_repo.list(connection_id=cid)
             if dependent_agents:
-                raise ConnectionHasDependentAgentsError(
-                    cid, [a.agent_id for a in dependent_agents]
-                )
+                raise ConnectionHasDependentAgentsError(cid, [a.agent_id for a in dependent_agents])
 
             del self._connections[cid]
             return True
@@ -197,9 +183,7 @@ class ConnectedAgentRepository:
             ordered = sorted(result, key=lambda a: a.agent_id)
             return [a.model_copy(deep=True) for a in ordered]
 
-    def update(
-        self, agent_id: str, updates: ConnectedAgentUpdate
-    ) -> ConnectedAgent:
+    def update(self, agent_id: str, updates: ConnectedAgentUpdate) -> ConnectedAgent:
         with self._coordinator.lock:
             aid = agent_id.strip()
             existing = self._agents.get(aid)
@@ -207,27 +191,17 @@ class ConnectedAgentRepository:
                 raise AgentNotFoundError(aid)
 
             new_display = (
-                updates.display_name
-                if updates.display_name is not None
-                else existing.display_name
+                updates.display_name if updates.display_name is not None else existing.display_name
             )
-            new_model = (
-                updates.model_id
-                if updates.model_id is not None
-                else existing.model_id
-            )
+            new_model = updates.model_id if updates.model_id is not None else existing.model_id
             new_caps = (
                 list(updates.capabilities)
                 if updates.capabilities is not None
                 else list(existing.capabilities)
             )
-            new_enabled = (
-                updates.enabled if updates.enabled is not None else existing.enabled
-            )
+            new_enabled = updates.enabled if updates.enabled is not None else existing.enabled
             new_meta = (
-                dict(updates.metadata)
-                if updates.metadata is not None
-                else dict(existing.metadata)
+                dict(updates.metadata) if updates.metadata is not None else dict(existing.metadata)
             )
 
             updated_agent = ConnectedAgent(

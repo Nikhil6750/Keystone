@@ -31,6 +31,7 @@ class Planner:
         classification = self.classifier.classify(request.goal)
 
         from app.engine.planning.compiler import TaskGraphCompilerV2
+
         compiler = TaskGraphCompilerV2()
         meta = request.metadata or {}
         compiler_nodes = compiler.compile(
@@ -72,9 +73,7 @@ class Planner:
 
         # 7. Compute Deterministic plan_id and Operational Timestamp
         repo_name = (
-            request.repository.name
-            if request.repository and request.repository.name
-            else ""
+            request.repository.name if request.repository and request.repository.name else ""
         )
         plan_id = self._compute_deterministic_plan_id(
             goal=classification.normalized_goal,
@@ -106,9 +105,7 @@ class Planner:
         return f"plan_{digest}"
 
 
-def plan_workflow(
-    request: PlanningRequest, planner: Planner | None = None
-) -> WorkflowPlan:
+def plan_workflow(request: PlanningRequest, planner: Planner | None = None) -> WorkflowPlan:
     """Public helper to decompose a PlanningRequest into a WorkflowPlan."""
     p = planner or Planner()
     return p.plan(request)

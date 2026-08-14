@@ -211,9 +211,7 @@ async def test_cancelling_one_workflow_does_not_affect_a_concurrent_sibling() ->
         scheduler.run(definition, workflow_id="wf-9c", cancellation=cancelled_token)
     )
     healthy_task = asyncio.ensure_future(
-        scheduler.run(
-            _definition([_step(key="a", agent_type="other")]), workflow_id="wf-9d"
-        )
+        scheduler.run(_definition([_step(key="a", agent_type="other")]), workflow_id="wf-9d")
     )
     await asyncio.sleep(0.02)
     cancelled_token.cancel()
@@ -386,9 +384,7 @@ async def test_cancelled_mid_flight_completes_without_raising_an_invalid_transit
 async def test_step_receives_only_its_direct_dependencies_outputs() -> None:
     # Diamond: a -> b, a -> c, b & c -> d. d must see only b and c's output,
     # never a's, even though a succeeded earlier in the same run.
-    runner = FakeStepRunner(
-        outputs={"a": {"from": "a"}, "b": {"from": "b"}, "c": {"from": "c"}}
-    )
+    runner = FakeStepRunner(outputs={"a": {"from": "a"}, "b": {"from": "b"}, "c": {"from": "c"}})
     scheduler = GraphScheduler(runner)
     definition = _definition(
         [
@@ -463,9 +459,7 @@ async def test_skip_cascade_ordering_is_reproducible_across_runs() -> None:
         scheduler = GraphScheduler(runner)
         sink = RecordingStateSink()
         await scheduler.run(definition, workflow_id="wf-skip-repro", sink=sink)
-        skip_order = [
-            event.step_id for event in sink.events if event.event_type == "step.skipped"
-        ]
+        skip_order = [event.step_id for event in sink.events if event.event_type == "step.skipped"]
         orders.append(skip_order)
     assert all(order == orders[0] for order in orders)
 

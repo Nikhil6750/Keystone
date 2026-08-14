@@ -41,7 +41,7 @@ router = APIRouter(prefix="/orchestrations", tags=["orchestrations"])
 # Bounded keepalive so a genuinely idle-but-still-running connection is not
 # silently dropped by an intermediary proxy -- sent only as an SSE comment
 # line (never a real event, never affects `sequence`/history).
-_HEARTBEAT_SECONDS = 15.0
+_HEARTBEAT_SECONDS = 2.5
 
 _TERMINAL_EVENT_TYPES = frozenset(
     {"execution.completed", "execution.failed", "execution.cancelled"}
@@ -97,9 +97,7 @@ async def get_orchestration_execution(
         verification_status=result.verification_status if result is not None else None,
         task_count=result.task_count if result is not None else None,
         selected_agent_types=result.selected_agent_types if result is not None else (),
-        learning_event_count=(
-            len(result.learning_event_ids) if result is not None else None
-        ),
+        learning_event_count=(len(result.learning_event_ids) if result is not None else None),
         retrieval_feedback_recorded=(
             result.retrieval_feedback_recorded if result is not None else None
         ),

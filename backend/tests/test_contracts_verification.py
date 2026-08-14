@@ -86,9 +86,7 @@ def test_requires_human_review_may_optionally_carry_a_failure_reason() -> None:
 
 def test_confidence_must_be_between_zero_and_one() -> None:
     with pytest.raises(ValidationError):
-        VerificationResult.model_validate(
-            _result(status=VerificationStatus.PASSED, confidence=1.5)
-        )
+        VerificationResult.model_validate(_result(status=VerificationStatus.PASSED, confidence=1.5))
     with pytest.raises(ValidationError):
         VerificationResult.model_validate(
             _result(status=VerificationStatus.PASSED, confidence=-0.1)

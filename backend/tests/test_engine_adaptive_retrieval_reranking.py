@@ -96,7 +96,10 @@ def test_disabled_policy_ignores_supplied_passports() -> None:
     retriever = AdaptiveRetriever(policy=AdaptiveRetrievalPolicy(enabled=False))
     ranked = results_only(
         retriever.retrieve(
-            index, request, task_type="fix", repository_id="org/repo",
+            index,
+            request,
+            task_type="fix",
+            repository_id="org/repo",
             production_passports=passports,
         )
     )
@@ -255,9 +258,7 @@ def test_adaptive_output_compatible_with_context_builder() -> None:
     request = KnowledgeSearchRequest(query="reliability", limit=5)
     chunk_ids = [c.chunk_id for c in index.all_chunks()]
 
-    feedback = _feedback_for(
-        chunk_ids[0], n=6, verification_status=VerificationStatus.PASSED
-    )
+    feedback = _feedback_for(chunk_ids[0], n=6, verification_status=VerificationStatus.PASSED)
     passports = rebuild_all_retrieval_passports(feedback)
     retriever = AdaptiveRetriever(policy=AdaptiveRetrievalPolicy(enabled=True))
     ranked = retriever.retrieve(
@@ -313,8 +314,12 @@ def test_production_evidence_used_over_benchmark_when_both_sufficient() -> None:
     policy = AdaptiveRetrievalPolicy(enabled=True, allow_benchmark_evidence=True)
     retriever = AdaptiveRetriever(policy=policy)
     ranked = retriever.retrieve(
-        index, request, task_type="fix", repository_id="org/repo",
-        production_passports=production_passports, benchmark_passports=benchmark_passports,
+        index,
+        request,
+        task_type="fix",
+        repository_id="org/repo",
+        production_passports=production_passports,
+        benchmark_passports=benchmark_passports,
     )
     assert ranked[0].evidence.source == "production"
     # reflects production's PASSED history, not benchmark's opposite FAILED signal
@@ -346,7 +351,10 @@ def test_benchmark_evidence_only_used_as_fallback_never_blended() -> None:
     policy = AdaptiveRetrievalPolicy(enabled=True, allow_benchmark_evidence=True)
     retriever = AdaptiveRetriever(policy=policy)
     ranked = retriever.retrieve(
-        index, request, task_type="fix", repository_id="org/repo",
+        index,
+        request,
+        task_type="fix",
+        repository_id="org/repo",
         benchmark_passports=benchmark_passports,
     )
     assert ranked[0].evidence.source == "benchmark"
@@ -377,7 +385,10 @@ def test_benchmark_evidence_ignored_when_policy_disallows_it() -> None:
     policy = AdaptiveRetrievalPolicy(enabled=True, allow_benchmark_evidence=False)
     retriever = AdaptiveRetriever(policy=policy)
     ranked = retriever.retrieve(
-        index, request, task_type="fix", repository_id="org/repo",
+        index,
+        request,
+        task_type="fix",
+        repository_id="org/repo",
         benchmark_passports=benchmark_passports,
     )
     assert ranked[0].evidence.source == "none"

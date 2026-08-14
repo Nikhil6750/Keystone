@@ -77,9 +77,9 @@ def _normal_text(
     selected = decision.selected_agent_type
     eligible_count = sum(1 for c in decision.candidates if c.eligible)
     contributions = score_contributions.get(selected, []) if selected else []
-    top = sorted(
-        contributions, key=lambda c: (-(c.weighted_contribution or 0.0), c.factor_name)
-    )[:_TOP_FACTOR_COUNT]
+    top = sorted(contributions, key=lambda c: (-(c.weighted_contribution or 0.0), c.factor_name))[
+        :_TOP_FACTOR_COUNT
+    ]
     selected_score = next((c for c in decision.candidates if c.agent_type == selected), None)
     sample_size = selected_score.sample_size if selected_score is not None else 0
     second = decision.fallback_order[0] if decision.fallback_order else None

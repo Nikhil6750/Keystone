@@ -283,7 +283,6 @@ def test_invalid_latency_evidence_scores_neutral_not_perfect(bad_latency: float)
     assert score.latency_score == 0.5
 
 
-
 def test_malformed_bucket_reliability_defensively_stays_bounded() -> None:
     """`AgentPassportMetricBucket` itself now rejects `success_count >
     execution_count` at construction; `model_construct` bypasses that to
@@ -524,9 +523,7 @@ def test_request_only_required_capability_is_enforced() -> None:
 
 def test_constraints_only_required_capability_is_enforced() -> None:
     candidate = _candidate(capabilities=[AgentCapability.DOCUMENTATION])
-    request = _request(
-        constraints=RoutingConstraints(required_capabilities=["code_generation"])
-    )
+    request = _request(constraints=RoutingConstraints(required_capabilities=["code_generation"]))
     assert (
         eligibility_violation(candidate, request, NullEvidenceProvider())
         == "missing required capabilities: code_generation"
@@ -670,9 +667,7 @@ def test_evidence_snapshot_preserves_raw_success_and_execution_counts() -> None:
             )
         },
         by_repository={
-            ("claude_code", "repo-1"): AgentPassportMetricBucket(
-                execution_count=2, success_count=1
-            )
+            ("claude_code", "repo-1"): AgentPassportMetricBucket(execution_count=2, success_count=1)
         },
     )
     request = _request(repository=RepositoryMetadata(repository_id="repo-1"))

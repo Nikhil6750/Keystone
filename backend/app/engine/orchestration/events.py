@@ -120,6 +120,7 @@ class OrchestrationEvent:
     verification_status: str | None = None
     safe_issue_codes: tuple[str, ...] = field(default_factory=tuple)
     message: str | None = None
+    elapsed_seconds: float | None = None
 
 
 class OrchestrationEventSink(Protocol):

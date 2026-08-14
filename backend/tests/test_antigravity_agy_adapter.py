@@ -183,9 +183,7 @@ def test_adapter_uses_exact_argv_and_workspace_cwd(tmp_path: Path) -> None:
     assert "Create hello.txt" in arguments[1]
 
 
-def test_activation_registers_only_executable_agy_cli(
-    tmp_path: Path, monkeypatch: object
-) -> None:
+def test_activation_registers_only_executable_agy_cli(tmp_path: Path, monkeypatch: object) -> None:
     registry = ExecutorRegistry()
     settings = Settings()
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "empty1"))

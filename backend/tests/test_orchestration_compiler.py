@@ -16,9 +16,7 @@ def _task(key: str, **overrides: object) -> TaskSpec:
 
 
 def _plan(tasks: list[TaskSpec]) -> WorkflowPlan:
-    return WorkflowPlan(
-        plan_id="plan-1", goal="goal", tasks=tasks, created_at=datetime.now(UTC)
-    )
+    return WorkflowPlan(plan_id="plan-1", goal="goal", tasks=tasks, created_at=datetime.now(UTC))
 
 
 def test_topological_order_respects_dependencies() -> None:

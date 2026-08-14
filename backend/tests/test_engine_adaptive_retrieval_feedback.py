@@ -245,8 +245,7 @@ def test_benchmark_feedback_id_matches_pre_hardening_format() -> None:
         execution_id=None,
     )
     expected = (
-        "feedback::retrieval::fp1::fix::org/repo::c1,c2::passed::succeeded::benchmark::"
-        "campaign-1"
+        "feedback::retrieval::fp1::fix::org/repo::c1,c2::passed::succeeded::benchmark::campaign-1"
     )
     assert fb.feedback_id == expected
 

@@ -147,8 +147,7 @@ def bucket_from_events(events: list[LearningEvent]) -> LearningBucket:
     failure_count = sum(
         1
         for event in events
-        if event.execution_status
-        in (AgentExecutionStatus.FAILED, AgentExecutionStatus.TIMED_OUT)
+        if event.execution_status in (AgentExecutionStatus.FAILED, AgentExecutionStatus.TIMED_OUT)
     )
 
     durations = sorted(event.duration_ms for event in events if event.duration_ms is not None)

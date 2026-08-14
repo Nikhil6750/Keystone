@@ -2,6 +2,7 @@
 
 import time
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy.orm import Session
@@ -89,19 +90,21 @@ async def test_workflow_engine_real_concurrency_timestamp_overlap(db_session: Se
     s2_start = timestamps[s2_id]["start"]
     s2_end = timestamps[s2_id]["end"]
 
-    # Prove actual timestamp overlap: S1 started before S2 ended, and S2 started before S1 ended!
+    # Prove actual timestamp overlap: A.start < B.end AND B.start < A.end
     assert s1_start < s2_end, f"Expected s1_start ({s1_start}) < s2_end ({s2_end})"
     assert s2_start < s1_end, f"Expected s2_start ({s2_start}) < s1_end ({s1_end})"
 
 
 @pytest.mark.asyncio
-async def test_workflow_engine_concurrency_serialization_rules(db_session: Session) -> None:
-    """Prove that overlapping target files or UNKNOWN ownership forces serialization."""
+async def test_workflow_engine_strict_serialization_for_conflicting_tasks(
+    db_session: Session,
+) -> None:
+    """Prove strictly that two conflicting tasks NEVER overlap in time."""
     registry = ExecutorRegistry()
-    registry.register("codex", SleepyExecutor("codex", sleep_seconds=0.15))
-    registry.register("antigravity", SleepyExecutor("antigravity", sleep_seconds=0.15))
+    registry.register("codex", SleepyExecutor("codex", sleep_seconds=0.2))
+    registry.register("antigravity", SleepyExecutor("antigravity", sleep_seconds=0.2))
 
-    # T1 and T2 overlap on 'shared.js' -> must serialize
+    # T1 and T2 both target 'shared.js' -> strict conflict
     step1 = WorkflowStepCreate(
         name="T1",
         position=0,
@@ -128,8 +131,8 @@ async def test_workflow_engine_concurrency_serialization_rules(db_session: Sessi
     )
 
     create_req = WorkflowCreate(
-        name="Overlap Serialized Test",
-        description="Serial test",
+        name="Conflict Serialized Test",
+        description="Serial overlap test",
         steps=[step1, step2],
     )
     workflow = workflow_service.create_workflow(db_session, create_req)
@@ -141,8 +144,103 @@ async def test_workflow_engine_concurrency_serialization_rules(db_session: Sessi
     steps_by_pos = sorted(executed.steps, key=lambda s: s.position)
     s1_id, s2_id = steps_by_pos[0].id, steps_by_pos[1].id
 
+    s1_start = timestamps[s1_id]["start"]
     s1_end = timestamps[s1_id]["end"]
     s2_start = timestamps[s2_id]["start"]
+    s2_end = timestamps[s2_id]["end"]
 
-    # Overlapping target files -> S2 must start after or equal to S1 end
-    assert s2_start >= s1_end or timestamps[s2_id]["end"] >= timestamps[s1_id]["end"]
+    # Strict serialization check: task2.start >= task1.end OR task1.start >= task2.end
+    no_overlap = (s2_start >= s1_end) or (s1_start >= s2_end)
+    msg = (
+        "Conflicting tasks must not overlap: "
+        f"S1[{s1_start} - {s1_end}] vs S2[{s2_start} - {s2_end}]"
+    )
+    assert no_overlap, msg
+
+
+@pytest.mark.asyncio
+async def test_workflow_engine_unknown_ownership_serializes(db_session: Session) -> None:
+    """Prove that Unknown file ownership conservatively serializes tasks."""
+    registry = ExecutorRegistry()
+    registry.register("codex", SleepyExecutor("codex", sleep_seconds=0.2))
+    registry.register("antigravity", SleepyExecutor("antigravity", sleep_seconds=0.2))
+
+    step1 = WorkflowStepCreate(
+        name="T1",
+        position=0,
+        agent_type="codex",
+        input_payload={
+            "task_key": "T1",
+            "depends_on": [],
+            "target_files": [],
+            "target_files_ownership": "UNKNOWN",
+            "parallel_safe": False,
+        },
+    )
+    step2 = WorkflowStepCreate(
+        name="T2",
+        position=1,
+        agent_type="antigravity",
+        input_payload={
+            "task_key": "T2",
+            "depends_on": [],
+            "target_files": ["server.py"],
+            "target_files_ownership": "KNOWN",
+            "parallel_safe": True,
+        },
+    )
+
+    create_req = WorkflowCreate(
+        name="Unknown Serialization Test",
+        description="Unknown serial test",
+        steps=[step1, step2],
+    )
+    workflow = workflow_service.create_workflow(db_session, create_req)
+
+    engine = WorkflowEngine(db_session, registry)
+    executed, timestamps = await engine.execute_workflow_async(workflow.id, max_concurrency=3)
+
+    assert WorkflowStatus(executed.status) == WorkflowStatus.SUCCEEDED
+    steps_by_pos = sorted(executed.steps, key=lambda s: s.position)
+    s1_id, s2_id = steps_by_pos[0].id, steps_by_pos[1].id
+
+    s1_start = timestamps[s1_id]["start"]
+    s1_end = timestamps[s1_id]["end"]
+    s2_start = timestamps[s2_id]["start"]
+    s2_end = timestamps[s2_id]["end"]
+
+    # Unknown must not overlap
+    no_overlap = (s2_start >= s1_end) or (s1_start >= s2_end)
+    assert no_overlap, "Tasks must not overlap when one has UNKNOWN files"
+
+
+@pytest.mark.asyncio
+async def test_workflow_engine_fails_safely_when_worker_session_creation_fails(
+    db_session: Session,
+) -> None:
+    """Prove that if worker session factory fails, worker fails safely and NEVER
+    silently reuses the shared parent SQLAlchemy session."""
+    registry = ExecutorRegistry()
+    registry.register("codex", SleepyExecutor("codex", sleep_seconds=0.1))
+
+    step1 = WorkflowStepCreate(
+        name="T1",
+        position=0,
+        agent_type="codex",
+        input_payload={"task_key": "T1", "depends_on": [], "target_files": ["a.py"]},
+    )
+    create_req = WorkflowCreate(
+        name="Session Failure Safety Test",
+        description="Safe failure test",
+        steps=[step1],
+    )
+    workflow = workflow_service.create_workflow(db_session, create_req)
+
+    mock_db = MagicMock(spec=db_session)
+    mock_db.get_bind.side_effect = RuntimeError("Cannot bind engine for worker")
+    mock_eng = WorkflowEngine(mock_db, registry)
+
+    with pytest.raises(RuntimeError) as exc:
+        mock_eng._execute_step(workflow, workflow.steps[0], MagicMock())
+
+    assert "Failed to create independent database session for worker step" in str(exc.value)

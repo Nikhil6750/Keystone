@@ -519,9 +519,7 @@ def test_file_diff_require_non_empty_files_changed_true_inconclusive_when_missin
     assert outcome.status is VerificationStatus.INCONCLUSIVE
 
 
-@pytest.mark.parametrize(
-    "key", ["require_non_empty_diff", "require_non_empty_files_changed"]
-)
+@pytest.mark.parametrize("key", ["require_non_empty_diff", "require_non_empty_files_changed"])
 def test_file_diff_raises_on_malformed_boolean_criteria(key: str) -> None:
     with pytest.raises(MalformedExpectedOutcomeError):
         evaluate_file_diff({key: "yes"}, ObservedOutcome({"diff": "+line"}))

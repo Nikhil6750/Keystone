@@ -125,9 +125,7 @@ def test_workflow_succeeds_through_antigravity_adapter(
         timeout_seconds=300.0,
         max_output_characters=50000,
     )
-    runner = FakeProcessRunner(
-        result=ProcessResult(exit_code=0, stdout="KEYSTONE_OK", stderr="")
-    )
+    runner = FakeProcessRunner(result=ProcessResult(exit_code=0, stdout="KEYSTONE_OK", stderr=""))
     executor_registry.register(
         "antigravity",
         AntigravityAdapter(profile, runner, PromptBuilder(max_prompt_characters=20000)),

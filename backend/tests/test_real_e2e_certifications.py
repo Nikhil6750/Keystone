@@ -42,9 +42,9 @@ class CalculatorAgentExecutor:
 
         # Write index.html
         (root / "index.html").write_text(
-            "<!DOCTYPE html>\n<html>\n<head><link rel=\"stylesheet\" href=\"styles.css\"></head>\n"
-            "<body><div id=\"app\"><h1>Calculator</h1></div>"
-            "<script src=\"script.js\"></script></body>\n</html>\n",
+            '<!DOCTYPE html>\n<html>\n<head><link rel="stylesheet" href="styles.css"></head>\n'
+            '<body><div id="app"><h1>Calculator</h1></div>'
+            '<script src="script.js"></script></body>\n</html>\n',
             encoding="utf-8",
         )
         # Write styles.css
@@ -103,9 +103,9 @@ class ConcurrentTaskTrackerAgentExecutor:
 
         if self.agent_id == "qwen-coder":
             (root / "index.html").write_text(
-                "<!DOCTYPE html>\n<html><head><link rel=\"stylesheet\" href=\"styles.css\"></head>"
-                "<body><div id=\"app\"><h1>Task Tracker</h1></div>"
-                "<script src=\"app.js\"></script></body></html>\n",
+                '<!DOCTYPE html>\n<html><head><link rel="stylesheet" href="styles.css"></head>'
+                '<body><div id="app"><h1>Task Tracker</h1></div>'
+                '<script src="app.js"></script></body></html>\n',
                 encoding="utf-8",
             )
             (root / "styles.css").write_text(
@@ -159,12 +159,8 @@ async def test_e2e_calculator_v2(db_session: Session) -> None:
     service = EndToEndOrchestrationService(
         db=db_session,
         registry=registry,
-        candidate_provider=StaticCandidateProvider(
-            agents=(build_candidate("qwen-coder"),)
-        ),
-        circuit_breakers=CircuitBreakerRegistry(
-            failure_threshold=3, recovery_timeout_seconds=30.0
-        ),
+        candidate_provider=StaticCandidateProvider(agents=(build_candidate("qwen-coder"),)),
+        circuit_breakers=CircuitBreakerRegistry(failure_threshold=3, recovery_timeout_seconds=30.0),
     )
 
     req = OrchestrationRequest.model_validate(
@@ -209,9 +205,7 @@ async def test_e2e_multi_agent_certification_concurrency(db_session: Session) ->
         candidate_provider=StaticCandidateProvider(
             agents=(build_candidate("qwen-coder"), build_candidate("corp-reviewer"))
         ),
-        circuit_breakers=CircuitBreakerRegistry(
-            failure_threshold=3, recovery_timeout_seconds=30.0
-        ),
+        circuit_breakers=CircuitBreakerRegistry(failure_threshold=3, recovery_timeout_seconds=30.0),
     )
 
     req = OrchestrationRequest.model_validate(
@@ -260,12 +254,8 @@ async def test_e2e_reroute_unavailable_agent(db_session: Session) -> None:
     service = EndToEndOrchestrationService(
         db=db_session,
         registry=registry,
-        candidate_provider=StaticCandidateProvider(
-            agents=(build_candidate("healthy-agent"),)
-        ),
-        circuit_breakers=CircuitBreakerRegistry(
-            failure_threshold=3, recovery_timeout_seconds=30.0
-        ),
+        candidate_provider=StaticCandidateProvider(agents=(build_candidate("healthy-agent"),)),
+        circuit_breakers=CircuitBreakerRegistry(failure_threshold=3, recovery_timeout_seconds=30.0),
     )
 
     req = OrchestrationRequest.model_validate(

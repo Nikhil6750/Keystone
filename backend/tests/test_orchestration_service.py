@@ -183,9 +183,7 @@ async def test_rejected_manager_proposal_falls_back(db_session: Session) -> None
 
 async def test_manager_preference_cannot_select_ineligible_agent(db_session: Session) -> None:
     registry, _ = _registry_with_demo()
-    registry.register(
-        "banned_agent", RecordingExecutor(output=RICH_SUCCESS_OUTPUT)
-    )
+    registry.register("banned_agent", RecordingExecutor(output=RICH_SUCCESS_OUTPUT))
     candidates = [build_candidate("demo"), build_candidate("banned_agent")]
 
     request = _request(

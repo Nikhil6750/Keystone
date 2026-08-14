@@ -84,7 +84,11 @@ class CompiledTaskNode(BaseModel):
 
 
 class TaskGraphCompilerV2:
-    """Agent-independent deterministic Task Graph Compiler."""
+    """Agent-independent deterministic Task Graph Compiler.
+
+    Analyzes goal structure, extracts concerns, workspace context, and dependencies
+    dynamically without rigid keyword-to-template dispatching.
+    """
 
     MAX_TASKS = 10
     MAX_DEPTH = 5
@@ -96,370 +100,847 @@ class TaskGraphCompilerV2:
         project_metadata: dict[str, Any] | None = None,
         user_constraints: dict[str, Any] | None = None,
     ) -> list[CompiledTaskNode]:
-        """Compile a user goal into a typed executable DAG task graph."""
+        """Compile a user goal and context into a typed executable DAG task graph."""
         if not goal or not goal.strip():
             raise ValueError("goal must not be empty")
 
         goal_clean = goal.strip()
-        lower_goal = goal_clean.lower()
-        complexity = self._classify_complexity(lower_goal, workspace_context, project_metadata)
+        analysis = self._analyze_goal_structure(
+            goal_clean, workspace_context, project_metadata, user_constraints
+        )
 
-        # Detect structural domains and requested files
-        frontend_keywords = {
-            "html", "css", "js", "javascript", "frontend",
-            "ui", "web", "page", "dashboard", "calculator",
-        }
-        backend_keywords = {
-            "python", "api", "backend", "server", "express", "fastapi", "flask", "endpoint", "rest"
-        }
-
-        words = set(re.findall(r"\b\w+\b", lower_goal))
-        has_frontend = bool(words & frontend_keywords)
-        has_backend = bool(words & backend_keywords)
-
-        # Extract explicit file paths requested in goal
-        explicit_files = re.findall(r"\b[\w\.-]+\.(?:html|css|js|py|ts|jsx|tsx|json)\b", lower_goal)
-
-        nodes: list[CompiledTaskNode] = []
-
-        if has_frontend and has_backend:
-            nodes = self._compile_fullstack_structure(goal_clean, explicit_files)
-        elif has_frontend or any(f.endswith((".html", ".css", ".js")) for f in explicit_files):
-            nodes = self._compile_frontend_structure(goal_clean, explicit_files)
-        elif has_backend or any(f.endswith(".py") for f in explicit_files):
-            nodes = self._compile_backend_structure(goal_clean, explicit_files)
-        elif complexity == ComplexityLevel.TRIVIAL or complexity == ComplexityLevel.SIMPLE:
-            nodes = self._compile_simple_structure(goal_clean, explicit_files)
-        else:
-            nodes = self._compile_medium_structure(goal_clean, explicit_files, complexity)
+        nodes = self._extract_concerns_and_build_dag(analysis)
 
         # Enforce parallel safety derivation from file ownership & overlaps
         self._derive_parallel_safety(nodes)
 
-        # Validate bounds (tasks count, duplicate IDs, cycles, MAX_DEPTH)
+        # Validate bounds (task count limit, duplicate IDs, cycles, MAX_DEPTH)
         self._validate_and_bound_graph(nodes)
 
         return nodes
 
-    def _derive_parallel_safety(self, nodes: list[CompiledTaskNode]) -> None:
-        """Derive parallel_safe dynamically from file ownership and target file overlap."""
-        node_map = {n.task_id: n for n in nodes}
-
-        def is_dependent(a_id: str, b_id: str) -> bool:
-            """Check if a_id depends on b_id (directly or transitively)."""
-            visited: set[str] = set()
-            stack = list(node_map[a_id].dependencies) if a_id in node_map else []
-            while stack:
-                curr = stack.pop()
-                if curr == b_id:
-                    return True
-                if curr not in visited and curr in node_map:
-                    visited.add(curr)
-                    stack.extend(node_map[curr].dependencies)
-            return False
-
-        for i, node in enumerate(nodes):
-            if node.target_files_ownership != TargetFileOwnership.KNOWN or not node.target_files:
-                node.parallel_safe = False
-                continue
-
-            # Check target_file overlaps with concurrent (non-dependent) sibling nodes
-            has_concurrent_overlap = False
-            for j, other in enumerate(nodes):
-                if i == j:
-                    continue
-                # If A depends on B or B depends on A, they are sequential, not concurrent
-                is_dep = is_dependent(node.task_id, other.task_id) or is_dependent(
-                    other.task_id, node.task_id
-                )
-                if is_dep:
-                    continue
-                # If two non-dependent nodes share target files, they cannot run concurrently safely
-                if set(node.target_files) & set(other.target_files):
-                    has_concurrent_overlap = True
-                    break
-
-            node.parallel_safe = not has_concurrent_overlap
-
-    def _classify_complexity(
+    def _analyze_goal_structure(
         self,
-        lower_goal: str,
+        goal: str,
         workspace_context: dict[str, Any] | None,
         project_metadata: dict[str, Any] | None,
-    ) -> ComplexityLevel:
-        signals = 0
-        fs_words = ["full-stack", "fullstack", "frontend", "backend", "database", "api"]
-        if any(w in lower_goal for w in fs_words):
-            signals += 2
-        if any(w in lower_goal for w in ["test", "tests", "unit test", "integration"]):
-            signals += 1
-        if any(w in lower_goal for w in ["auth", "security", "migration", "deployment"]):
-            signals += 2
+        user_constraints: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        lower_goal = goal.lower()
+        words = set(re.findall(r"\b[a-z0-9_-]+\b", lower_goal))
 
-        words = len(lower_goal.split())
-        if words < 6 and signals == 0:
-            return ComplexityLevel.TRIVIAL
-        elif signals <= 1 and words < 20:
-            return ComplexityLevel.SIMPLE
-        elif signals <= 3:
-            return ComplexityLevel.MEDIUM
+        # Explicit target files extracted from goal
+        explicit_files = re.findall(
+            r"\b[\w\.-]+\.(?:py|js|ts|tsx|jsx|html|css|json|sql|sh|md|yaml|yml)\b", lower_goal
+        )
+        if user_constraints and "target_files" in user_constraints:
+            explicit_files.extend(user_constraints["target_files"])
+        explicit_files = list(dict.fromkeys(explicit_files))
+
+        # Workspace context signals
+        ws_files: list[str] = []
+        if workspace_context and "files" in workspace_context:
+            ws_files = list(workspace_context["files"])
+
+        # Detect Action Verbs
+        action_verbs = {
+            "create": bool(words & {"create", "build", "generate", "scaffold", "new"}),
+            "add": bool(words & {"add", "include", "implement", "introduce"}),
+            "modify": bool(words & {"modify", "edit", "change", "update", "patch", "fix", "debug"}),
+            "refactor": bool(
+                words & {"refactor", "restructure", "clean", "modularize", "reorganize"}
+            ),
+            "remove": bool(words & {"remove", "delete", "deprecate"}),
+            "test": bool(words & {"test", "tests", "testing", "coverage", "verify", "unit-test"}),
+            "migrate": bool(words & {"migrate", "migration", "alembic", "schema"}),
+            "integrate": bool(words & {"integrate", "connect", "wire", "bridge"}),
+        }
+
+        # Technical Domains
+        has_db = bool(
+            words
+            & {
+                "database",
+                "db",
+                "postgres",
+                "postgresql",
+                "sql",
+                "migration",
+                "alembic",
+                "schema",
+                "models",
+            }
+        )
+        has_cli = bool(
+            words & {"cli", "command", "argparse", "click", "typer", "terminal", "utility"}
+        )
+        has_pipeline = bool(
+            words
+            & {
+                "pipeline",
+                "etl",
+                "ingestion",
+                "extractor",
+                "transformer",
+                "stream",
+                "batch",
+                "data",
+            }
+            and not has_cli
+        )
+        has_auth = bool(
+            words
+            & {"auth", "authentication", "login", "jwt", "oauth", "password", "session", "security"}
+        )
+        has_frontend = bool(
+            words
+            & {
+                "frontend",
+                "ui",
+                "interface",
+                "html",
+                "css",
+                "js",
+                "javascript",
+                "react",
+                "vue",
+                "landing",
+                "page",
+                "web",
+            }
+            or any(
+                f.endswith((".html", ".css", ".js", ".jsx", ".tsx", ".vue")) for f in explicit_files
+            )
+        )
+        has_backend = bool(
+            words
+            & {
+                "backend",
+                "api",
+                "server",
+                "endpoint",
+                "fastapi",
+                "flask",
+                "django",
+                "express",
+                "rest",
+                "service",
+            }
+            or any(f.endswith(".py") for f in explicit_files)
+            or has_auth
+        )
+        has_tests_only = (
+            bool(words & {"test", "tests"})
+            and ("only" in words or "add tests" in lower_goal or "write tests" in lower_goal)
+            and not (words & {"app", "feature", "build", "pipeline", "migration", "cli"})
+        )
+        is_function_mod = (
+            (
+                "function" in words
+                or "method" in words
+                or "one function" in lower_goal
+                or "single function" in lower_goal
+            )
+            and bool(action_verbs["modify"] or action_verbs["add"])
+            and not (words & {"full-stack", "fullstack", "pipeline", "migration"})
+        )
+        is_refactor = bool(action_verbs["refactor"]) and not (
+            words & {"full-stack", "fullstack", "pipeline"}
+        )
+
+        # Recognize full-stack
+        if (
+            "full-stack" in lower_goal
+            or "fullstack" in lower_goal
+            or (has_frontend and has_backend and not has_tests_only)
+        ):
+            is_fullstack = True
         else:
-            return ComplexityLevel.LARGE
+            is_fullstack = False
 
-    def _compile_frontend_structure(
-        self, goal: str, explicit_files: list[str]
-    ) -> list[CompiledTaskNode]:
-        default_fe = ["index.html", "styles.css", "script.js"]
-        target_files = list(dict.fromkeys(explicit_files)) if explicit_files else default_fe
-
-        t1 = CompiledTaskNode(
-            task_id="T1",
-            task_type="code_generation",
-            title="Implement frontend application",
-            objective=f"Implement frontend user interface for: {goal}",
-            dependencies=[],
-            required_capabilities=[AgentCapability.CODE_GENERATION, AgentCapability.FILE_EDITING],
-            preferred_capabilities=[AgentCapability.DEBUGGING],
-            target_files=target_files,
-            target_files_ownership=TargetFileOwnership.KNOWN,
-            verification_requirements={},
-            parallel_safe=False,
-            estimated_complexity=ComplexityLevel.SIMPLE,
+        # Inferred Language/Framework
+        is_python = bool(
+            "python" in lower_goal
+            or "fastapi" in lower_goal
+            or "flask" in lower_goal
+            or "django" in lower_goal
+            or any(f.endswith(".py") for f in explicit_files)
+            or any(f.endswith(".py") for f in ws_files)
+        )
+        is_node = bool(
+            "node" in lower_goal
+            or "javascript" in lower_goal
+            or "npm" in lower_goal
+            or any(f.endswith((".js", ".ts", ".jsx", ".tsx")) for f in explicit_files)
         )
 
-        t2 = CompiledTaskNode(
-            task_id="T2",
-            task_type="test_generation",
-            title="Add automated test suite",
-            objective="Add automated tests verifying frontend application functionality.",
-            dependencies=["T1"],
-            required_capabilities=[AgentCapability.TEST_GENERATION, AgentCapability.FILE_EDITING],
-            preferred_capabilities=[AgentCapability.CODE_GENERATION],
-            target_files=["test/app.test.js"],
-            target_files_ownership=TargetFileOwnership.KNOWN,
-            verification_requirements={
-                "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
-                "criteria": {"command": "node --test"},
-                "description": "Run node test runner for frontend logic",
-            },
-            parallel_safe=False,
-            estimated_complexity=ComplexityLevel.SIMPLE,
-        )
+        return {
+            "goal": goal,
+            "lower_goal": lower_goal,
+            "words": words,
+            "explicit_files": explicit_files,
+            "workspace_files": ws_files,
+            "action_verbs": action_verbs,
+            "has_db": has_db,
+            "has_cli": has_cli,
+            "has_pipeline": has_pipeline,
+            "has_auth": has_auth,
+            "has_frontend": has_frontend,
+            "has_backend": has_backend,
+            "has_tests_only": has_tests_only,
+            "is_function_mod": is_function_mod,
+            "is_refactor": is_refactor,
+            "is_fullstack": is_fullstack,
+            "is_python": is_python,
+            "is_node": is_node,
+        }
 
-        t3 = CompiledTaskNode(
-            task_id="T3",
-            task_type="objective_verification",
-            title="Final objective verification",
-            objective="Verify workspace artifacts, test exit codes, and application correctness.",
-            dependencies=["T2"],
-            required_capabilities=[AgentCapability.FILE_EDITING],
-            preferred_capabilities=[],
-            target_files=[],
-            target_files_ownership=TargetFileOwnership.KNOWN,
-            verification_requirements={
-                "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
-                "criteria": {"command": "node --test"},
-                "description": "Objective verification of frontend outcome",
-            },
-            parallel_safe=False,
-            estimated_complexity=ComplexityLevel.TRIVIAL,
-        )
+    def _extract_concerns_and_build_dag(self, analysis: dict[str, Any]) -> list[CompiledTaskNode]:
+        goal = analysis["goal"]
+        explicit_files = analysis["explicit_files"]
 
-        return [t1, t2, t3]
+        # Case 1: Tests only (no unrelated code generation tasks)
+        if analysis["has_tests_only"]:
+            target_files = explicit_files or [
+                "tests/test_suite.py" if analysis["is_python"] else "test/app.test.js"
+            ]
+            eval_cmd = "python -m unittest" if analysis["is_python"] else "node --test"
+            t1 = CompiledTaskNode(
+                task_id="T1",
+                task_type="test_generation",
+                title="Author automated test suite",
+                objective=f"Write comprehensive automated tests for: {goal}",
+                dependencies=[],
+                required_capabilities=[
+                    AgentCapability.TEST_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[AgentCapability.CODE_GENERATION],
+                target_files=target_files,
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": eval_cmd},
+                    "description": "Execute authored test suite",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.SIMPLE,
+            )
+            t2 = CompiledTaskNode(
+                task_id="T2",
+                task_type="objective_verification",
+                title="Verify test execution",
+                objective="Confirm all test cases execute and pass cleanly.",
+                dependencies=["T1"],
+                required_capabilities=[AgentCapability.FILE_EDITING],
+                preferred_capabilities=[],
+                target_files=[],
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": eval_cmd},
+                    "description": "Objective verification of test run outcome",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.TRIVIAL,
+            )
+            return [t1, t2]
 
-    def _compile_fullstack_structure(
-        self, goal: str, explicit_files: list[str]
-    ) -> list[CompiledTaskNode]:
-        default_fe = ["index.html", "styles.css", "app.js"]
-        fe_files = [f for f in explicit_files if f.endswith((".html", ".css", ".js"))] or default_fe
-        be_files = [f for f in explicit_files if f.endswith(".py")] or ["server.py", "api.py"]
+        # Case 2: Small targeted function modification / patch
+        if analysis["is_function_mod"]:
+            target_files = explicit_files or (["main.py"] if analysis["is_python"] else ["app.js"])
+            eval_cmd = "python -m unittest" if analysis["is_python"] else "node --test"
+            t1 = CompiledTaskNode(
+                task_id="T1",
+                task_type="code_modification",
+                title="Modify targeted function",
+                objective=f"Implement targeted function modification for: {goal}",
+                dependencies=[],
+                required_capabilities=[
+                    AgentCapability.CODE_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[AgentCapability.DEBUGGING],
+                target_files=target_files,
+                target_files_ownership=TargetFileOwnership.KNOWN
+                if explicit_files
+                else TargetFileOwnership.PARTIAL,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": eval_cmd},
+                    "description": "Verify function syntax and basic execution",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.TRIVIAL,
+            )
+            t2 = CompiledTaskNode(
+                task_id="T2",
+                task_type="objective_verification",
+                title="Verify function modification",
+                objective="Ensure modified function satisfies contract without regressions.",
+                dependencies=["T1"],
+                required_capabilities=[AgentCapability.FILE_EDITING],
+                preferred_capabilities=[],
+                target_files=[],
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": eval_cmd},
+                    "description": "Verify function changes",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.TRIVIAL,
+            )
+            return [t1, t2]
 
-        t1 = CompiledTaskNode(
-            task_id="T1",
-            task_type="frontend_development",
-            title="Build frontend interface",
-            objective="Implement frontend user interface.",
-            dependencies=[],
-            required_capabilities=[AgentCapability.CODE_GENERATION, AgentCapability.FILE_EDITING],
-            preferred_capabilities=[],
-            target_files=fe_files,
-            target_files_ownership=TargetFileOwnership.KNOWN,
-            verification_requirements={},
-            parallel_safe=True,
-            estimated_complexity=ComplexityLevel.MEDIUM,
-        )
+        # Case 3: Refactoring existing module
+        if analysis["is_refactor"]:
+            target_files = explicit_files or ["module.py"]
+            eval_cmd = "python -m unittest" if analysis["is_python"] else "node --test"
+            t1 = CompiledTaskNode(
+                task_id="T1",
+                task_type="refactoring",
+                title="Refactor targeted module",
+                objective=f"Restructure code and improve modularity for: {goal}",
+                dependencies=[],
+                required_capabilities=[
+                    AgentCapability.CODE_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[AgentCapability.DEBUGGING],
+                target_files=target_files,
+                target_files_ownership=TargetFileOwnership.KNOWN
+                if explicit_files
+                else TargetFileOwnership.PARTIAL,
+                verification_requirements={},
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.MEDIUM,
+            )
+            t2 = CompiledTaskNode(
+                task_id="T2",
+                task_type="regression_testing",
+                title="Run regression tests",
+                objective="Execute regression test suite to ensure refactoring preserves behavior.",
+                dependencies=["T1"],
+                required_capabilities=[
+                    AgentCapability.TEST_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[],
+                target_files=["test_refactor.py" if analysis["is_python"] else "test_refactor.js"],
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": eval_cmd},
+                    "description": "Execute test suite against refactored code",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.SIMPLE,
+            )
+            t3 = CompiledTaskNode(
+                task_id="T3",
+                task_type="objective_verification",
+                title="Final objective verification",
+                objective="Verify refactoring integrity and clean exit code.",
+                dependencies=["T2"],
+                required_capabilities=[AgentCapability.FILE_EDITING],
+                preferred_capabilities=[],
+                target_files=[],
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": eval_cmd},
+                    "description": "Objective verification of refactoring",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.TRIVIAL,
+            )
+            return [t1, t2, t3]
 
-        t2 = CompiledTaskNode(
-            task_id="T2",
-            task_type="backend_development",
-            title="Build backend API",
-            objective="Implement backend API logic.",
-            dependencies=[],
-            required_capabilities=[AgentCapability.CODE_GENERATION, AgentCapability.FILE_EDITING],
-            preferred_capabilities=[AgentCapability.DEBUGGING],
-            target_files=be_files,
-            target_files_ownership=TargetFileOwnership.KNOWN,
-            verification_requirements={},
-            parallel_safe=True,
-            estimated_complexity=ComplexityLevel.MEDIUM,
-        )
+        # Case 4: Database Migration
+        if analysis["has_db"] and not analysis["is_fullstack"]:
+            target_files = explicit_files or ["alembic/versions/001_migration.py", "models.py"]
+            t1 = CompiledTaskNode(
+                task_id="T1",
+                task_type="database_migration",
+                title="Create database migration",
+                objective=f"Define schema changes and database migration for: {goal}",
+                dependencies=[],
+                required_capabilities=[
+                    AgentCapability.CODE_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[],
+                target_files=target_files,
+                target_files_ownership=TargetFileOwnership.KNOWN
+                if explicit_files
+                else TargetFileOwnership.PARTIAL,
+                verification_requirements={},
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.MEDIUM,
+            )
+            t2 = CompiledTaskNode(
+                task_id="T2",
+                task_type="schema_validation",
+                title="Validate migration schema",
+                objective="Validate database migration script syntax and schema constraints.",
+                dependencies=["T1"],
+                required_capabilities=[
+                    AgentCapability.TEST_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[],
+                target_files=["test_migration.py"],
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": "python -m unittest test_migration.py"},
+                    "description": "Run schema validation tests",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.SIMPLE,
+            )
+            t3 = CompiledTaskNode(
+                task_id="T3",
+                task_type="objective_verification",
+                title="Objective verification",
+                objective="Verify migration files and schema validity.",
+                dependencies=["T2"],
+                required_capabilities=[AgentCapability.FILE_EDITING],
+                preferred_capabilities=[],
+                target_files=[],
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": "python -m unittest"},
+                    "description": "Objective verification of migration",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.TRIVIAL,
+            )
+            return [t1, t2, t3]
 
-        t3 = CompiledTaskNode(
-            task_id="T3",
-            task_type="test_generation",
-            title="Write backend & frontend tests",
-            objective="Add unit tests for backend API and frontend logic.",
-            dependencies=[],
-            required_capabilities=[AgentCapability.TEST_GENERATION, AgentCapability.FILE_EDITING],
-            preferred_capabilities=[AgentCapability.CODE_GENERATION],
-            target_files=["test_api.py", "test_app.js"],
-            target_files_ownership=TargetFileOwnership.KNOWN,
-            verification_requirements={
-                "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
-                "criteria": {"command": "python -m unittest"},
-                "description": "Run API tests",
-            },
-            parallel_safe=True,
-            estimated_complexity=ComplexityLevel.SIMPLE,
-        )
+        # Case 5: CLI Utility
+        if analysis["has_cli"]:
+            target_files = explicit_files or ["cli.py"]
+            t1 = CompiledTaskNode(
+                task_id="T1",
+                task_type="cli_development",
+                title="Build CLI utility",
+                objective=f"Implement command line interface parser and commands for: {goal}",
+                dependencies=[],
+                required_capabilities=[
+                    AgentCapability.CODE_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[AgentCapability.DEBUGGING],
+                target_files=target_files,
+                target_files_ownership=TargetFileOwnership.KNOWN
+                if explicit_files
+                else TargetFileOwnership.PARTIAL,
+                verification_requirements={},
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.SIMPLE,
+            )
+            t2 = CompiledTaskNode(
+                task_id="T2",
+                task_type="cli_testing",
+                title="Add CLI test suite",
+                objective="Write tests verifying CLI argument parsing, flags, and exit codes.",
+                dependencies=["T1"],
+                required_capabilities=[
+                    AgentCapability.TEST_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[],
+                target_files=["test_cli.py"],
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": "python -m unittest test_cli.py"},
+                    "description": "Run CLI automated test suite",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.SIMPLE,
+            )
+            t3 = CompiledTaskNode(
+                task_id="T3",
+                task_type="objective_verification",
+                title="Objective verification",
+                objective="Verify CLI commands and execution exit codes.",
+                dependencies=["T2"],
+                required_capabilities=[AgentCapability.FILE_EDITING],
+                preferred_capabilities=[],
+                target_files=[],
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": "python -m unittest test_cli.py"},
+                    "description": "Objective verification of CLI utility",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.TRIVIAL,
+            )
+            return [t1, t2, t3]
 
-        t4 = CompiledTaskNode(
-            task_id="T4",
-            task_type="integration",
-            title="Integrate frontend and backend",
-            objective="Connect frontend UI to backend API endpoints.",
-            dependencies=["T1", "T2"],
-            required_capabilities=[AgentCapability.CODE_GENERATION, AgentCapability.FILE_EDITING],
-            preferred_capabilities=[],
-            target_files=list(set(fe_files + be_files)),
-            target_files_ownership=TargetFileOwnership.KNOWN,
-            verification_requirements={},
-            parallel_safe=False,
-            estimated_complexity=ComplexityLevel.MEDIUM,
-        )
+        # Case 6: Data Pipeline / ETL
+        if analysis["has_pipeline"]:
+            target_files = explicit_files or ["pipeline.py", "transformers.py"]
+            t1 = CompiledTaskNode(
+                task_id="T1",
+                task_type="data_pipeline_development",
+                title="Implement data pipeline",
+                objective=f"Build ETL/data extraction and transformation pipeline for: {goal}",
+                dependencies=[],
+                required_capabilities=[
+                    AgentCapability.CODE_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[AgentCapability.DEBUGGING],
+                target_files=target_files,
+                target_files_ownership=TargetFileOwnership.KNOWN
+                if explicit_files
+                else TargetFileOwnership.PARTIAL,
+                verification_requirements={},
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.MEDIUM,
+            )
+            t2 = CompiledTaskNode(
+                task_id="T2",
+                task_type="pipeline_testing",
+                title="Add pipeline test suite",
+                objective="Write tests verifying pipeline transformations and schema validation.",
+                dependencies=["T1"],
+                required_capabilities=[
+                    AgentCapability.TEST_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[],
+                target_files=["test_pipeline.py"],
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": "python -m unittest test_pipeline.py"},
+                    "description": "Run data pipeline tests",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.SIMPLE,
+            )
+            t3 = CompiledTaskNode(
+                task_id="T3",
+                task_type="objective_verification",
+                title="Objective verification",
+                objective="Verify pipeline execution, error handling, and test exit codes.",
+                dependencies=["T2"],
+                required_capabilities=[AgentCapability.FILE_EDITING],
+                preferred_capabilities=[],
+                target_files=[],
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": "python -m unittest test_pipeline.py"},
+                    "description": "Objective verification of data pipeline",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.TRIVIAL,
+            )
+            return [t1, t2, t3]
 
-        t5 = CompiledTaskNode(
-            task_id="T5",
-            task_type="objective_verification",
-            title="Objective verification",
-            objective="Verify full-stack application implementation and test execution.",
-            dependencies=["T3", "T4"],
-            required_capabilities=[AgentCapability.FILE_EDITING],
-            preferred_capabilities=[],
-            target_files=[],
-            target_files_ownership=TargetFileOwnership.KNOWN,
-            verification_requirements={
-                "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
-                "criteria": {"command": "python -m unittest"},
-                "description": "Objective verification of full-stack outcome",
-            },
-            parallel_safe=False,
-            estimated_complexity=ComplexityLevel.TRIVIAL,
-        )
+        # Case 7: Auth addition or API feature addition
+        if analysis["has_auth"] and not analysis["is_fullstack"]:
+            target_files = explicit_files or ["auth.py", "main.py"]
+            t1 = CompiledTaskNode(
+                task_id="T1",
+                task_type="backend_development",
+                title="Implement authentication service",
+                objective=(
+                    f"Implement authentication endpoints, tokens, and middleware for: {goal}"
+                ),
+                dependencies=[],
+                required_capabilities=[
+                    AgentCapability.CODE_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[AgentCapability.DEBUGGING],
+                target_files=target_files,
+                target_files_ownership=TargetFileOwnership.KNOWN
+                if explicit_files
+                else TargetFileOwnership.PARTIAL,
+                verification_requirements={},
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.MEDIUM,
+            )
+            t2 = CompiledTaskNode(
+                task_id="T2",
+                task_type="test_generation",
+                title="Add authentication test suite",
+                objective=(
+                    "Write comprehensive unit tests for auth flows, tokens, and protected routes."
+                ),
+                dependencies=["T1"],
+                required_capabilities=[
+                    AgentCapability.TEST_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[],
+                target_files=["test_auth.py"],
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": "python -m unittest test_auth.py"},
+                    "description": "Run authentication test suite",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.SIMPLE,
+            )
+            t3 = CompiledTaskNode(
+                task_id="T3",
+                task_type="objective_verification",
+                title="Objective verification",
+                objective="Verify auth endpoints, security headers, and test execution.",
+                dependencies=["T2"],
+                required_capabilities=[AgentCapability.FILE_EDITING],
+                preferred_capabilities=[],
+                target_files=[],
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": "python -m unittest test_auth.py"},
+                    "description": "Objective verification of auth features",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.TRIVIAL,
+            )
+            return [t1, t2, t3]
 
-        return [t1, t2, t3, t4, t5]
+        # Case 8: Full-Stack App (Frontend + Backend independent concerns)
+        if analysis["is_fullstack"]:
+            fe_files = [
+                f for f in explicit_files if f.endswith((".html", ".css", ".js", ".jsx", ".tsx"))
+            ] or ["index.html", "styles.css", "app.js"]
+            be_files = [f for f in explicit_files if f.endswith((".py", ".sql"))] or [
+                "server.py",
+                "api.py",
+            ]
 
-    def _compile_backend_structure(
-        self, goal: str, explicit_files: list[str]
-    ) -> list[CompiledTaskNode]:
-        be_files = explicit_files or ["server.py", "api.py"]
+            t1 = CompiledTaskNode(
+                task_id="T1",
+                task_type="frontend_development",
+                title="Build frontend interface",
+                objective=f"Implement frontend user interface for: {goal}",
+                dependencies=[],
+                required_capabilities=[
+                    AgentCapability.CODE_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[],
+                target_files=fe_files,
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={},
+                parallel_safe=True,
+                estimated_complexity=ComplexityLevel.MEDIUM,
+            )
+            t2 = CompiledTaskNode(
+                task_id="T2",
+                task_type="backend_development",
+                title="Build backend API",
+                objective=f"Implement backend API service for: {goal}",
+                dependencies=[],
+                required_capabilities=[
+                    AgentCapability.CODE_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[AgentCapability.DEBUGGING],
+                target_files=be_files,
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={},
+                parallel_safe=True,
+                estimated_complexity=ComplexityLevel.MEDIUM,
+            )
+            t3 = CompiledTaskNode(
+                task_id="T3",
+                task_type="test_generation",
+                title="Write test suite",
+                objective="Add automated tests for backend API and frontend components.",
+                dependencies=[],
+                required_capabilities=[
+                    AgentCapability.TEST_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[AgentCapability.CODE_GENERATION],
+                target_files=["test_api.py", "app.test.js"],
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": "python -m unittest"},
+                    "description": "Run full-stack test suite",
+                },
+                parallel_safe=True,
+                estimated_complexity=ComplexityLevel.SIMPLE,
+            )
+            t4 = CompiledTaskNode(
+                task_id="T4",
+                task_type="integration",
+                title="Integrate frontend and backend",
+                objective="Connect frontend UI to backend API and ensure contract alignment.",
+                dependencies=["T1", "T2"],
+                required_capabilities=[
+                    AgentCapability.CODE_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[],
+                target_files=list(set(fe_files + be_files)),
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={},
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.MEDIUM,
+            )
+            t5 = CompiledTaskNode(
+                task_id="T5",
+                task_type="objective_verification",
+                title="Objective verification",
+                objective="Verify full-stack application implementation and test suite pass.",
+                dependencies=["T3", "T4"],
+                required_capabilities=[AgentCapability.FILE_EDITING],
+                preferred_capabilities=[],
+                target_files=[],
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": "python -m unittest"},
+                    "description": "Objective verification of full-stack outcome",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.TRIVIAL,
+            )
+            return [t1, t2, t3, t4, t5]
 
-        t1 = CompiledTaskNode(
-            task_id="T1",
-            task_type="backend_development",
-            title="Implement backend service",
-            objective=f"Build backend service logic for: {goal}",
-            dependencies=[],
-            required_capabilities=[AgentCapability.CODE_GENERATION, AgentCapability.FILE_EDITING],
-            preferred_capabilities=[AgentCapability.DEBUGGING],
-            target_files=be_files,
-            target_files_ownership=TargetFileOwnership.KNOWN,
-            verification_requirements={},
-            parallel_safe=False,
-            estimated_complexity=ComplexityLevel.SIMPLE,
-        )
+        # Case 9: Frontend only (landing page, UI app, calculator, etc.)
+        if analysis["has_frontend"]:
+            target_files = explicit_files or ["index.html", "styles.css", "script.js"]
+            test_files = ["test/app.test.js"]
+            t1 = CompiledTaskNode(
+                task_id="T1",
+                task_type="code_generation",
+                title="Implement frontend application",
+                objective=f"Implement frontend user interface for: {goal}",
+                dependencies=[],
+                required_capabilities=[
+                    AgentCapability.CODE_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[AgentCapability.DEBUGGING],
+                target_files=target_files,
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={},
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.SIMPLE,
+            )
+            t2 = CompiledTaskNode(
+                task_id="T2",
+                task_type="test_generation",
+                title="Add automated test suite",
+                objective="Add automated tests verifying frontend application functionality.",
+                dependencies=["T1"],
+                required_capabilities=[
+                    AgentCapability.TEST_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[AgentCapability.CODE_GENERATION],
+                target_files=test_files,
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": "node --test"},
+                    "description": "Run node test runner for frontend logic",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.SIMPLE,
+            )
+            t3 = CompiledTaskNode(
+                task_id="T3",
+                task_type="objective_verification",
+                title="Final objective verification",
+                objective="Verify workspace artifacts, test exit codes, and correctness.",
+                dependencies=["T2"],
+                required_capabilities=[AgentCapability.FILE_EDITING],
+                preferred_capabilities=[],
+                target_files=[],
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": "node --test"},
+                    "description": "Objective verification of frontend outcome",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.TRIVIAL,
+            )
+            return [t1, t2, t3]
 
-        t2 = CompiledTaskNode(
-            task_id="T2",
-            task_type="test_generation",
-            title="Add backend test suite",
-            objective="Write automated unit tests for backend API.",
-            dependencies=["T1"],
-            required_capabilities=[AgentCapability.TEST_GENERATION, AgentCapability.FILE_EDITING],
-            preferred_capabilities=[],
-            target_files=["test_api.py"],
-            target_files_ownership=TargetFileOwnership.KNOWN,
-            verification_requirements={
-                "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
-                "criteria": {"command": "python -m unittest"},
-                "description": "Run Python unit tests",
-            },
-            parallel_safe=False,
-            estimated_complexity=ComplexityLevel.SIMPLE,
-        )
+        # Case 10: Backend service only
+        if analysis["has_backend"] or analysis["is_python"]:
+            target_files = explicit_files or ["server.py", "api.py"]
+            t1 = CompiledTaskNode(
+                task_id="T1",
+                task_type="backend_development",
+                title="Implement backend service",
+                objective=f"Build backend service logic for: {goal}",
+                dependencies=[],
+                required_capabilities=[
+                    AgentCapability.CODE_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[AgentCapability.DEBUGGING],
+                target_files=target_files,
+                target_files_ownership=TargetFileOwnership.KNOWN
+                if explicit_files
+                else TargetFileOwnership.PARTIAL,
+                verification_requirements={},
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.SIMPLE,
+            )
+            t2 = CompiledTaskNode(
+                task_id="T2",
+                task_type="test_generation",
+                title="Add backend test suite",
+                objective="Write automated unit tests for backend API.",
+                dependencies=["T1"],
+                required_capabilities=[
+                    AgentCapability.TEST_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[],
+                target_files=["test_api.py"],
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": "python -m unittest"},
+                    "description": "Run Python unit tests",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.SIMPLE,
+            )
+            t3 = CompiledTaskNode(
+                task_id="T3",
+                task_type="objective_verification",
+                title="Final objective verification",
+                objective="Verify backend service implementation and unit test execution.",
+                dependencies=["T2"],
+                required_capabilities=[AgentCapability.FILE_EDITING],
+                preferred_capabilities=[],
+                target_files=[],
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": "python -m unittest"},
+                    "description": "Objective verification of backend outcome",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.TRIVIAL,
+            )
+            return [t1, t2, t3]
 
-        t3 = CompiledTaskNode(
-            task_id="T3",
-            task_type="objective_verification",
-            title="Final objective verification",
-            objective="Verify backend service implementation and unit test execution.",
-            dependencies=["T2"],
-            required_capabilities=[AgentCapability.FILE_EDITING],
-            preferred_capabilities=[],
-            target_files=[],
-            target_files_ownership=TargetFileOwnership.KNOWN,
-            verification_requirements={
-                "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
-                "criteria": {"command": "python -m unittest"},
-                "description": "Objective verification of backend outcome",
-            },
-            parallel_safe=False,
-            estimated_complexity=ComplexityLevel.TRIVIAL,
-        )
-
-        return [t1, t2, t3]
-
-    def _compile_simple_structure(
-        self, goal: str, explicit_files: list[str]
-    ) -> list[CompiledTaskNode]:
-        ownership = TargetFileOwnership.KNOWN if explicit_files else TargetFileOwnership.UNKNOWN
-        t1 = CompiledTaskNode(
-            task_id="T1",
-            task_type="code_generation",
-            title="Execute task goal",
-            objective=goal,
-            dependencies=[],
-            required_capabilities=[AgentCapability.CODE_GENERATION, AgentCapability.FILE_EDITING],
-            preferred_capabilities=[],
-            target_files=explicit_files,
-            target_files_ownership=ownership,
-            verification_requirements={},
-            parallel_safe=False,
-            estimated_complexity=ComplexityLevel.SIMPLE,
-        )
-        t2 = CompiledTaskNode(
-            task_id="T2",
-            task_type="objective_verification",
-            title="Verify result",
-            objective="Verify outcome of executed task.",
-            dependencies=["T1"],
-            required_capabilities=[AgentCapability.FILE_EDITING],
-            preferred_capabilities=[],
-            target_files=[],
-            target_files_ownership=TargetFileOwnership.KNOWN,
-            verification_requirements={
-                "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
-                "criteria": {"command": "python -m unittest"},
-                "description": "Verify task outcome",
-            },
-            parallel_safe=False,
-            estimated_complexity=ComplexityLevel.TRIVIAL,
-        )
-        return [t1, t2]
-
-    def _compile_medium_structure(
-        self, goal: str, explicit_files: list[str], complexity: ComplexityLevel
-    ) -> list[CompiledTaskNode]:
+        # Fallback: General Goal Structure
         ownership = TargetFileOwnership.KNOWN if explicit_files else TargetFileOwnership.UNKNOWN
         t1 = CompiledTaskNode(
             task_id="T1",
@@ -473,13 +954,13 @@ class TaskGraphCompilerV2:
             target_files_ownership=ownership,
             verification_requirements={},
             parallel_safe=False,
-            estimated_complexity=complexity,
+            estimated_complexity=ComplexityLevel.SIMPLE,
         )
         t2 = CompiledTaskNode(
             task_id="T2",
             task_type="test_generation",
             title="Add test suite",
-            objective="Add comprehensive tests for implemented features.",
+            objective="Add automated tests verifying implemented features.",
             dependencies=["T1"],
             required_capabilities=[AgentCapability.TEST_GENERATION, AgentCapability.FILE_EDITING],
             preferred_capabilities=[],
@@ -513,8 +994,47 @@ class TaskGraphCompilerV2:
         )
         return [t1, t2, t3]
 
+    def _derive_parallel_safety(self, nodes: list[CompiledTaskNode]) -> None:
+        """Derive parallel_safe dynamically from file ownership and target file overlap."""
+        node_map = {n.task_id: n for n in nodes}
+
+        def is_dependent(a_id: str, b_id: str) -> bool:
+            visited: set[str] = set()
+            stack = list(node_map[a_id].dependencies) if a_id in node_map else []
+            while stack:
+                curr = stack.pop()
+                if curr == b_id:
+                    return True
+                if curr not in visited and curr in node_map:
+                    visited.add(curr)
+                    stack.extend(node_map[curr].dependencies)
+            return False
+
+        for i, node in enumerate(nodes):
+            if (
+                node.target_files_ownership != TargetFileOwnership.KNOWN
+                or not node.target_files
+                or node.task_type in ("integration", "objective_verification")
+            ):
+                node.parallel_safe = False
+                continue
+
+            has_concurrent_overlap = False
+            for j, other in enumerate(nodes):
+                if i == j:
+                    continue
+                is_dep = is_dependent(node.task_id, other.task_id) or is_dependent(
+                    other.task_id, node.task_id
+                )
+                if is_dep:
+                    continue
+                if set(node.target_files) & set(other.target_files):
+                    has_concurrent_overlap = True
+                    break
+
+            node.parallel_safe = not has_concurrent_overlap
+
     def _calculate_dag_depth(self, nodes: list[CompiledTaskNode]) -> int:
-        """Calculate the longest path (depth) in the task graph DAG."""
         node_map = {n.task_id: n for n in nodes}
         memo: dict[str, int] = {}
 
@@ -535,7 +1055,6 @@ class TaskGraphCompilerV2:
         return max(get_node_depth(n.task_id) for n in nodes)
 
     def _validate_and_bound_graph(self, nodes: list[CompiledTaskNode]) -> None:
-        """Enforce task bounds, cycle detection, duplicate task detection, and MAX_DEPTH."""
         if len(nodes) > self.MAX_TASKS:
             raise ValueError(f"Task graph exceeds max task limit of {self.MAX_TASKS}")
 

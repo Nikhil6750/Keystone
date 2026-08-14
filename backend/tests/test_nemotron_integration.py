@@ -233,9 +233,7 @@ async def test_router_authority_unchanged_by_nemotron_proposal() -> None:
         ),
     )
     router = Router()
-    decision = router.route(
-        routing_request, [_candidate("banned_agent"), _candidate("safe_agent")]
-    )
+    decision = router.route(routing_request, [_candidate("banned_agent"), _candidate("safe_agent")])
     assert decision.selected_agent_type == "safe_agent"
 
 

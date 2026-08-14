@@ -109,9 +109,7 @@ class AgentPassportBucketRecord(Base):
     failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     verified_success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     verification_failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    verification_inconclusive_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0
-    )
+    verification_inconclusive_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     human_review_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     verification_sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     verified_success_rate: Mapped[float | None] = mapped_column(Float, nullable=True)

@@ -114,9 +114,7 @@ def _map_status_error(status_code: int) -> ManagerUnavailableError | ManagerTime
     if status_code == 400:
         return ManagerUnavailableError(f"nemotron rejected the request (HTTP {status_code})")
     if status_code == 404:
-        return ManagerUnavailableError(
-            f"nemotron model or endpoint not found (HTTP {status_code})"
-        )
+        return ManagerUnavailableError(f"nemotron model or endpoint not found (HTTP {status_code})")
     if status_code in _SERVER_ERROR_STATUS_CODES:
         return ManagerUnavailableError(f"nemotron server error (HTTP {status_code})")
     return ManagerUnavailableError(f"nemotron returned an unexpected status (HTTP {status_code})")

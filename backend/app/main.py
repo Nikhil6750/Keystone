@@ -77,9 +77,7 @@ def _build_orchestration_service_factory(app: FastAPI) -> ServiceFactory:
             connection_cache=app.state.agent_connection_cache,
             circuit_breakers=app.state.circuit_breaker_registry,
         )
-        manager_model: ManagerModel | None = getattr(
-            app.state, "orchestration_manager_model", None
-        )
+        manager_model: ManagerModel | None = getattr(app.state, "orchestration_manager_model", None)
         service = EndToEndOrchestrationService(
             db=db,
             registry=app.state.executor_registry,

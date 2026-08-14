@@ -515,9 +515,7 @@ async def test_full_event_taxonomy_for_a_verified_success_run(api_db_engine: Eng
         ]
         assert learning_event_count is not None and learning_event_count > 0
 
-        retrieval_feedback = next(
-            e for e in events if e["event"] == "retrieval_feedback.completed"
-        )
+        retrieval_feedback = next(e for e in events if e["event"] == "retrieval_feedback.completed")
         assert retrieval_feedback["data"]["status"] == "not_recorded"  # no knowledge index wired
 
 
@@ -526,9 +524,11 @@ async def test_verification_failure_and_recovery_events(api_db_engine: Engine) -
     evaluator needs deterministically yields INCONCLUSIVE -> bounded
     recovery -> RECOVERY_EXHAUSTED (see the certified Stage 8C.1 live
     diagnostic this exact scenario was traced from)."""
-    async with _orchestration_client(
-        api_db_engine, executor=RecordingExecutor(output={})
-    ) as (client, _store, coordinator):
+    async with _orchestration_client(api_db_engine, executor=RecordingExecutor(output={})) as (
+        client,
+        _store,
+        coordinator,
+    ):
         response = await client.post(
             "/api/v1/orchestrations",
             json={"goal": GOAL, "available_agent_types": ["api-test-agent"]},

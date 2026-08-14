@@ -166,9 +166,7 @@ async def test_accepted_proposal_merges_preferred_agent_types_only() -> None:
 # --- Manager cannot bypass Router ------------------------------------------
 
 
-def _candidate(
-    agent_type: str, *, status: AgentStatus = AgentStatus.AVAILABLE
-) -> CandidateAgent:
+def _candidate(agent_type: str, *, status: AgentStatus = AgentStatus.AVAILABLE) -> CandidateAgent:
     return CandidateAgent(
         descriptor=AgentDescriptor(
             agent_type=agent_type,
@@ -218,9 +216,7 @@ async def test_manager_preferred_agent_type_cannot_grant_eligibility_it_lacked()
         ),
     )
     router = Router()
-    decision = router.route(
-        routing_request, [_candidate("banned_agent"), _candidate("safe_agent")]
-    )
+    decision = router.route(routing_request, [_candidate("banned_agent"), _candidate("safe_agent")])
     assert decision.selected_agent_type == "safe_agent"
 
 
@@ -281,7 +277,7 @@ async def test_prompt_injection_in_evidence_summary_is_inert_data() -> None:
     response = ManagerResponse(
         request_id="req-1",
         evidence_summary=[ManagerEvidenceRef(kind="knowledge_snippet", description=injected_text)],
-        warnings=[injected_text[: 250]],
+        warnings=[injected_text[:250]],
     )
     fake = FakeManagerModel(response=response)
     orchestrator = ManagerOrchestrator(manager_model=fake)

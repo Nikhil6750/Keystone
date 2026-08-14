@@ -45,9 +45,7 @@ def test_execution_request_rejects_unknown_fields() -> None:
 
 
 def test_execution_request_provider_detail_stays_in_metadata() -> None:
-    request = AgentExecutionRequest.model_validate(
-        _request(metadata={"raw_cli_flag": "--yolo"})
-    )
+    request = AgentExecutionRequest.model_validate(_request(metadata={"raw_cli_flag": "--yolo"}))
     assert request.metadata == {"raw_cli_flag": "--yolo"}
 
 

@@ -29,6 +29,6 @@ def test_committed_schema_files_are_up_to_date(tmp_path: Path) -> None:
     for path in fresh:
         committed_path = committed_dir / path.name
         assert committed_path.exists(), f"missing committed schema: {path.name}"
-        assert committed_path.read_text(encoding="utf-8") == path.read_text(
-            encoding="utf-8"
-        ), f"{path.name} is stale; run scripts/export_contracts.py"
+        assert committed_path.read_text(encoding="utf-8") == path.read_text(encoding="utf-8"), (
+            f"{path.name} is stale; run scripts/export_contracts.py"
+        )

@@ -51,12 +51,18 @@ def test_repository_and_task_type_evidence_wins_when_sufficient() -> None:
     wins because it independently clears the sample threshold -- more
     specific evidence is preferred whenever it is trustworthy."""
     joint_bad = _events(
-        8, prefix="joint", verification_status=VerificationStatus.FAILED,
-        task_type="code_generation", repository_id="org/repo-a",
+        8,
+        prefix="joint",
+        verification_status=VerificationStatus.FAILED,
+        task_type="code_generation",
+        repository_id="org/repo-a",
     )
     task_type_good_other_repo = _events(
-        8, prefix="other", verification_status=VerificationStatus.PASSED,
-        task_type="code_generation", repository_id="org/repo-b",
+        8,
+        prefix="other",
+        verification_status=VerificationStatus.PASSED,
+        task_type="code_generation",
+        repository_id="org/repo-b",
     )
     result = _recommend_one(
         joint_bad + task_type_good_other_repo,
@@ -69,8 +75,11 @@ def test_repository_and_task_type_evidence_wins_when_sufficient() -> None:
 
 def test_task_type_fallback_when_no_joint_evidence() -> None:
     events = _events(
-        8, prefix="t", verification_status=VerificationStatus.PASSED,
-        task_type="code_generation", repository_id=None,
+        8,
+        prefix="t",
+        verification_status=VerificationStatus.PASSED,
+        task_type="code_generation",
+        repository_id=None,
     )
     result = _recommend_one(events, task_type="code_generation", repository_id="org/unseen-repo")
     assert result.tier_used == "task_type"
@@ -78,8 +87,11 @@ def test_task_type_fallback_when_no_joint_evidence() -> None:
 
 def test_repository_fallback_when_no_joint_or_task_type_evidence() -> None:
     events = _events(
-        8, prefix="r", verification_status=VerificationStatus.PASSED,
-        task_type="code_review", repository_id="org/repo",
+        8,
+        prefix="r",
+        verification_status=VerificationStatus.PASSED,
+        task_type="code_review",
+        repository_id="org/repo",
     )
     result = _recommend_one(events, task_type="code_generation", repository_id="org/repo")
     assert result.tier_used == "repository"
@@ -87,8 +99,11 @@ def test_repository_fallback_when_no_joint_or_task_type_evidence() -> None:
 
 def test_overall_fallback_when_no_narrower_evidence_matches() -> None:
     events = _events(
-        8, prefix="o", verification_status=VerificationStatus.PASSED,
-        task_type="documentation", repository_id="org/other-repo",
+        8,
+        prefix="o",
+        verification_status=VerificationStatus.PASSED,
+        task_type="documentation",
+        repository_id="org/other-repo",
     )
     result = _recommend_one(events, task_type="code_generation", repository_id="org/repo")
     assert result.tier_used == "overall"
@@ -105,12 +120,18 @@ def test_narrow_low_sample_bucket_does_not_override_strong_broader_evidence() ->
     (`repository_task_type`), and the broader tier's rate must reflect the
     full, strong 20/22 evidence rather than the narrow 0/2 evidence alone."""
     joint_insufficient_and_bad = _events(
-        2, prefix="joint", verification_status=VerificationStatus.FAILED,
-        task_type="code_generation", repository_id="org/repo",
+        2,
+        prefix="joint",
+        verification_status=VerificationStatus.FAILED,
+        task_type="code_generation",
+        repository_id="org/repo",
     )
     task_type_strong = _events(
-        20, prefix="task", verification_status=VerificationStatus.PASSED,
-        task_type="code_generation", repository_id=None,
+        20,
+        prefix="task",
+        verification_status=VerificationStatus.PASSED,
+        task_type="code_generation",
+        repository_id=None,
     )
     result = _recommend_one(
         joint_insufficient_and_bad + task_type_strong,
@@ -130,12 +151,18 @@ def test_narrow_low_sample_repository_bucket_does_not_override_overall() -> None
     policy must select `overall`, never the untrustworthy `repository`
     tier."""
     repository_insufficient_and_bad = _events(
-        1, prefix="repo", verification_status=VerificationStatus.FAILED,
-        task_type="code_review", repository_id="org/repo",
+        1,
+        prefix="repo",
+        verification_status=VerificationStatus.FAILED,
+        task_type="code_review",
+        repository_id="org/repo",
     )
     overall_strong = _events(
-        20, prefix="overall", verification_status=VerificationStatus.PASSED,
-        task_type="documentation", repository_id=None,
+        20,
+        prefix="overall",
+        verification_status=VerificationStatus.PASSED,
+        task_type="documentation",
+        repository_id=None,
     )
     result = _recommend_one(
         repository_insufficient_and_bad + overall_strong,
@@ -149,8 +176,11 @@ def test_narrow_low_sample_repository_bucket_does_not_override_overall() -> None
 
 def test_no_repository_requested_skips_repository_scoped_tiers() -> None:
     events = _events(
-        8, prefix="t", verification_status=VerificationStatus.PASSED,
-        task_type="code_generation", repository_id="org/repo",
+        8,
+        prefix="t",
+        verification_status=VerificationStatus.PASSED,
+        task_type="code_generation",
+        repository_id="org/repo",
     )
     result = _recommend_one(events, task_type="code_generation", repository_id=None)
     assert result.tier_used == "task_type"

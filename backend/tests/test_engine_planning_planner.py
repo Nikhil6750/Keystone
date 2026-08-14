@@ -102,9 +102,9 @@ def test_20_run_semantic_determinism(planner: Planner) -> None:
     for i in range(20):
         run_plan = planner.plan(req)
         assert run_plan.plan_id == baseline_plan.plan_id, f"Failed plan_id determinism on run {i}"
-        assert (
-            run_plan.model_dump(exclude={"created_at"}) == baseline_semantic
-        ), f"Semantic plan mismatch on run {i}"
+        assert run_plan.model_dump(exclude={"created_at"}) == baseline_semantic, (
+            f"Semantic plan mismatch on run {i}"
+        )
         assert run_plan.created_at is not None
 
 

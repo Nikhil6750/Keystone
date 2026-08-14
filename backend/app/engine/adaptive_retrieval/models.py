@@ -72,10 +72,7 @@ def _retrieval_id(
     task_part = task_type or ""
     repository_part = repository_id or ""
     selected_part = ",".join(selected_chunk_ids)
-    return (
-        "retrieval::"
-        f"{query_fingerprint}::{task_part}::{repository_part}::{selected_part}"
-    )
+    return f"retrieval::{query_fingerprint}::{task_part}::{repository_part}::{selected_part}"
 
 
 @dataclass(frozen=True)
@@ -157,7 +154,9 @@ class RetrievalObservation:
             self,
             "retrieval_id",
             _retrieval_id(
-                self.query_fingerprint, self.task_type, self.repository_id,
+                self.query_fingerprint,
+                self.task_type,
+                self.repository_id,
                 self.selected_chunk_ids,
             ),
         )

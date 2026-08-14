@@ -415,8 +415,13 @@ class EndToEndOrchestrationService:
             all_learning_event_ids,
         ) = await asyncio.to_thread(
             self._phase_e_verify_and_recover,
-            plan, workflow, step_to_task, results, agent_type_by_task_key,
-            routing_context_by_task_key, learning_event_ids,
+            plan,
+            workflow,
+            step_to_task,
+            results,
+            agent_type_by_task_key,
+            routing_context_by_task_key,
+            learning_event_ids,
         )
         await self._emit(
             execution_id,
@@ -711,6 +716,7 @@ class EndToEndOrchestrationService:
         watcher = None
         if self._workspace_root:
             from app.services.workspace_watcher import WorkspaceWatcher
+
             watcher = WorkspaceWatcher(self._workspace_root)
             await watcher.start_async()
 
@@ -889,9 +895,12 @@ class EndToEndOrchestrationService:
         routing_context_by_task_key: dict[str, _RoutingContext],
         decision: RecoveryDecision,
         attempt_number: int,
-    ) -> tuple[
-        Workflow, dict[str, TaskSpec], dict[str, VerificationResult], dict[str, str], list[str]
-    ] | None:
+    ) -> (
+        tuple[
+            Workflow, dict[str, TaskSpec], dict[str, VerificationResult], dict[str, str], list[str]
+        ]
+        | None
+    ):
         failed_step_ids = [
             step_id
             for step_id, task in step_to_task.items()

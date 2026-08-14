@@ -200,7 +200,13 @@ class WorkflowEngine:
 
         duration_ms: float | None = None
         if attempt.started_at is not None and attempt.completed_at is not None:
-            duration_ms = (attempt.completed_at - attempt.started_at).total_seconds() * 1000.0
+            st = attempt.started_at
+            ct = attempt.completed_at
+            if st.tzinfo is None and ct.tzinfo is not None:
+                st = st.replace(tzinfo=UTC)
+            elif ct.tzinfo is None and st.tzinfo is not None:
+                ct = ct.replace(tzinfo=UTC)
+            duration_ms = (ct - st).total_seconds() * 1000.0
 
         created_at = attempt.completed_at or datetime.now(UTC)
         task_type = step.input_payload.get("task_type") if step.input_payload else None
@@ -350,8 +356,7 @@ class WorkflowEngine:
                 )
                 if not deps_met:
                     dep_failed = any(
-                        dep in failed_keys
-                        or any(s.id == dep for s in steps if s.id in failed_keys)
+                        dep in failed_keys or any(s.id == dep for s in steps if s.id in failed_keys)
                         for dep in deps
                     )
                     if dep_failed:
@@ -647,14 +652,18 @@ class WorkflowEngine:
             bind = self._db.get_bind()
             factory = sessionmaker(bind=bind, autoflush=False, expire_on_commit=False)
             worker_db = factory()
-        except Exception:
-            worker_db = self._db
+        except Exception as exc:
+            logger.exception(
+                "worker_session_creation_failed workflow_id=%s step_id=%s", workflow.id, step.id
+            )
+            raise RuntimeError(
+                f"Failed to create independent database session for worker step '{step.id}': {exc}"
+            ) from exc
 
         try:
             return self._execute_step_with_db(worker_db, workflow, step, context)
         finally:
-            if worker_db is not self._db:
-                worker_db.close()
+            worker_db.close()
 
     def _execute_step_with_db(
         self, db: Session, workflow: Workflow, step: WorkflowStep, context: ExecutionContext

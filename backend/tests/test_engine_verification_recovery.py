@@ -190,9 +190,7 @@ def test_build_reroute_request_clears_manual_override() -> None:
 def test_reroute_excludes_the_failed_candidate() -> None:
     router = Router()
     candidates = [_candidate("claude_code"), _candidate("codex")]
-    decision = reroute(
-        router, _request(), candidates, additionally_excluded_agent_types=["codex"]
-    )
+    decision = reroute(router, _request(), candidates, additionally_excluded_agent_types=["codex"])
     assert decision.selected_agent_type == "claude_code"
     excluded_scores = [c for c in decision.candidates if c.agent_type == "codex"]
     assert excluded_scores[0].eligible is False
@@ -245,9 +243,7 @@ def test_reroute_is_deterministic() -> None:
     candidates = [_candidate("claude_code"), _candidate("codex"), _candidate("gemini")]
     first = reroute(router, _request(), candidates, additionally_excluded_agent_types=["codex"])
     for _ in range(20):
-        again = reroute(
-            router, _request(), candidates, additionally_excluded_agent_types=["codex"]
-        )
+        again = reroute(router, _request(), candidates, additionally_excluded_agent_types=["codex"])
         assert again.selected_agent_type == first.selected_agent_type
         again_types = [c.agent_type for c in again.candidates]
         first_types = [c.agent_type for c in first.candidates]

@@ -50,9 +50,7 @@ def test_parses_plain_text_result() -> None:
 
 
 def test_invokes_agy_with_p_and_one_prompt_argument() -> None:
-    runner = FakeProcessRunner(
-        result=ProcessResult(exit_code=0, stdout="done", stderr="")
-    )
+    runner = FakeProcessRunner(result=ProcessResult(exit_code=0, stdout="done", stderr=""))
     adapter = AntigravityAdapter(_profile(), runner, PromptBuilder(max_prompt_characters=10000))
 
     adapter.execute(_request())
@@ -65,9 +63,7 @@ def test_invokes_agy_with_p_and_one_prompt_argument() -> None:
 
 
 def test_empty_text_output_raises_agent_output_error() -> None:
-    runner = FakeProcessRunner(
-        result=ProcessResult(exit_code=0, stdout="   ", stderr="")
-    )
+    runner = FakeProcessRunner(result=ProcessResult(exit_code=0, stdout="   ", stderr=""))
     adapter = AntigravityAdapter(_profile(), runner, PromptBuilder(max_prompt_characters=10000))
 
     with pytest.raises(AgentOutputError):
@@ -75,9 +71,7 @@ def test_empty_text_output_raises_agent_output_error() -> None:
 
 
 def test_never_labeled_as_gemini() -> None:
-    runner = FakeProcessRunner(
-        result=ProcessResult(exit_code=0, stdout="ok", stderr="")
-    )
+    runner = FakeProcessRunner(result=ProcessResult(exit_code=0, stdout="ok", stderr=""))
     adapter = AntigravityAdapter(_profile(), runner, PromptBuilder(max_prompt_characters=10000))
 
     result = adapter.execute(_request())

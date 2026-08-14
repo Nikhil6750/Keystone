@@ -93,30 +93,7 @@ class WorkspaceWatcher:
                 await self._task
         self._task = None
 
-    def start(self) -> None:
-        """Start polling workspace for changes. Safe if called without running loop."""
-        if self._running:
-            return
-        self._running = True
-        self._snapshot = self._take_snapshot()
-        try:
-            loop = asyncio.get_running_loop()
-            self._task = loop.create_task(self._poll_loop())
-        except RuntimeError:
-            # Called outside a running event loop (e.g. sync worker thread)
-            # Do NOT call asyncio.create_task(); poll_now() can still be called manually.
-            self._task = None
-
-    def stop(self) -> None:
-        """Stop polling workspace safely."""
-        self._running = False
-        if self._task and not self._task.done():
-            self._task.cancel()
-            self._task = None
-
-    def register_active_task(
-        self, task_id: str, agent_id: str, target_files: list[str]
-    ) -> None:
+    def register_active_task(self, task_id: str, agent_id: str, target_files: list[str]) -> None:
         """Register a currently running task and its target files for concurrent attribution."""
         norm_files = {str(Path(f)).replace("\\", "/") for f in target_files}
         self._active_tasks[task_id] = (agent_id, norm_files)

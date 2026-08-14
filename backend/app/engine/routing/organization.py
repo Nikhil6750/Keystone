@@ -52,7 +52,8 @@ class AgentOrganizationCompiler:
         from app.resilience.circuit_breaker import CircuitState
 
         eligible_candidates = [
-            c for c in candidates
+            c
+            for c in candidates
             if c.status in (AgentStatus.AVAILABLE, AgentStatus.DEGRADED)
             and c.circuit_state != CircuitState.OPEN
         ]
@@ -83,10 +84,11 @@ class AgentOrganizationCompiler:
             )
 
             # Prefer agents not yet assigned to an active task in this wave if task is parallel_safe
-            pool_for_task = [
-                c for c in available_pool
-                if c.descriptor.agent_type not in used_agents
-            ] if (task.parallel_safe and len(available_pool) > 1) else available_pool
+            pool_for_task = (
+                [c for c in available_pool if c.descriptor.agent_type not in used_agents]
+                if (task.parallel_safe and len(available_pool) > 1)
+                else available_pool
+            )
 
             if not pool_for_task:
                 pool_for_task = available_pool

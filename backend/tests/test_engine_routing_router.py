@@ -546,9 +546,7 @@ def test_selection_is_invariant_to_candidate_order_including_exact_ties() -> Non
     router = Router(evidence=evidence)
     request = _request()
     results = set()
-    for permutation in itertools.permutations(
-        [_candidate("a"), _candidate("b"), _candidate("c")]
-    ):
+    for permutation in itertools.permutations([_candidate("a"), _candidate("b"), _candidate("c")]):
         decision = router.route(request, list(permutation))
         results.add(
             (decision.selected_agent_type, tuple(decision.fallback_order), decision.confidence)
@@ -567,9 +565,7 @@ def test_parallel_selection_is_invariant_to_candidate_order() -> None:
     router = Router(evidence=evidence)
     request = _request(constraints=RoutingConstraints(allow_parallel=True, consensus_size=2))
     results = set()
-    for permutation in itertools.permutations(
-        [_candidate("a"), _candidate("b"), _candidate("c")]
-    ):
+    for permutation in itertools.permutations([_candidate("a"), _candidate("b"), _candidate("c")]):
         decision = router.route(request, list(permutation))
         results.add((tuple(decision.selected_agent_types), tuple(decision.fallback_order)))
     assert len(results) == 1

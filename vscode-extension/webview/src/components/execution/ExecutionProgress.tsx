@@ -96,13 +96,13 @@ export const ExecutionProgress: React.FC<ExecutionProgressProps> = ({ events }) 
   const taskMap = new Map<string, AgentTaskCard>();
 
   events.forEach((evt) => {
-    if (evt.event_type === 'routing.task_selected' || evt.event_type === 'agent.selected') {
+    if (evt.event_type === 'routing.task_selected' || evt.event_type === 'agent.selected' || evt.event_type === 'task.ready') {
       if (evt.task_key && evt.agent_id) {
         taskMap.set(evt.task_key, {
           taskId: evt.task_key,
           agentId: evt.agent_id,
           taskTitle: `Task ${evt.task_key}`,
-          status: 'queued',
+          status: evt.status === 'rerouted' ? 'rerouted' : 'queued',
           elapsedSeconds: 0,
         });
       }
@@ -125,6 +125,16 @@ export const ExecutionProgress: React.FC<ExecutionProgressProps> = ({ events }) 
         if (card) {
           card.activeFile = evt.message;
         }
+      }
+    } else if (evt.event_type === 'verification.started') {
+      if (evt.task_key) {
+        const card = taskMap.get(evt.task_key);
+        if (card) card.status = 'verifying';
+      }
+    } else if (evt.event_type === 'recovery.started') {
+      if (evt.task_key) {
+        const card = taskMap.get(evt.task_key);
+        if (card) card.status = 'rerouted';
       }
     } else if (evt.event_type === 'step.completed') {
       if (evt.task_key) {
@@ -170,6 +180,9 @@ export const ExecutionProgress: React.FC<ExecutionProgressProps> = ({ events }) 
                   <div className="flex items-center space-x-2">
                     {task.status === 'completed' && <CheckCircle2 size={13} className="text-emerald-400" />}
                     {task.status === 'working' && <Loader2 size={13} className="animate-spin text-blue-400" />}
+                    {task.status === 'verifying' && <Loader2 size={13} className="animate-spin text-cyan-400" />}
+                    {task.status === 'rerouted' && <AlertCircle size={13} className="text-purple-400" />}
+                    {task.status === 'waiting' && <Clock size={13} className="text-amber-400" />}
                     {task.status === 'queued' && <Clock size={13} className="text-slate-500" />}
                     {task.status === 'failed' && <AlertCircle size={13} className="text-rose-400" />}
                     <span className="font-mono text-slate-300">{task.taskId}</span>
@@ -201,6 +214,14 @@ export const ExecutionProgress: React.FC<ExecutionProgressProps> = ({ events }) 
                       ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
                       : card.status === 'working'
                       ? 'bg-blue-950 text-blue-300 border border-blue-800'
+                      : card.status === 'verifying'
+                      ? 'bg-cyan-950 text-cyan-300 border border-cyan-800'
+                      : card.status === 'rerouted'
+                      ? 'bg-purple-950 text-purple-300 border border-purple-800'
+                      : card.status === 'waiting'
+                      ? 'bg-amber-950 text-amber-300 border border-amber-800'
+                      : card.status === 'failed'
+                      ? 'bg-rose-950 text-rose-300 border border-rose-800'
                       : 'bg-slate-800 text-slate-400'
                   }`}
                 >

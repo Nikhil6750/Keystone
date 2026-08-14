@@ -20,7 +20,6 @@ def check_python_version() -> bool:
     return True
 
 
-
 def get_locked_versions(lock_path: Path) -> dict[str, str]:
     if not lock_path.exists():
         return {}

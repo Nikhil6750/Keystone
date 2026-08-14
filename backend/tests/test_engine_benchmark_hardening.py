@@ -57,10 +57,12 @@ def test_runner_handles_executor_exception() -> None:
         observed_outcome=ObservedOutcome(data={"output": "ok"}),
     )
 
-    executor = RaisingBenchmarkExecutor({
-        ("good-agent", "c1"): obs_ok,
-        ("good-agent", "c2"): obs_ok,
-    })
+    executor = RaisingBenchmarkExecutor(
+        {
+            ("good-agent", "c1"): obs_ok,
+            ("good-agent", "c2"): obs_ok,
+        }
+    )
 
     runner = BenchmarkRunner()
     results, metrics = runner.run_suite(suite, ["good-agent", "buggy-agent"], executor)
@@ -197,12 +199,14 @@ def test_bucket_cancellation_and_timeout_conservation() -> None:
         failure_category=FailureCategory.TIMEOUT,
     )
 
-    executor = FakeBenchmarkExecutor({
-        ("a1", "c1", 1): obs_succ,
-        ("a1", "c1", 2): obs_fail,
-        ("a1", "c1", 3): obs_cancel,
-        ("a1", "c1", 4): obs_timeout,
-    })
+    executor = FakeBenchmarkExecutor(
+        {
+            ("a1", "c1", 1): obs_succ,
+            ("a1", "c1", 2): obs_fail,
+            ("a1", "c1", 3): obs_cancel,
+            ("a1", "c1", 4): obs_timeout,
+        }
+    )
     suite = BenchmarkSuite(suite_id="s1", name="Suite", cases=(case,), repeat_count=4)
 
     runner = BenchmarkRunner()

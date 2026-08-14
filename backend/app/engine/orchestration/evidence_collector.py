@@ -182,9 +182,7 @@ def _collect_test_evidence(executor: CommandExecutor, workspace_root: str) -> di
     return {}
 
 
-def _run_node_syntax_check(
-    executor: CommandExecutor, workspace_root: str, files: list[str]
-) -> int:
+def _run_node_syntax_check(executor: CommandExecutor, workspace_root: str, files: list[str]) -> int:
     for relative_path in files:
         outcome = executor.run(
             CommandSpec(

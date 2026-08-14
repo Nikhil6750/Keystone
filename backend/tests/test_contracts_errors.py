@@ -25,9 +25,7 @@ def test_known_legacy_error_types_map_to_stable_categories() -> None:
         is FailureCategory.AUTHENTICATION_FAILURE
     )
     assert classify_legacy_error_type("CIRCUIT_BREAKER_OPEN") is FailureCategory.CIRCUIT_OPEN
-    assert (
-        classify_legacy_error_type("AGENT_USAGE_LIMIT_ERROR") is FailureCategory.RATE_LIMITED
-    )
+    assert classify_legacy_error_type("AGENT_USAGE_LIMIT_ERROR") is FailureCategory.RATE_LIMITED
 
 
 def test_unknown_legacy_error_type_maps_to_unknown_not_a_crash() -> None:

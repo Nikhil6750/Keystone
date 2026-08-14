@@ -93,7 +93,7 @@ def test_think_tags_in_content_are_not_stripped_but_not_specially_read_either() 
     `decode_json_object`'s strictness (not a think-tag stripper) that
     rejects anything that isn't clean JSON, which is what actually keeps a
     provider's think-tagged prose out of a ManagerResponse."""
-    content = "<think>secret reasoning</think>{\"request_id\": \"r1\"}"
+    content = '<think>secret reasoning</think>{"request_id": "r1"}'
     assert extract_final_content(_payload(content)) == content
     with pytest.raises(NemotronResponseError):
         decode_json_object(content)

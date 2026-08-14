@@ -263,9 +263,7 @@ class GraphScheduler:
                 workflow_status, GraphWorkflowStatus.SUCCEEDED
             )
 
-        await self._emit(
-            sink, sequence, workflow_id, f"workflow.{workflow_status.value}", None, {}
-        )
+        await self._emit(sink, sequence, workflow_id, f"workflow.{workflow_status.value}", None, {})
         return WorkflowRunResult(status=workflow_status, step_outcomes=outcomes)
 
     @staticmethod
@@ -286,9 +284,7 @@ class GraphScheduler:
         return transition_graph_step(current, outcome_status)
 
     @staticmethod
-    def _cancel_never_started(
-        step_statuses: dict[str, GraphStepStatus], key: str
-    ) -> StepOutcome:
+    def _cancel_never_started(step_statuses: dict[str, GraphStepStatus], key: str) -> StepOutcome:
         """A step that never became ready before the run ended: `PENDING -> CANCELLED`
         directly — it never ran, so there is no `CANCELLING` phase to pass through."""
         step_statuses[key] = transition_graph_step(step_statuses[key], GraphStepStatus.CANCELLED)

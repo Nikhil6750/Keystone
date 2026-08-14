@@ -1,8 +1,8 @@
 """Task Graph Compiler V2 (Agent-Independent DAG Decomposition).
 
-Upgrades planning from fixed template lookup to a deterministic, bounded Task Graph Compiler.
-Inputs: user goal, workspace/project context, project metadata, explicit user constraints.
-Outputs: typed executable provider-neutral DAG (WorkflowPlan with enriched TaskSpecs).
+Decomposes user goals into a typed executable DAG (WorkflowPlan with enriched TaskSpecs)
+using semantic concern extraction, action verb analysis, workspace context, and dynamic
+dependency inference across single and multi-concern composite domains.
 
 Does NOT assign agent_type or take connected agents as required input.
 WHO does the work is decided later by AgentOrganizationCompiler and Router.
@@ -456,6 +456,100 @@ class TaskGraphCompilerV2:
                 estimated_complexity=ComplexityLevel.TRIVIAL,
             )
             return [t1, t2, t3]
+
+        # Compound Case: Database Migration + Authentication
+        if analysis["has_db"] and analysis["has_auth"]:
+            db_target_files = (
+                [f for f in explicit_files if "migrat" in f or "model" in f or "db" in f]
+                or ["alembic/versions/001_auth_migration.py", "models/user.py"]
+            )
+            auth_target_files = (
+                [f for f in explicit_files if "auth" in f or "service" in f]
+                or ["services/auth.py", "routes/auth.py"]
+            )
+            eval_cmd = "python -m unittest" if analysis["is_python"] else "node --test"
+            t1 = CompiledTaskNode(
+                task_id="T1",
+                task_type="database_migration",
+                title="Create authentication schema and migration",
+                objective=f"Define schema changes for authentication in: {goal}",
+                dependencies=[],
+                required_capabilities=[
+                    AgentCapability.CODE_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[],
+                target_files=db_target_files,
+                target_files_ownership=TargetFileOwnership.KNOWN
+                if explicit_files
+                else TargetFileOwnership.PARTIAL,
+                verification_requirements={},
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.MEDIUM,
+            )
+            t2 = CompiledTaskNode(
+                task_id="T2",
+                task_type="backend_development",
+                title="Implement authentication service",
+                objective=f"Implement authentication business logic and endpoints for: {goal}",
+                dependencies=["T1"],
+                required_capabilities=[
+                    AgentCapability.CODE_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[AgentCapability.CODE_REVIEW],
+                target_files=auth_target_files,
+                target_files_ownership=TargetFileOwnership.KNOWN
+                if explicit_files
+                else TargetFileOwnership.PARTIAL,
+                verification_requirements={},
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.MEDIUM,
+            )
+            t3 = CompiledTaskNode(
+                task_id="T3",
+                task_type="test_generation",
+                title="Author authentication integration tests",
+                objective=(
+                    "Write integration test suite covering auth flows and database persistence."
+                ),
+                dependencies=["T2"],
+                required_capabilities=[
+                    AgentCapability.TEST_GENERATION,
+                    AgentCapability.FILE_EDITING,
+                ],
+                preferred_capabilities=[],
+                target_files=[
+                    "tests/test_auth_migration.py" if analysis["is_python"] else "test/auth.test.js"
+                ],
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": eval_cmd},
+                    "description": "Run authentication & database integration tests",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.SIMPLE,
+            )
+            t4 = CompiledTaskNode(
+                task_id="T4",
+                task_type="objective_verification",
+                title="Objective verification",
+                objective="Verify full authentication and database migration execution.",
+                dependencies=["T3"],
+                required_capabilities=[AgentCapability.FILE_EDITING],
+                preferred_capabilities=[],
+                target_files=[],
+                target_files_ownership=TargetFileOwnership.KNOWN,
+                verification_requirements={
+                    "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                    "criteria": {"command": eval_cmd},
+                    "description": "Objective verification of auth and migration pipeline",
+                },
+                parallel_safe=False,
+                estimated_complexity=ComplexityLevel.TRIVIAL,
+            )
+            return [t1, t2, t3, t4]
 
         # Case 4: Database Migration
         if analysis["has_db"] and not analysis["is_fullstack"]:

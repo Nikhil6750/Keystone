@@ -1,9 +1,10 @@
-"""Real E2E Certification Suite for Keystone Dynamic Multi-Agent Execution.
+"""Deterministic Simulated End-to-End Orchestration Fixtures Suite.
 
-Proves:
-1. Calculator E2E (C:\\Keystone-MultiAgent-Calculator-V2): builds HTML, CSS, JS, tests.
-2. Multi-Agent Certification E2E (C:\\Keystone-MultiAgent-Certification): builds full-stack app.
-3. Reroute E2E: unavailable or quota-blocked agent reroutes to healthy agent boundedly.
+Provides deterministic, in-process simulated test fixtures verifying end-to-end
+orchestration graph compilation, multi-agent dispatch, error recovery, and objective
+verification pipelines without external CLI dependencies.
+
+For standalone live real-provider certification, see `scripts/certify_live_multiagent.py`.
 """
 
 import os

@@ -281,9 +281,15 @@ class WorkflowEngine:
         context: ExecutionContext | None = None,
         workspace_watcher: Any = None,
         max_concurrency: int = 3,
+        event_sink: Any = None,
+        execution_id: str | None = None,
+        event_sequence: Any = None,
     ) -> tuple[Workflow, dict[str, dict[str, datetime]]]:
         """Execute task graph concurrently using asyncio with real multi-agent parallelization."""
         import asyncio
+        import contextlib
+
+        from app.engine.orchestration.events import OrchestrationEvent, OrchestrationEventType
 
         workflow = workflow_service.get_workflow(self._db, workflow_id)
         if workflow is None:
@@ -297,6 +303,23 @@ class WorkflowEngine:
             context = ExecutionContext(
                 workflow_id=workflow.id, workflow_input=dict(workflow.input_payload)
             )
+
+        async def _emit_event(event_type: OrchestrationEventType, **kwargs: Any) -> None:
+            if event_sink is None or execution_id is None:
+                return
+            seq = event_sequence.next() if event_sequence is not None else 0
+            evt = OrchestrationEvent(
+                event_id=f"evt-{execution_id}-{seq}",
+                execution_id=execution_id,
+                sequence=seq,
+                event_type=event_type,
+                timestamp=datetime.now(UTC),
+                **kwargs,
+            )
+            try:
+                await event_sink.on_event(evt)
+            except Exception:
+                logger.exception("event_emission_failed event_type=%s", event_type)
 
         steps = sorted(workflow.steps, key=lambda s: s.position)
         step_meta: dict[str, dict[str, Any]] = {}
@@ -342,129 +365,268 @@ class WorkflowEngine:
         failed_step_encountered = False
 
         task_timestamps: dict[str, dict[str, datetime]] = {}
+        last_waiting_reasons: dict[str, str] = {}
 
-        while pending_steps or running_tasks:
-            scheduled_any = False
-            for step_id, step in list(pending_steps.items()):
-                meta = step_meta[step_id]
-                deps = meta["depends_on"]
+        heartbeat_running = True
 
-                deps_met = all(
-                    dep in completed_keys
-                    or any(s.id == dep for s in steps if s.id in completed_keys)
-                    for dep in deps
-                )
-                if not deps_met:
-                    dep_failed = any(
-                        dep in failed_keys or any(s.id == dep for s in steps if s.id in failed_keys)
+        async def _heartbeat_loop() -> None:
+            while heartbeat_running:
+                try:
+                    await asyncio.sleep(2.5)
+                    if not heartbeat_running:
+                        break
+                    now = datetime.now(UTC)
+                    active_ids = list(running_tasks.keys())
+                    for s_id in active_ids:
+                        if s_id not in step_meta:
+                            continue
+                        meta = step_meta[s_id]
+                        step_obj = next((s for s in steps if s.id == s_id), None)
+                        agent_id = step_obj.agent_type if step_obj else "Agent"
+                        t_key = meta.get("task_key", s_id)
+                        start_time = task_timestamps.get(s_id, {}).get("start", now)
+                        elapsed = (now - start_time).total_seconds()
+                        await _emit_event(
+                            OrchestrationEventType.EXECUTION_HEARTBEAT,
+                            workflow_id=workflow.id,
+                            task_key=t_key,
+                            agent_id=agent_id,
+                            elapsed_seconds=elapsed,
+                            status="working",
+                        )
+                except asyncio.CancelledError:
+                    break
+                except Exception:
+                    pass
+
+        heartbeat_task = asyncio.create_task(_heartbeat_loop())
+
+        try:
+            while pending_steps or running_tasks:
+                scheduled_any = False
+                for step_id, step in list(pending_steps.items()):
+                    meta = step_meta[step_id]
+                    deps = meta["depends_on"]
+
+                    deps_met = all(
+                        dep in completed_keys
+                        or any(s.id == dep for s in steps if s.id in completed_keys)
                         for dep in deps
                     )
-                    if dep_failed:
-                        pending_steps.pop(step_id, None)
-                        failed_keys.add(meta["task_key"])
-                        failed_keys.add(step_id)
-                        with self._db_lock:
-                            workflow_service.transition_step(self._db, step.id, StepStatus.FAILED)
-                        failed_step_encountered = True
-                    continue
+                    if not deps_met:
+                        dep_failed = any(
+                            dep in failed_keys
+                            or any(s.id == dep for s in steps if s.id in failed_keys)
+                            for dep in deps
+                        )
+                        if dep_failed:
+                            pending_steps.pop(step_id, None)
+                            failed_keys.add(meta["task_key"])
+                            failed_keys.add(step_id)
+                            with self._db_lock:
+                                workflow_service.transition_step(
+                                    self._db, step.id, StepStatus.FAILED
+                                )
+                            failed_step_encountered = True
+                        else:
+                            if last_waiting_reasons.get(step_id) != "dependency":
+                                last_waiting_reasons[step_id] = "dependency"
+                                await _emit_event(
+                                    OrchestrationEventType.TASK_WAITING,
+                                    workflow_id=workflow.id,
+                                    task_key=meta["task_key"],
+                                    agent_id=step.agent_type,
+                                    reason_category="dependency",
+                                    status="waiting",
+                                )
+                        continue
 
-                if len(running_tasks) >= max_concurrency:
-                    break
+                    if len(running_tasks) >= max_concurrency:
+                        if last_waiting_reasons.get(step_id) != "concurrency_limit":
+                            last_waiting_reasons[step_id] = "concurrency_limit"
+                            await _emit_event(
+                                OrchestrationEventType.TASK_WAITING,
+                                workflow_id=workflow.id,
+                                task_key=meta["task_key"],
+                                agent_id=step.agent_type,
+                                reason_category="concurrency_limit",
+                                status="waiting",
+                            )
+                        break
 
-                if step.agent_type in active_agents:
-                    continue
+                    if step.agent_type in active_agents:
+                        if last_waiting_reasons.get(step_id) != "agent_busy":
+                            last_waiting_reasons[step_id] = "agent_busy"
+                            await _emit_event(
+                                OrchestrationEventType.TASK_WAITING,
+                                workflow_id=workflow.id,
+                                task_key=meta["task_key"],
+                                agent_id=step.agent_type,
+                                reason_category="agent_busy",
+                                status="waiting",
+                            )
+                        continue
 
-                ownership = meta["target_files_ownership"]
-                parallel_safe = meta["parallel_safe"]
-                target_files = set(meta["target_files"])
+                    ownership = meta["target_files_ownership"]
+                    parallel_safe = meta["parallel_safe"]
+                    target_files = set(meta["target_files"])
 
-                if (ownership != "KNOWN" or not parallel_safe or not target_files) and len(
-                    running_tasks
-                ) > 0:
-                    continue
+                    if (ownership != "KNOWN" or not parallel_safe or not target_files) and len(
+                        running_tasks
+                    ) > 0:
+                        if last_waiting_reasons.get(step_id) != "file_conflict":
+                            last_waiting_reasons[step_id] = "file_conflict"
+                            await _emit_event(
+                                OrchestrationEventType.TASK_WAITING,
+                                workflow_id=workflow.id,
+                                task_key=meta["task_key"],
+                                agent_id=step.agent_type,
+                                reason_category="file_conflict",
+                                status="waiting",
+                            )
+                        continue
 
-                if active_unknown_count > 0:
-                    continue
+                    if active_unknown_count > 0:
+                        if last_waiting_reasons.get(step_id) != "file_conflict":
+                            last_waiting_reasons[step_id] = "file_conflict"
+                            await _emit_event(
+                                OrchestrationEventType.TASK_WAITING,
+                                workflow_id=workflow.id,
+                                task_key=meta["task_key"],
+                                agent_id=step.agent_type,
+                                reason_category="file_conflict",
+                                status="waiting",
+                            )
+                        continue
 
-                if target_files & active_target_files:
-                    continue
+                    if target_files & active_target_files:
+                        if last_waiting_reasons.get(step_id) != "file_conflict":
+                            last_waiting_reasons[step_id] = "file_conflict"
+                            await _emit_event(
+                                OrchestrationEventType.TASK_WAITING,
+                                workflow_id=workflow.id,
+                                task_key=meta["task_key"],
+                                agent_id=step.agent_type,
+                                reason_category="file_conflict",
+                                status="waiting",
+                            )
+                        continue
 
-                pending_steps.pop(step_id)
-                active_agents.add(step.agent_type)
-                active_target_files.update(target_files)
-                if ownership != "KNOWN" or not parallel_safe or not target_files:
-                    active_unknown_count += 1
+                    pending_steps.pop(step_id)
+                    last_waiting_reasons.pop(step_id, None)
+                    active_agents.add(step.agent_type)
+                    active_target_files.update(target_files)
+                    if ownership != "KNOWN" or not parallel_safe or not target_files:
+                        active_unknown_count += 1
 
-                if workspace_watcher is not None and hasattr(
-                    workspace_watcher, "register_active_task"
-                ):
-                    workspace_watcher.register_active_task(
-                        step.id, step.agent_type, meta["target_files"]
+                    if workspace_watcher is not None and hasattr(
+                        workspace_watcher, "register_active_task"
+                    ):
+                        workspace_watcher.register_active_task(
+                            step.id, step.agent_type, meta["target_files"]
+                        )
+
+                    task_timestamps[step.id] = {"start": datetime.now(UTC)}
+
+                    # Emit STEP_STARTED live
+                    await _emit_event(
+                        OrchestrationEventType.STEP_STARTED,
+                        workflow_id=workflow.id,
+                        task_key=meta["task_key"],
+                        agent_id=step.agent_type,
+                        attempt_number=1,
+                        status="working",
                     )
 
-                task_timestamps[step.id] = {"start": datetime.now(UTC)}
+                    task = asyncio.create_task(
+                        asyncio.to_thread(self._execute_step, workflow, step, context)
+                    )
+                    running_tasks[step.id] = task
+                    task_step_map[task] = step
+                    scheduled_any = True
 
-                task = asyncio.create_task(
-                    asyncio.to_thread(self._execute_step, workflow, step, context)
+                if not running_tasks:
+                    if pending_steps and not scheduled_any:
+                        for step_id, step in list(pending_steps.items()):
+                            pending_steps.pop(step_id)
+                            failed_keys.add(step.id)
+                            with self._db_lock:
+                                workflow_service.transition_step(
+                                    self._db, step.id, StepStatus.FAILED
+                                )
+                        failed_step_encountered = True
+                    break
+
+                done, _ = await asyncio.wait(
+                    list(running_tasks.values()), return_when=asyncio.FIRST_COMPLETED
                 )
-                running_tasks[step.id] = task
-                task_step_map[task] = step
-                scheduled_any = True
 
-            if not running_tasks:
-                if pending_steps and not scheduled_any:
-                    for step_id, step in list(pending_steps.items()):
-                        pending_steps.pop(step_id)
+                for finished_task in done:
+                    step = task_step_map.pop(finished_task)
+                    running_tasks.pop(step.id, None)
+                    meta = step_meta[step.id]
+
+                    active_agents.discard(step.agent_type)
+                    active_target_files.difference_update(meta["target_files"])
+                    if (
+                        meta["target_files_ownership"] != "KNOWN"
+                        or not meta["parallel_safe"]
+                        or not meta["target_files"]
+                    ):
+                        active_unknown_count = max(0, active_unknown_count - 1)
+
+                    if workspace_watcher is not None and hasattr(
+                        workspace_watcher, "unregister_active_task"
+                    ):
+                        workspace_watcher.unregister_active_task(step.id)
+
+                    task_timestamps[step.id]["end"] = datetime.now(UTC)
+
+                    try:
+                        updated_context = finished_task.result()
+                        context = updated_context
+                        completed_keys.add(step.id)
+                        completed_keys.add(meta["task_key"])
+                        # Emit STEP_COMPLETED live
+                        await _emit_event(
+                            OrchestrationEventType.STEP_COMPLETED,
+                            workflow_id=workflow.id,
+                            task_key=meta["task_key"],
+                            agent_id=step.agent_type,
+                            attempt_number=1,
+                            status="completed",
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "async_step_execution_failed step_id=%s exc=%s", step.id, exc
+                        )
                         failed_keys.add(step.id)
-                        with self._db_lock:
-                            workflow_service.transition_step(self._db, step.id, StepStatus.FAILED)
-                    failed_step_encountered = True
-                break
+                        failed_keys.add(meta["task_key"])
+                        failed_step_encountered = True
+                        # Emit STEP_FAILED live
+                        await _emit_event(
+                            OrchestrationEventType.STEP_FAILED,
+                            workflow_id=workflow.id,
+                            task_key=meta["task_key"],
+                            agent_id=step.agent_type,
+                            attempt_number=1,
+                            status="failed",
+                        )
 
-            done, _ = await asyncio.wait(
-                list(running_tasks.values()), return_when=asyncio.FIRST_COMPLETED
-            )
+            if failed_step_encountered or len(completed_keys) < len(steps):
+                final_wf = self._fail_workflow(
+                    workflow_id, error_message="one or more tasks in the workflow failed execution"
+                )
+            else:
+                final_wf = self._succeed_workflow(workflow, steps, context)
 
-            for finished_task in done:
-                step = task_step_map.pop(finished_task)
-                running_tasks.pop(step.id, None)
-                meta = step_meta[step.id]
+            return final_wf, task_timestamps
 
-                active_agents.discard(step.agent_type)
-                active_target_files.difference_update(meta["target_files"])
-                if (
-                    meta["target_files_ownership"] != "KNOWN"
-                    or not meta["parallel_safe"]
-                    or not meta["target_files"]
-                ):
-                    active_unknown_count = max(0, active_unknown_count - 1)
-
-                if workspace_watcher is not None and hasattr(
-                    workspace_watcher, "unregister_active_task"
-                ):
-                    workspace_watcher.unregister_active_task(step.id)
-
-                task_timestamps[step.id]["end"] = datetime.now(UTC)
-
-                try:
-                    updated_context = finished_task.result()
-                    context = updated_context
-                    completed_keys.add(step.id)
-                    completed_keys.add(meta["task_key"])
-                except Exception as exc:
-                    logger.warning("async_step_execution_failed step_id=%s exc=%s", step.id, exc)
-                    failed_keys.add(step.id)
-                    failed_keys.add(meta["task_key"])
-                    failed_step_encountered = True
-
-        if failed_step_encountered or len(completed_keys) < len(steps):
-            final_wf = self._fail_workflow(
-                workflow_id, error_message="one or more tasks in the workflow failed execution"
-            )
-        else:
-            final_wf = self._succeed_workflow(workflow, steps, context)
-
-        return final_wf, task_timestamps
+        finally:
+            heartbeat_running = False
+            heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat_task
 
     def resume_workflow(self, workflow_id: str) -> Workflow:
         """Resume a workflow left `RUNNING` by a process interruption.

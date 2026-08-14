@@ -356,36 +356,21 @@ class EndToEndOrchestrationService:
                 task_key=task_key,
                 agent_id=agent_type,
             )
+            await self._emit(
+                execution_id,
+                OrchestrationEventType.AGENT_SELECTED,
+                task_key=task_key,
+                agent_id=agent_type,
+            )
 
         try:
-            # Offloaded to a worker thread: a real local-CLI agent call
-            # underneath `WorkflowEngine.execute_workflow()` blocks
-            # synchronously on `subprocess.run()` for the CLI's full
-            # duration (see `SubprocessRunner`) -- calling it directly on
-            # this coroutine, as before, froze the *entire* single-
-            # threaded event loop for that whole span, so an unrelated
-            # concurrent request (another orchestration, even a plain
-            # health check) could not be served and timed out client-side
-            # as a false "Keystone backend is unavailable." `self._db`
-            # (a `Session` from `SessionLocal()`) is exclusively owned by
-            # this one execution's call chain, never touched concurrently
-            # from another thread, so moving its synchronous use here is
-            # safe.
             workflow, step_to_task, results, learning_event_ids = await self._phase_d_execute(
-                plan, agent_type_by_task_key
+                plan, agent_type_by_task_key, execution_id
             )
         except SQLAlchemyError as exc:
             raise OrchestrationPersistenceError(
                 "workflow creation/execution failed at the persistence layer"
             ) from exc
-
-        await self._emit(
-            execution_id, OrchestrationEventType.WORKFLOW_CREATED, workflow_id=workflow.id
-        )
-        await self._emit(
-            execution_id, OrchestrationEventType.WORKFLOW_STARTED, workflow_id=workflow.id
-        )
-        await self._emit_step_events(execution_id, workflow, step_to_task)
 
         if workflow.status == WorkflowStatus.FAILED and not results:
             result = self._result(
@@ -413,6 +398,7 @@ class EndToEndOrchestrationService:
             recovery_used,
             recovery_action,
             all_learning_event_ids,
+            rerouted_tasks,
         ) = await asyncio.to_thread(
             self._phase_e_verify_and_recover,
             plan,
@@ -431,7 +417,20 @@ class EndToEndOrchestrationService:
             ),
         )
         if recovery_used:
-            await self._emit(execution_id, OrchestrationEventType.RECOVERY_STARTED)
+            if rerouted_tasks:
+                for r_task_key, r_prev, r_new, r_reason in rerouted_tasks:
+                    await self._emit(
+                        execution_id,
+                        OrchestrationEventType.RECOVERY_STARTED,
+                        task_key=r_task_key,
+                        previous_agent_id=r_prev,
+                        new_agent_id=r_new,
+                        reason_category=r_reason,
+                        status="rerouted",
+                    )
+            else:
+                await self._emit(execution_id, OrchestrationEventType.RECOVERY_STARTED)
+
             if recovery_action == RecoveryAction.FAIL:
                 await self._emit(execution_id, OrchestrationEventType.RECOVERY_EXHAUSTED)
             else:
@@ -693,11 +692,18 @@ class EndToEndOrchestrationService:
     # --- Phase D: Workflow compile + execute -----------------------------------
 
     async def _phase_d_execute(
-        self, plan: WorkflowPlan, agent_type_by_task_key: dict[str, str]
+        self, plan: WorkflowPlan, agent_type_by_task_key: dict[str, str], execution_id: str
     ) -> tuple[Workflow, dict[str, TaskSpec], dict[str, VerificationResult], list[str]]:
         ordered_tasks = topological_order(plan.tasks)
         workflow_create = compile_workflow_create(plan, agent_type_by_task_key)
         workflow = workflow_service.create_workflow(self._db, workflow_create)
+
+        await self._emit(
+            execution_id, OrchestrationEventType.WORKFLOW_CREATED, workflow_id=workflow.id
+        )
+        await self._emit(
+            execution_id, OrchestrationEventType.WORKFLOW_STARTED, workflow_id=workflow.id
+        )
 
         step_to_task = self._map_steps_to_tasks(workflow, ordered_tasks)
         results: dict[str, VerificationResult] = {}
@@ -715,9 +721,22 @@ class EndToEndOrchestrationService:
         )
         watcher = None
         if self._workspace_root:
-            from app.services.workspace_watcher import WorkspaceWatcher
+            from app.services.workspace_watcher import FileActivityEvent, WorkspaceWatcher
 
-            watcher = WorkspaceWatcher(self._workspace_root)
+            async def _on_file_activity(fa_event: FileActivityEvent) -> None:
+                task_spec = step_to_task.get(fa_event.task_id) if fa_event.task_id else None
+                t_key = task_spec.key if task_spec else fa_event.task_id
+                await self._emit(
+                    execution_id,
+                    OrchestrationEventType.FILE_ACTIVITY,
+                    task_key=t_key,
+                    agent_id=fa_event.agent_id,
+                    relative_path=fa_event.relative_path,
+                    activity=fa_event.activity,
+                    message=fa_event.relative_path,
+                )
+
+            watcher = WorkspaceWatcher(self._workspace_root, on_activity=_on_file_activity)
             await watcher.start_async()
 
         task_nodes = getattr(plan, "compiler_nodes", [])
@@ -731,6 +750,9 @@ class EndToEndOrchestrationService:
                 context,
                 workspace_watcher=watcher,
                 max_concurrency=3,
+                event_sink=self._event_sink,
+                execution_id=execution_id,
+                event_sequence=self._event_sequence,
             )
             if watcher is not None:
                 watcher.poll_now()
@@ -814,11 +836,18 @@ class EndToEndOrchestrationService:
         agent_type_by_task_key: dict[str, str],
         routing_context_by_task_key: dict[str, _RoutingContext],
         learning_event_ids: list[str],
-    ) -> tuple[Workflow, AggregatedVerification | None, bool, RecoveryAction | None, list[str]]:
+    ) -> tuple[
+        Workflow,
+        AggregatedVerification | None,
+        bool,
+        RecoveryAction | None,
+        list[str],
+        list[tuple[str, str | None, str | None, str]],
+    ]:
         aggregated = self._aggregate(results)
         if aggregated is None or aggregated.overall_status == VerificationStatus.PASSED:
             initial_action = RecoveryAction.ACCEPT if aggregated else None
-            return workflow, aggregated, False, initial_action, learning_event_ids
+            return workflow, aggregated, False, initial_action, learning_event_ids, []
 
         current_workflow = workflow
         current_step_to_task = step_to_task
@@ -829,6 +858,7 @@ class EndToEndOrchestrationService:
         attempt_number = 1
         last_action: RecoveryAction | None = None
         current_verification: AggregatedVerification = aggregated
+        all_rerouted_tasks: list[tuple[str, str | None, str | None, str]] = []
 
         while True:
             decision = decide_recovery(
@@ -861,10 +891,14 @@ class EndToEndOrchestrationService:
                 current_workflow,
                 current_step_to_task,
                 current_results,
-                current_agent_types,
+                new_cycle_agent_types,
                 cycle_learning_event_ids,
             ) = cycle
             all_learning_event_ids.extend(cycle_learning_event_ids)
+            for t_k, n_agent in new_cycle_agent_types.items():
+                p_agent = current_agent_types.get(t_k)
+                all_rerouted_tasks.append((t_k, p_agent, n_agent, "verification_failure"))
+            current_agent_types = new_cycle_agent_types
 
             next_verification = self._aggregate({**results, **current_results})
             if next_verification is None:
@@ -884,6 +918,7 @@ class EndToEndOrchestrationService:
             recovery_used,
             last_action,
             all_learning_event_ids,
+            all_rerouted_tasks,
         )
 
     def _run_recovery_cycle(

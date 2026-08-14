@@ -66,6 +66,7 @@ class OrchestrationEventType(StrEnum):
     TEAM_ASSEMBLED = "team.assembled"
 
     TASK_READY = "task.ready"
+    TASK_WAITING = "task.waiting"
     AGENT_SELECTED = "agent.selected"
 
     ROUTING_STARTED = "routing.started"
@@ -121,6 +122,11 @@ class OrchestrationEvent:
     safe_issue_codes: tuple[str, ...] = field(default_factory=tuple)
     message: str | None = None
     elapsed_seconds: float | None = None
+    relative_path: str | None = None
+    activity: str | None = None
+    previous_agent_id: str | None = None
+    new_agent_id: str | None = None
+    reason_category: str | None = None
 
 
 class OrchestrationEventSink(Protocol):

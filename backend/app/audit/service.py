@@ -5,6 +5,7 @@ application updates or individually deletes one afterward.
 """
 
 import logging
+import threading
 from datetime import UTC, datetime
 from typing import Any
 
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 _MAX_SEQUENCE_RETRIES = 5
 MAX_LIST_LIMIT = 500
 DEFAULT_MAX_PAYLOAD_CHARACTERS = 5000
+_audit_lock = threading.Lock()
 
 
 def _last_event(db: Session, workflow_id: str) -> AuditEvent | None:
@@ -64,57 +66,58 @@ def append_event(
         raise ValueError(f"audit payload exceeds {max_payload_characters} characters")
 
     last_error: SQLAlchemyError | None = None
-    for _attempt in range(_MAX_SEQUENCE_RETRIES):
-        last = _last_event(db, workflow_id)
-        sequence_number = 1 if last is None else last.sequence_number + 1
-        previous_hash = GENESIS_HASH if last is None else last.event_hash
-        created_at = datetime.now(UTC)
+    with _audit_lock:
+        for _attempt in range(_MAX_SEQUENCE_RETRIES):
+            last = _last_event(db, workflow_id)
+            sequence_number = 1 if last is None else last.sequence_number + 1
+            previous_hash = GENESIS_HASH if last is None else last.event_hash
+            created_at = datetime.now(UTC)
 
-        envelope = build_hash_envelope(
-            workflow_id=workflow_id,
-            sequence_number=sequence_number,
-            event_type=event_type.value,
-            actor_type=actor_type.value,
-            actor_id=actor_id,
-            step_id=step_id,
-            execution_attempt_id=execution_attempt_id,
-            compensation_attempt_id=compensation_attempt_id,
-            created_at=created_at,
-            payload=payload,
-            previous_hash=previous_hash,
-        )
-        event_hash = compute_event_hash(envelope)
-
-        event = AuditEvent(
-            workflow_id=workflow_id,
-            step_id=step_id,
-            execution_attempt_id=execution_attempt_id,
-            compensation_attempt_id=compensation_attempt_id,
-            sequence_number=sequence_number,
-            event_type=event_type,
-            actor_type=actor_type,
-            actor_id=actor_id,
-            payload=payload,
-            previous_hash=previous_hash,
-            event_hash=event_hash,
-            created_at=created_at,
-        )
-        db.add(event)
-        try:
-            db.commit()
-        except SQLAlchemyError as exc:
-            db.rollback()
-            last_error = exc
-            logger.warning(
-                "audit_event_sequence_conflict workflow_id=%s sequence_number=%s",
-                workflow_id,
-                sequence_number,
+            envelope = build_hash_envelope(
+                workflow_id=workflow_id,
+                sequence_number=sequence_number,
+                event_type=event_type.value,
+                actor_type=actor_type.value,
+                actor_id=actor_id,
+                step_id=step_id,
+                execution_attempt_id=execution_attempt_id,
+                compensation_attempt_id=compensation_attempt_id,
+                created_at=created_at,
+                payload=payload,
+                previous_hash=previous_hash,
             )
-            continue
-        return event
+            event_hash = compute_event_hash(envelope)
 
-    assert last_error is not None  # loop always executes at least once
-    raise last_error
+            event = AuditEvent(
+                workflow_id=workflow_id,
+                step_id=step_id,
+                execution_attempt_id=execution_attempt_id,
+                compensation_attempt_id=compensation_attempt_id,
+                sequence_number=sequence_number,
+                event_type=event_type,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                payload=payload,
+                previous_hash=previous_hash,
+                event_hash=event_hash,
+                created_at=created_at,
+            )
+            db.add(event)
+            try:
+                db.commit()
+            except SQLAlchemyError as exc:
+                db.rollback()
+                last_error = exc
+                logger.warning(
+                    "audit_event_sequence_conflict workflow_id=%s sequence_number=%s",
+                    workflow_id,
+                    sequence_number,
+                )
+                continue
+            return event
+
+        assert last_error is not None  # loop always executes at least once
+        raise last_error
 
 
 def list_events(db: Session, workflow_id: str, limit: int = 100) -> list[AuditEvent]:

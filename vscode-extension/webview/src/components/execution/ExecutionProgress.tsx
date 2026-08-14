@@ -96,15 +96,37 @@ export const ExecutionProgress: React.FC<ExecutionProgressProps> = ({ events }) 
   const taskMap = new Map<string, AgentTaskCard>();
 
   events.forEach((evt) => {
-    if (evt.event_type === 'routing.task_selected' || evt.event_type === 'agent.selected' || evt.event_type === 'task.ready') {
+    if (
+      evt.event_type === 'routing.task_selected' ||
+      evt.event_type === 'agent.selected' ||
+      evt.event_type === 'task.ready'
+    ) {
       if (evt.task_key && evt.agent_id) {
-        taskMap.set(evt.task_key, {
+        const existing = taskMap.get(evt.task_key);
+        if (!existing) {
+          taskMap.set(evt.task_key, {
+            taskId: evt.task_key,
+            agentId: evt.agent_id,
+            taskTitle: `Task ${evt.task_key}`,
+            status: evt.status === 'rerouted' ? 'rerouted' : 'queued',
+            elapsedSeconds: 0,
+          });
+        }
+      }
+    } else if (evt.event_type === 'task.waiting') {
+      if (evt.task_key) {
+        const card = taskMap.get(evt.task_key) || {
           taskId: evt.task_key,
-          agentId: evt.agent_id,
+          agentId: evt.agent_id || 'Agent',
           taskTitle: `Task ${evt.task_key}`,
-          status: evt.status === 'rerouted' ? 'rerouted' : 'queued',
+          status: 'waiting',
           elapsedSeconds: 0,
-        });
+        };
+        if (card.status !== 'completed' && card.status !== 'failed') {
+          card.status = 'waiting';
+        }
+        if (evt.agent_id) card.agentId = evt.agent_id;
+        taskMap.set(evt.task_key, card);
       }
     } else if (evt.event_type === 'step.started') {
       if (evt.task_key) {
@@ -115,36 +137,76 @@ export const ExecutionProgress: React.FC<ExecutionProgressProps> = ({ events }) 
           status: 'working',
           elapsedSeconds: 0,
         };
-        card.status = 'working';
+        if (card.status !== 'completed' && card.status !== 'failed') {
+          card.status = 'working';
+        }
         if (evt.agent_id) card.agentId = evt.agent_id;
         taskMap.set(evt.task_key, card);
       }
+    } else if (evt.event_type === 'execution.heartbeat') {
+      if (evt.task_key) {
+        const card = taskMap.get(evt.task_key);
+        if (card && typeof evt.elapsed_seconds === 'number') {
+          card.elapsedSeconds = Math.round(evt.elapsed_seconds);
+        }
+      }
     } else if (evt.event_type === 'file.activity') {
-      if (evt.task_key && evt.message) {
+      if (evt.task_key) {
         const card = taskMap.get(evt.task_key);
         if (card) {
-          card.activeFile = evt.message;
+          card.activeFile = evt.relative_path || evt.message || undefined;
         }
       }
     } else if (evt.event_type === 'verification.started') {
       if (evt.task_key) {
-        const card = taskMap.get(evt.task_key);
-        if (card) card.status = 'verifying';
+        const card = taskMap.get(evt.task_key) || {
+          taskId: evt.task_key,
+          agentId: evt.agent_id || 'Agent',
+          taskTitle: `Task ${evt.task_key}`,
+          status: 'verifying',
+          elapsedSeconds: 0,
+        };
+        if (card.status !== 'completed' && card.status !== 'failed') {
+          card.status = 'verifying';
+        }
+        taskMap.set(evt.task_key, card);
       }
     } else if (evt.event_type === 'recovery.started') {
       if (evt.task_key) {
-        const card = taskMap.get(evt.task_key);
-        if (card) card.status = 'rerouted';
+        const card = taskMap.get(evt.task_key) || {
+          taskId: evt.task_key,
+          agentId: evt.new_agent_id || evt.agent_id || 'Agent',
+          taskTitle: `Task ${evt.task_key}`,
+          status: 'rerouted',
+          elapsedSeconds: 0,
+        };
+        card.status = 'rerouted';
+        if (evt.new_agent_id) card.agentId = evt.new_agent_id;
+        taskMap.set(evt.task_key, card);
       }
     } else if (evt.event_type === 'step.completed') {
       if (evt.task_key) {
-        const card = taskMap.get(evt.task_key);
-        if (card) card.status = 'completed';
+        const card = taskMap.get(evt.task_key) || {
+          taskId: evt.task_key,
+          agentId: evt.agent_id || 'Agent',
+          taskTitle: `Task ${evt.task_key}`,
+          status: 'completed',
+          elapsedSeconds: 0,
+        };
+        card.status = 'completed';
+        taskMap.set(evt.task_key, card);
       }
     } else if (evt.event_type === 'step.failed') {
       if (evt.task_key) {
-        const card = taskMap.get(evt.task_key);
-        if (card) card.status = 'failed';
+        const card = taskMap.get(evt.task_key) || {
+          taskId: evt.task_key,
+          agentId: evt.agent_id || 'Agent',
+          taskTitle: `Task ${evt.task_key}`,
+          status: 'failed',
+          elapsedSeconds: 0,
+        };
+        card.status = 'failed';
+        taskMap.set(evt.task_key, card);
       }
     }
   });

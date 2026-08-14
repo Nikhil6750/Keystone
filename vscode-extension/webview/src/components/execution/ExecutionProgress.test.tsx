@@ -80,4 +80,81 @@ describe('ExecutionProgress', () => {
     render(<ExecutionProgress events={[]} />);
     expect(screen.getByText(/Understanding your goal/i)).toBeInTheDocument();
   });
+
+  it('correctly handles all 7 UI states: queued, waiting, working, rerouted, verifying, completed, failed', () => {
+    const events: OrchestrationEvent[] = [
+      makeEvent({
+        event_id: 'e1',
+        sequence: 1,
+        event_type: 'routing.task_selected',
+        task_key: 'T1',
+        agent_id: 'codex',
+      }),
+      makeEvent({
+        event_id: 'e2',
+        sequence: 2,
+        event_type: 'task.waiting',
+        task_key: 'T2',
+        agent_id: 'antigravity',
+        reason_category: 'dependency',
+      }),
+      makeEvent({
+        event_id: 'e3',
+        sequence: 3,
+        event_type: 'step.started',
+        task_key: 'T3',
+        agent_id: 'gemini',
+      }),
+      makeEvent({
+        event_id: 'e4',
+        sequence: 4,
+        event_type: 'file.activity',
+        task_key: 'T3',
+        agent_id: 'gemini',
+        relative_path: 'server.py',
+        activity: 'modified',
+      }),
+      makeEvent({
+        event_id: 'e5',
+        sequence: 5,
+        event_type: 'recovery.started',
+        task_key: 'T4',
+        agent_id: 'claude-code',
+        new_agent_id: 'antigravity',
+        reason_category: 'verification_failure',
+      }),
+      makeEvent({
+        event_id: 'e6',
+        sequence: 6,
+        event_type: 'verification.started',
+        task_key: 'T5',
+        agent_id: 'codex',
+      }),
+      makeEvent({
+        event_id: 'e7',
+        sequence: 7,
+        event_type: 'step.completed',
+        task_key: 'T6',
+        agent_id: 'codex',
+      }),
+      makeEvent({
+        event_id: 'e8',
+        sequence: 8,
+        event_type: 'step.failed',
+        task_key: 'T7',
+        agent_id: 'codex',
+      }),
+    ];
+
+    render(<ExecutionProgress events={events} />);
+
+    expect(screen.getByText('queued')).toBeInTheDocument();
+    expect(screen.getByText('waiting')).toBeInTheDocument();
+    expect(screen.getByText('working')).toBeInTheDocument();
+    expect(screen.getByText('rerouted')).toBeInTheDocument();
+    expect(screen.getByText('verifying')).toBeInTheDocument();
+    expect(screen.getByText('completed')).toBeInTheDocument();
+    expect(screen.getByText('failed')).toBeInTheDocument();
+    expect(screen.getByText('server.py')).toBeInTheDocument();
+  });
 });

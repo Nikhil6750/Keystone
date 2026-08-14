@@ -62,7 +62,7 @@ class WorkspaceWatcher:
     def __init__(
         self,
         workspace_root: str | Path,
-        on_activity: Callable[[FileActivityEvent], None] | None = None,
+        on_activity: Callable[[FileActivityEvent], Any] | None = None,
         poll_interval: float = 1.0,
     ) -> None:
         self.workspace_root = Path(workspace_root).resolve()
@@ -175,7 +175,12 @@ class WorkspaceWatcher:
 
         if self.on_activity:
             for event in events:
-                self.on_activity(event)
+                try:
+                    res = self.on_activity(event)
+                    if asyncio.iscoroutine(res):
+                        asyncio.create_task(res)
+                except Exception:
+                    pass
 
         return events
 

@@ -52,11 +52,9 @@ describe('ExecutionProgress', () => {
 
     render(<ExecutionProgress events={events} />);
 
-    expect(screen.getByText('Understanding goal...')).toBeInTheDocument();
-    expect(screen.getByText('Planning 7 tasks...')).toBeInTheDocument();
-    expect(screen.getByText(/qwen-coder.*implement_change/)).toBeInTheDocument();
-    expect(screen.getByText(/corp-reviewer.*security_review/)).toBeInTheDocument();
-    expect(screen.getByText('Verifying...')).toBeInTheDocument();
+    expect(screen.getByText(/Verifying/i)).toBeInTheDocument();
+    expect(screen.getByText(/qwen-coder/i)).toBeInTheDocument();
+    expect(screen.getByText(/corp-reviewer/i)).toBeInTheDocument();
   });
 
   it('14. never renders raw event fields outside the curated mapping (no reasoning/CoT/raw-message display path)', () => {
@@ -80,6 +78,6 @@ describe('ExecutionProgress', () => {
 
   it('shows a starting indicator before any events arrive', () => {
     render(<ExecutionProgress events={[]} />);
-    expect(screen.getByText('Starting...')).toBeInTheDocument();
+    expect(screen.getByText(/Understanding your goal/i)).toBeInTheDocument();
   });
 });

@@ -11,7 +11,6 @@ from typing import Any
 
 from app.contracts.planning import PlanningRequest, TaskSpec, WorkflowPlan
 from app.engine.planning.classifier import TaskClassifier
-from app.engine.planning.templates import get_templates_for_plan
 from app.engine.planning.validation import validate_task_graph
 
 
@@ -33,10 +32,11 @@ class Planner:
 
         from app.engine.planning.compiler import TaskGraphCompilerV2
         compiler = TaskGraphCompilerV2()
+        meta = request.metadata or {}
         compiler_nodes = compiler.compile(
             goal=request.goal,
-            workspace_context=request.metadata.get("workspace_context") if request.metadata else None,
-            project_metadata=request.metadata.get("project_metadata") if request.metadata else None,
+            workspace_context=meta.get("workspace_context"),
+            project_metadata=meta.get("project_metadata"),
         )
 
         # 2. Knowledge Context Privacy (Opaque metadata only -- no raw snippets, contents, or paths)

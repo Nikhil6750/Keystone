@@ -8,6 +8,7 @@ Emits safe file_activity events with relative paths and activity type.
 """
 
 import asyncio
+import contextlib
 import os
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -56,7 +57,7 @@ class FileActivityEvent:
 
 
 class WorkspaceWatcher:
-    """Symlink-safe, bounded workspace activity watcher."""
+    """Symlink-safe, bounded workspace activity watcher with concurrent file attribution."""
 
     def __init__(
         self,
@@ -70,27 +71,87 @@ class WorkspaceWatcher:
         self._running = False
         self._task: asyncio.Task[None] | None = None
         self._snapshot: dict[str, float] = {}
+        # task_id -> (agent_id, set_of_normalized_target_files)
+        self._active_tasks: dict[str, tuple[str, set[str]]] = {}
         self.active_task_id: str | None = None
         self.active_agent_id: str | None = None
 
-    def start(self) -> None:
-        """Start polling workspace for changes."""
+    async def start_async(self) -> None:
+        """Start polling workspace for changes within an active event loop."""
         if self._running:
             return
         self._running = True
         self._snapshot = self._take_snapshot()
         self._task = asyncio.create_task(self._poll_loop())
 
-    def stop(self) -> None:
-        """Stop polling workspace."""
+    async def stop_async(self) -> None:
+        """Stop polling workspace safely within an active event loop."""
         self._running = False
         if self._task and not self._task.done():
             self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+        self._task = None
+
+    def start(self) -> None:
+        """Start polling workspace for changes. Safe if called without running loop."""
+        if self._running:
+            return
+        self._running = True
+        self._snapshot = self._take_snapshot()
+        try:
+            loop = asyncio.get_running_loop()
+            self._task = loop.create_task(self._poll_loop())
+        except RuntimeError:
+            # Called outside a running event loop (e.g. sync worker thread)
+            # Do NOT call asyncio.create_task(); poll_now() can still be called manually.
+            self._task = None
+
+    def stop(self) -> None:
+        """Stop polling workspace safely."""
+        self._running = False
+        if self._task and not self._task.done():
+            self._task.cancel()
+            self._task = None
+
+    def register_active_task(
+        self, task_id: str, agent_id: str, target_files: list[str]
+    ) -> None:
+        """Register a currently running task and its target files for concurrent attribution."""
+        norm_files = {str(Path(f)).replace("\\", "/") for f in target_files}
+        self._active_tasks[task_id] = (agent_id, norm_files)
+
+    def unregister_active_task(self, task_id: str) -> None:
+        """Unregister a completed task from active attribution."""
+        self._active_tasks.pop(task_id, None)
 
     def set_active_context(self, task_id: str | None, agent_id: str | None) -> None:
-        """Update active task and agent context for event attribution."""
+        """Legacy helper for single-task execution context."""
         self.active_task_id = task_id
         self.active_agent_id = agent_id
+
+    def _resolve_attribution(self, rel_path: str) -> tuple[str | None, str | None]:
+        """Attribute a file change safely across concurrent active tasks."""
+        if not self._active_tasks:
+            return self.active_task_id, self.active_agent_id
+
+        matching: list[tuple[str, str]] = []
+        for t_id, (a_id, target_files) in self._active_tasks.items():
+            if rel_path in target_files or any(
+                rel_path.endswith(tf) or tf.endswith(rel_path) for tf in target_files
+            ):
+                matching.append((t_id, a_id))
+
+        if len(matching) == 1:
+            return matching[0]
+
+        # If exactly one task is active, attribute to it even if target_files was unlisted
+        if len(self._active_tasks) == 1:
+            single_t_id, (single_a_id, _) = next(iter(self._active_tasks.items()))
+            return single_t_id, single_a_id
+
+        # Ambiguous or multiple tasks active -> workflow level change
+        return None, None
 
     def poll_now(self) -> list[FileActivityEvent]:
         """Perform a single immediate check for changes and emit events."""
@@ -100,33 +161,36 @@ class WorkspaceWatcher:
         # Created or modified
         for rel_path, mtime in current.items():
             if rel_path not in self._snapshot:
+                t_id, a_id = self._resolve_attribution(rel_path)
                 events.append(
                     FileActivityEvent(
                         relative_path=rel_path,
                         activity="created",
-                        task_id=self.active_task_id,
-                        agent_id=self.active_agent_id,
+                        task_id=t_id,
+                        agent_id=a_id,
                     )
                 )
             elif mtime > self._snapshot[rel_path]:
+                t_id, a_id = self._resolve_attribution(rel_path)
                 events.append(
                     FileActivityEvent(
                         relative_path=rel_path,
                         activity="modified",
-                        task_id=self.active_task_id,
-                        agent_id=self.active_agent_id,
+                        task_id=t_id,
+                        agent_id=a_id,
                     )
                 )
 
         # Deleted
         for rel_path in self._snapshot:
             if rel_path not in current:
+                t_id, a_id = self._resolve_attribution(rel_path)
                 events.append(
                     FileActivityEvent(
                         relative_path=rel_path,
                         activity="deleted",
-                        task_id=self.active_task_id,
-                        agent_id=self.active_agent_id,
+                        task_id=t_id,
+                        agent_id=a_id,
                     )
                 )
 
@@ -174,7 +238,8 @@ class WorkspaceWatcher:
                         resolved_file = file_path.resolve()
                         if not resolved_file.is_relative_to(self.workspace_root):
                             continue
-                        rel_path = str(resolved_file.relative_to(self.workspace_root)).replace("\\", "/")
+                        rel = resolved_file.relative_to(self.workspace_root)
+                        rel_path = str(rel).replace("\\", "/")
                         mtime = file_path.stat().st_mtime
                         snapshot[rel_path] = mtime
                     except (OSError, ValueError):

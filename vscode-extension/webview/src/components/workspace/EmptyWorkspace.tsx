@@ -1,10 +1,10 @@
 import React from 'react';
 import { FolderPlus } from 'lucide-react';
+import { vscodeApi } from '../../services/vscodeApi';
 
 export const EmptyWorkspace: React.FC = () => {
   const handleSelectFolder = () => {
-    // Pure presentation postMessage intent to Extension Host
-    window.postMessage({ action: 'SELECT_WORKSPACE_FOLDER', type: 'selectWorkspaceFolder' }, '*');
+    vscodeApi.postMessage({ type: 'SELECT_WORKSPACE_FOLDER', action: 'SELECT_WORKSPACE_FOLDER' });
   };
 
   return (

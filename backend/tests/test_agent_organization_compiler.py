@@ -22,8 +22,13 @@ def _make_candidate(agent_type: str, capabilities: list[AgentCapability]) -> Can
 
 
 def test_organization_compiler_uses_smallest_effective_team_for_simple_graph() -> None:
-    codex = _make_candidate("codex", [AgentCapability.CODE_GENERATION, AgentCapability.FILE_EDITING, AgentCapability.TEST_GENERATION])
-    claude = _make_candidate("claude_code", [AgentCapability.CODE_GENERATION, AgentCapability.FILE_EDITING, AgentCapability.TEST_GENERATION])
+    caps = [
+        AgentCapability.CODE_GENERATION,
+        AgentCapability.FILE_EDITING,
+        AgentCapability.TEST_GENERATION,
+    ]
+    codex = _make_candidate("codex", caps)
+    claude = _make_candidate("claude_code", caps)
 
     compiler = AgentOrganizationCompiler()
 
@@ -53,8 +58,9 @@ def test_organization_compiler_uses_smallest_effective_team_for_simple_graph() -
 
 
 def test_organization_compiler_distributes_independent_parallel_tasks() -> None:
-    codex = _make_candidate("codex", [AgentCapability.CODE_GENERATION, AgentCapability.FILE_EDITING])
-    antigravity = _make_candidate("antigravity", [AgentCapability.CODE_GENERATION, AgentCapability.FILE_EDITING])
+    code_caps = [AgentCapability.CODE_GENERATION, AgentCapability.FILE_EDITING]
+    codex = _make_candidate("codex", code_caps)
+    antigravity = _make_candidate("antigravity", code_caps)
 
     compiler = AgentOrganizationCompiler()
 

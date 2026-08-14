@@ -27,7 +27,6 @@ def test_workspace_watcher_detects_creation_modification_and_deletion(tmp_path: 
     # 2. Modify file
     test_file.write_text("console.log('updated');", encoding="utf-8")
     # Touch mtime to ensure stat change
-    import time
     mtime = test_file.stat().st_mtime + 2.0
     import os
     os.utime(str(test_file), (mtime, mtime))

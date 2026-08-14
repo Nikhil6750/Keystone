@@ -90,6 +90,7 @@ from app.engine.adaptive_retrieval.passport import RetrievalPassport
 from app.engine.adaptive_retrieval.policy import AdaptiveRetrievalPolicy
 from app.engine.adaptive_retrieval.reranking import AdaptiveRetriever, results_only
 from app.engine.benchmark_learning.models import EvidenceSource
+from app.engine.context import ExecutionContext
 from app.engine.knowledge.context import ContextBudget, ContextBuilder
 from app.engine.knowledge.index import KnowledgeIndex
 from app.engine.knowledge.retrieval import KnowledgeSearchRequest, search
@@ -370,8 +371,8 @@ class EndToEndOrchestrationService:
             # this one execution's call chain, never touched concurrently
             # from another thread, so moving its synchronous use here is
             # safe.
-            workflow, step_to_task, results, learning_event_ids = await asyncio.to_thread(
-                self._phase_d_execute, plan, agent_type_by_task_key
+            workflow, step_to_task, results, learning_event_ids = await self._phase_d_execute(
+                plan, agent_type_by_task_key
             )
         except SQLAlchemyError as exc:
             raise OrchestrationPersistenceError(
@@ -601,7 +602,35 @@ class EndToEndOrchestrationService:
         routing_context_by_task_key: dict[str, _RoutingContext] = {}
         candidates = self._candidate_provider.candidates()
 
-        from app.engine.planning.compiler import CompiledTaskNode, TargetFileOwnership, ComplexityLevel
+        def _get_agent_id(c: object) -> str:
+            val = (
+                getattr(c, "agent_id", None)
+                or getattr(c, "agent_type", None)
+                or getattr(c, "id", None)
+            )
+            if not val and hasattr(c, "descriptor") and c.descriptor:
+                val = getattr(c.descriptor, "agent_type", None) or getattr(c.descriptor, "id", None)
+            return str(val or "")
+
+        if request.available_agent_types:
+            avail_set = set(request.available_agent_types)
+            candidates = [c for c in candidates if _get_agent_id(c) in avail_set]
+
+        excluded: set[str] = set()
+        if request.routing_constraints:
+            if isinstance(request.routing_constraints, dict):
+                excluded = set(request.routing_constraints.get("excluded_agent_types") or [])
+            else:
+                rc_excluded = getattr(request.routing_constraints, "excluded_agent_types", [])
+                excluded = set(rc_excluded or [])
+        if excluded:
+            candidates = [c for c in candidates if _get_agent_id(c) not in excluded]
+
+        from app.engine.planning.compiler import (
+            CompiledTaskNode,
+            ComplexityLevel,
+            TargetFileOwnership,
+        )
         from app.engine.routing.organization import AgentOrganizationCompiler
 
         compiled_nodes = []
@@ -658,7 +687,7 @@ class EndToEndOrchestrationService:
 
     # --- Phase D: Workflow compile + execute -----------------------------------
 
-    def _phase_d_execute(
+    async def _phase_d_execute(
         self, plan: WorkflowPlan, agent_type_by_task_key: dict[str, str]
     ) -> tuple[Workflow, dict[str, TaskSpec], dict[str, VerificationResult], list[str]]:
         ordered_tasks = topological_order(plan.tasks)
@@ -683,18 +712,28 @@ class EndToEndOrchestrationService:
         if self._workspace_root:
             from app.services.workspace_watcher import WorkspaceWatcher
             watcher = WorkspaceWatcher(self._workspace_root)
-            watcher.start()
+            await watcher.start_async()
 
+        task_nodes = getattr(plan, "compiler_nodes", [])
+        context = ExecutionContext(
+            workflow_id=workflow.id, workflow_input=dict(workflow.input_payload)
+        )
         try:
-            executed = engine.execute_workflow(workflow.id)
+            executed_wf, _timestamps = await engine.execute_workflow_async(
+                workflow.id,
+                task_nodes,
+                context,
+                workspace_watcher=watcher,
+                max_concurrency=3,
+            )
             if watcher is not None:
                 watcher.poll_now()
         finally:
             if watcher is not None:
-                watcher.stop()
+                await watcher.stop_async()
 
-        learning_event_ids = self._collect_learning_event_ids(executed)
-        return executed, step_to_task, results, learning_event_ids
+        learning_event_ids = self._collect_learning_event_ids(executed_wf)
+        return executed_wf, step_to_task, results, learning_event_ids
 
     @staticmethod
     def _map_steps_to_tasks(

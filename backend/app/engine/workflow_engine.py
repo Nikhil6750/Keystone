@@ -3,11 +3,12 @@ and optional automatic compensation support."""
 
 import json
 import logging
+import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.audit import service as audit_service
 from app.audit.hashing import compute_digest
@@ -158,6 +159,7 @@ class WorkflowEngine:
         workspace_root: str | None = None,
     ) -> None:
         self._db = db
+        self._db_lock = threading.RLock()
         self._registry = registry
         self._workspace_root = workspace_root
         self._circuit_breakers = circuit_breakers or CircuitBreakerRegistry(
@@ -186,29 +188,12 @@ class WorkflowEngine:
         execution_status: AgentExecutionStatus,
         failure_category: FailureCategory | None = None,
         is_terminal: bool,
+        db: Session | None = None,
     ) -> None:
-        """Record `attempt`'s outcome as a `LearningEvent`, if learning
-        persistence is configured; a no-op otherwise.
-
-        Only `is_terminal=True` (the attempt that succeeded, or the
-        attempt that finally exhausted retries/failed permanently) ever
-        consults `self._verification_resolver` -- a still-retrying
-        attempt's `LearningEvent` always has `verification_status=None`,
-        since nothing has been verified yet and nothing here fabricates a
-        status. Execution success alone is never treated as verified
-        success: `verification_status` only ever comes from the resolver
-        (Stage 4E's real verification, once wired by a caller), never
-        inferred from `execution_status`.
-
-        A persistence failure here is never silently swallowed: this
-        method explicitly rolls back before re-raising, so a conflicting
-        or malformed learning event never leaves the session holding a
-        half-applied, uncommitted change alongside the (already-committed,
-        via `workflow_service`) step-attempt state.
-        """
         if self._learning_persistence is None:
             return
 
+        use_db = db or self._db
         verification_status: VerificationStatus | None = None
         if is_terminal and self._verification_resolver is not None:
             verification_status = self._verification_resolver(step, attempt)
@@ -223,7 +208,7 @@ class WorkflowEngine:
 
         try:
             self._learning_persistence.record_step_attempt_outcome(
-                self._db,
+                use_db,
                 workflow_id=step.workflow_id,
                 step_id=step.id,
                 attempt_number=attempt.attempt_number,
@@ -236,9 +221,9 @@ class WorkflowEngine:
                 duration_ms=duration_ms,
                 created_at=created_at,
             )
-            self._db.commit()
+            use_db.commit()
         except Exception:
-            self._db.rollback()
+            use_db.rollback()
             logger.exception(
                 "learning_event_persistence_failed workflow_id=%s step_id=%s attempt_number=%s",
                 step.workflow_id,
@@ -282,6 +267,199 @@ class WorkflowEngine:
         steps = sorted(workflow.steps, key=lambda s: s.position)
 
         return self._run_to_completion(workflow, steps, steps, context)
+
+    async def execute_workflow_async(
+        self,
+        workflow_id: str,
+        task_nodes: list[Any] | None = None,
+        context: ExecutionContext | None = None,
+        workspace_watcher: Any = None,
+        max_concurrency: int = 3,
+    ) -> tuple[Workflow, dict[str, dict[str, datetime]]]:
+        """Execute task graph concurrently using asyncio with real multi-agent parallelization."""
+        import asyncio
+
+        workflow = workflow_service.get_workflow(self._db, workflow_id)
+        if workflow is None:
+            raise WorkflowNotFoundError(workflow_id)
+        if WorkflowStatus(workflow.status) is not WorkflowStatus.RUNNING:
+            workflow = workflow_service.transition_workflow(
+                self._db, workflow_id, WorkflowStatus.RUNNING
+            )
+
+        if context is None:
+            context = ExecutionContext(
+                workflow_id=workflow.id, workflow_input=dict(workflow.input_payload)
+            )
+
+        steps = sorted(workflow.steps, key=lambda s: s.position)
+        step_meta: dict[str, dict[str, Any]] = {}
+
+        if task_nodes is not None:
+            for node in task_nodes:
+                task_key = node.to_task_spec().key
+                matching_step = next(
+                    (s for s in steps if s.name == task_key or s.id == node.task_id), None
+                )
+                step_id = matching_step.id if matching_step else node.task_id
+                ownership = getattr(
+                    node.target_files_ownership, "value", str(node.target_files_ownership)
+                )
+                step_meta[step_id] = {
+                    "task_key": task_key,
+                    "depends_on": list(node.dependencies),
+                    "target_files": list(node.target_files),
+                    "target_files_ownership": ownership,
+                    "parallel_safe": bool(node.parallel_safe),
+                }
+
+        for step in steps:
+            if step.id not in step_meta:
+                payload = dict(step.input_payload or {})
+                step_meta[step.id] = {
+                    "task_key": payload.get("task_key", step.name),
+                    "depends_on": list(payload.get("depends_on", [])),
+                    "target_files": list(payload.get("target_files", [])),
+                    "target_files_ownership": payload.get("target_files_ownership", "KNOWN"),
+                    "parallel_safe": bool(payload.get("parallel_safe", False)),
+                }
+
+        pending_steps = {s.id: s for s in steps}
+        running_tasks: dict[str, asyncio.Task[ExecutionContext]] = {}
+        task_step_map: dict[asyncio.Task[ExecutionContext], WorkflowStep] = {}
+        completed_keys: set[str] = set()
+        failed_keys: set[str] = set()
+
+        active_agents: set[str] = set()
+        active_target_files: set[str] = set()
+        active_unknown_count: int = 0
+        failed_step_encountered = False
+
+        task_timestamps: dict[str, dict[str, datetime]] = {}
+
+        while pending_steps or running_tasks:
+            scheduled_any = False
+            for step_id, step in list(pending_steps.items()):
+                meta = step_meta[step_id]
+                deps = meta["depends_on"]
+
+                deps_met = all(
+                    dep in completed_keys
+                    or any(s.id == dep for s in steps if s.id in completed_keys)
+                    for dep in deps
+                )
+                if not deps_met:
+                    dep_failed = any(
+                        dep in failed_keys
+                        or any(s.id == dep for s in steps if s.id in failed_keys)
+                        for dep in deps
+                    )
+                    if dep_failed:
+                        pending_steps.pop(step_id, None)
+                        failed_keys.add(meta["task_key"])
+                        failed_keys.add(step_id)
+                        with self._db_lock:
+                            workflow_service.transition_step(self._db, step.id, StepStatus.FAILED)
+                        failed_step_encountered = True
+                    continue
+
+                if len(running_tasks) >= max_concurrency:
+                    break
+
+                if step.agent_type in active_agents:
+                    continue
+
+                ownership = meta["target_files_ownership"]
+                parallel_safe = meta["parallel_safe"]
+                target_files = set(meta["target_files"])
+
+                if (ownership != "KNOWN" or not parallel_safe or not target_files) and len(
+                    running_tasks
+                ) > 0:
+                    continue
+
+                if active_unknown_count > 0:
+                    continue
+
+                if target_files & active_target_files:
+                    continue
+
+                pending_steps.pop(step_id)
+                active_agents.add(step.agent_type)
+                active_target_files.update(target_files)
+                if ownership != "KNOWN" or not parallel_safe or not target_files:
+                    active_unknown_count += 1
+
+                if workspace_watcher is not None and hasattr(
+                    workspace_watcher, "register_active_task"
+                ):
+                    workspace_watcher.register_active_task(
+                        step.id, step.agent_type, meta["target_files"]
+                    )
+
+                task_timestamps[step.id] = {"start": datetime.now(UTC)}
+
+                task = asyncio.create_task(
+                    asyncio.to_thread(self._execute_step, workflow, step, context)
+                )
+                running_tasks[step.id] = task
+                task_step_map[task] = step
+                scheduled_any = True
+
+            if not running_tasks:
+                if pending_steps and not scheduled_any:
+                    for step_id, step in list(pending_steps.items()):
+                        pending_steps.pop(step_id)
+                        failed_keys.add(step.id)
+                        with self._db_lock:
+                            workflow_service.transition_step(self._db, step.id, StepStatus.FAILED)
+                    failed_step_encountered = True
+                break
+
+            done, _ = await asyncio.wait(
+                list(running_tasks.values()), return_when=asyncio.FIRST_COMPLETED
+            )
+
+            for finished_task in done:
+                step = task_step_map.pop(finished_task)
+                running_tasks.pop(step.id, None)
+                meta = step_meta[step.id]
+
+                active_agents.discard(step.agent_type)
+                active_target_files.difference_update(meta["target_files"])
+                if (
+                    meta["target_files_ownership"] != "KNOWN"
+                    or not meta["parallel_safe"]
+                    or not meta["target_files"]
+                ):
+                    active_unknown_count = max(0, active_unknown_count - 1)
+
+                if workspace_watcher is not None and hasattr(
+                    workspace_watcher, "unregister_active_task"
+                ):
+                    workspace_watcher.unregister_active_task(step.id)
+
+                task_timestamps[step.id]["end"] = datetime.now(UTC)
+
+                try:
+                    updated_context = finished_task.result()
+                    context = updated_context
+                    completed_keys.add(step.id)
+                    completed_keys.add(meta["task_key"])
+                except Exception as exc:
+                    logger.warning("async_step_execution_failed step_id=%s exc=%s", step.id, exc)
+                    failed_keys.add(step.id)
+                    failed_keys.add(meta["task_key"])
+                    failed_step_encountered = True
+
+        if failed_step_encountered or len(completed_keys) < len(steps):
+            final_wf = self._fail_workflow(
+                workflow_id, error_message="one or more tasks in the workflow failed execution"
+            )
+        else:
+            final_wf = self._succeed_workflow(workflow, steps, context)
+
+        return final_wf, task_timestamps
 
     def resume_workflow(self, workflow_id: str) -> Workflow:
         """Resume a workflow left `RUNNING` by a process interruption.
@@ -465,11 +643,25 @@ class WorkflowEngine:
     def _execute_step(
         self, workflow: Workflow, step: WorkflowStep, context: ExecutionContext
     ) -> ExecutionContext:
-        # Resolved once: the registry does not change mid-step, and a missing
-        # executor is neither retryable nor circuit-related (Phase 2 behavior).
-        workflow_service.transition_step(self._db, step.id, StepStatus.RUNNING)
+        try:
+            bind = self._db.get_bind()
+            factory = sessionmaker(bind=bind, autoflush=False, expire_on_commit=False)
+            worker_db = factory()
+        except Exception:
+            worker_db = self._db
+
+        try:
+            return self._execute_step_with_db(worker_db, workflow, step, context)
+        finally:
+            if worker_db is not self._db:
+                worker_db.close()
+
+    def _execute_step_with_db(
+        self, db: Session, workflow: Workflow, step: WorkflowStep, context: ExecutionContext
+    ) -> ExecutionContext:
+        workflow_service.transition_step(db, step.id, StepStatus.RUNNING)
         audit_service.append_event(
-            self._db,
+            db,
             workflow_id=workflow.id,
             step_id=step.id,
             event_type=AuditEventType.STEP_EXECUTION_STARTED,
@@ -480,7 +672,7 @@ class WorkflowEngine:
         try:
             executor = self._registry.get(step.agent_type)
         except ExecutorNotRegisteredError as exc:
-            attempt = workflow_service.create_step_attempt(self._db, step.id)
+            attempt = workflow_service.create_step_attempt(db, step.id)
             logger.warning(
                 "executor_not_registered workflow_id=%s step_id=%s agent_type=%s",
                 workflow.id,
@@ -488,10 +680,14 @@ class WorkflowEngine:
                 step.agent_type,
             )
             self._fail_step(
-                attempt, step, error_type="AGENT_EXECUTOR_NOT_REGISTERED", error_message=str(exc)
+                attempt,
+                step,
+                error_type="AGENT_EXECUTOR_NOT_REGISTERED",
+                error_message=str(exc),
+                db=db,
             )
             audit_service.append_event(
-                self._db,
+                db,
                 workflow_id=workflow.id,
                 step_id=step.id,
                 execution_attempt_id=attempt.id,
@@ -504,14 +700,6 @@ class WorkflowEngine:
 
         breaker = self._circuit_breakers.get_or_create(step.agent_type)
         max_attempts = step.max_attempts
-        # Seeded from the step's persisted attempt history, never hardcoded to
-        # 0: a step resumed after an interruption must never receive more
-        # total attempts (initial + retries + resume) than max_attempts
-        # allows. An interrupted RUNNING attempt already counts here since
-        # resume_workflow marks it FAILED in place (see
-        # _mark_interrupted_attempt_failed) rather than creating a new
-        # attempt row, so step.attempt_count already reflects it. For a
-        # fresh (never-resumed) step this is always 0, identical to before.
         attempt_number = step.attempt_count
         if attempt_number >= max_attempts:
             logger.warning(
@@ -522,9 +710,9 @@ class WorkflowEngine:
                 attempt_number,
                 max_attempts,
             )
-            workflow_service.transition_step(self._db, step.id, StepStatus.FAILED)
+            workflow_service.transition_step(db, step.id, StepStatus.FAILED)
             audit_service.append_event(
-                self._db,
+                db,
                 workflow_id=workflow.id,
                 step_id=step.id,
                 event_type=AuditEventType.STEP_FAILED,
@@ -544,7 +732,7 @@ class WorkflowEngine:
 
         while True:
             attempt_number += 1
-            attempt = workflow_service.create_step_attempt(self._db, step.id)
+            attempt = workflow_service.create_step_attempt(db, step.id)
             logger.info(
                 "step_execution_started workflow_id=%s step_id=%s agent_type=%s "
                 "attempt_number=%s max_attempts=%s",
@@ -555,7 +743,7 @@ class WorkflowEngine:
                 max_attempts,
             )
             audit_service.append_event(
-                self._db,
+                db,
                 workflow_id=workflow.id,
                 step_id=step.id,
                 execution_attempt_id=attempt.id,
@@ -569,10 +757,14 @@ class WorkflowEngine:
                 breaker.before_call()
             except CircuitBreakerOpenError as exc:
                 self._fail_step(
-                    attempt, step, error_type="CIRCUIT_BREAKER_OPEN", error_message=str(exc)
+                    attempt,
+                    step,
+                    error_type="CIRCUIT_BREAKER_OPEN",
+                    error_message=str(exc),
+                    db=db,
                 )
                 audit_service.append_event(
-                    self._db,
+                    db,
                     workflow_id=workflow.id,
                     step_id=step.id,
                     execution_attempt_id=attempt.id,
@@ -611,7 +803,7 @@ class WorkflowEngine:
                 )
                 if can_retry:
                     workflow_service.complete_step_attempt(
-                        self._db,
+                        db,
                         attempt.id,
                         status=AttemptStatus.FAILED,
                         error_type=exc.error_type,
@@ -626,9 +818,10 @@ class WorkflowEngine:
                         execution_status=retry_exec_status,
                         failure_category=retry_failure_category,
                         is_terminal=False,
+                        db=db,
                     )
                     audit_service.append_event(
-                        self._db,
+                        db,
                         workflow_id=workflow.id,
                         step_id=step.id,
                         execution_attempt_id=attempt.id,
@@ -637,7 +830,7 @@ class WorkflowEngine:
                         actor_id=_SYSTEM_ACTOR,
                         payload={"error_code": exc.error_type, "attempt_number": attempt_number},
                     )
-                    workflow_service.transition_step(self._db, step.id, StepStatus.RETRYING)
+                    workflow_service.transition_step(db, step.id, StepStatus.RETRYING)
                     delay = self._retry_policy.compute_delay(attempt_number)
                     logger.info(
                         "agent_retry_scheduled workflow_id=%s step_id=%s attempt_number=%s "
@@ -648,7 +841,7 @@ class WorkflowEngine:
                         delay,
                     )
                     audit_service.append_event(
-                        self._db,
+                        db,
                         workflow_id=workflow.id,
                         step_id=step.id,
                         execution_attempt_id=attempt.id,
@@ -658,11 +851,13 @@ class WorkflowEngine:
                         payload={"attempt_number": attempt_number, "delay_seconds": delay},
                     )
                     self._sleeper.sleep(delay)
-                    workflow_service.transition_step(self._db, step.id, StepStatus.RUNNING)
+                    workflow_service.transition_step(db, step.id, StepStatus.RUNNING)
                     continue
-                self._fail_step(attempt, step, error_type=exc.error_type, error_message=str(exc))
+                self._fail_step(
+                    attempt, step, error_type=exc.error_type, error_message=str(exc), db=db
+                )
                 audit_service.append_event(
-                    self._db,
+                    db,
                     workflow_id=workflow.id,
                     step_id=step.id,
                     execution_attempt_id=attempt.id,
@@ -672,7 +867,7 @@ class WorkflowEngine:
                     payload={"error_code": exc.error_type, "attempt_number": attempt_number},
                 )
                 audit_service.append_event(
-                    self._db,
+                    db,
                     workflow_id=workflow.id,
                     step_id=step.id,
                     execution_attempt_id=attempt.id,
@@ -693,9 +888,10 @@ class WorkflowEngine:
                     step,
                     error_type="UNEXPECTED_ERROR",
                     error_message="an unexpected error occurred during step execution",
+                    db=db,
                 )
                 audit_service.append_event(
-                    self._db,
+                    db,
                     workflow_id=workflow.id,
                     step_id=step.id,
                     execution_attempt_id=attempt.id,
@@ -708,16 +904,17 @@ class WorkflowEngine:
 
             breaker.record_success()
             workflow_service.complete_step_attempt(
-                self._db, attempt.id, status=AttemptStatus.SUCCEEDED, output_payload=output
+                db, attempt.id, status=AttemptStatus.SUCCEEDED, output_payload=output
             )
             self._record_step_learning_event(
                 step,
                 attempt,
                 execution_status=AgentExecutionStatus.SUCCEEDED,
                 is_terminal=True,
+                db=db,
             )
             audit_service.append_event(
-                self._db,
+                db,
                 workflow_id=workflow.id,
                 step_id=step.id,
                 execution_attempt_id=attempt.id,
@@ -726,11 +923,10 @@ class WorkflowEngine:
                 actor_id=step.agent_type,
                 payload={"attempt_number": attempt_number, "output_digest": compute_digest(output)},
             )
-            updated_step = workflow_service.transition_step(self._db, step.id, StepStatus.SUCCEEDED)
+            updated_step = workflow_service.transition_step(db, step.id, StepStatus.SUCCEEDED)
             updated_step.output_payload = output
-            self._db.commit()
             audit_service.append_event(
-                self._db,
+                db,
                 workflow_id=workflow.id,
                 step_id=step.id,
                 execution_attempt_id=attempt.id,
@@ -749,10 +945,17 @@ class WorkflowEngine:
             return context.with_step_output(step.id, output)
 
     def _fail_step(
-        self, attempt: StepAttempt, step: WorkflowStep, *, error_type: str, error_message: str
+        self,
+        attempt: StepAttempt,
+        step: WorkflowStep,
+        *,
+        error_type: str,
+        error_message: str,
+        db: Session | None = None,
     ) -> None:
+        use_db = db or self._db
         workflow_service.complete_step_attempt(
-            self._db,
+            use_db,
             attempt.id,
             status=AttemptStatus.FAILED,
             error_type=error_type,
@@ -765,69 +968,66 @@ class WorkflowEngine:
             execution_status=exec_status,
             failure_category=failure_category,
             is_terminal=True,
+            db=use_db,
         )
-        workflow_service.transition_step(self._db, step.id, StepStatus.FAILED)
+        workflow_service.transition_step(use_db, step.id, StepStatus.FAILED)
 
     def _fail_workflow(self, workflow_id: str, *, error_message: str) -> Workflow:
-        workflow_service.transition_workflow(self._db, workflow_id, WorkflowStatus.FAILED)
-        workflow = workflow_service.set_workflow_result(
-            self._db, workflow_id, error_message=error_message
-        )
-        audit_service.append_event(
-            self._db,
-            workflow_id=workflow_id,
-            event_type=AuditEventType.WORKFLOW_FAILED,
-            actor_type=ActorType.SYSTEM,
-            actor_id=_SYSTEM_ACTOR,
-            payload={"error_message": error_message},
-        )
-        return workflow
+        with self._db_lock:
+            workflow_service.transition_workflow(self._db, workflow_id, WorkflowStatus.FAILED)
+            workflow = workflow_service.set_workflow_result(
+                self._db, workflow_id, error_message=error_message
+            )
+            audit_service.append_event(
+                self._db,
+                workflow_id=workflow_id,
+                event_type=AuditEventType.WORKFLOW_FAILED,
+                actor_type=ActorType.SYSTEM,
+                actor_id=_SYSTEM_ACTOR,
+                payload={"error_message": error_message},
+            )
+            return workflow
 
     def _succeed_workflow(
         self, workflow: Workflow, steps: list[WorkflowStep], context: ExecutionContext
     ) -> Workflow:
-        aggregated: dict[str, Any] = {
-            "steps": [
-                {
-                    "step_id": step.id,
-                    "name": step.name,
-                    "position": step.position,
-                    "output": context.previous_step_outputs.get(step.id, {}),
-                }
-                for step in steps
-            ]
-        }
-        workflow_service.transition_workflow(self._db, workflow.id, WorkflowStatus.SUCCEEDED)
-        workflow_service.set_workflow_result(self._db, workflow.id, output_payload=aggregated)
-        audit_service.append_event(
-            self._db,
-            workflow_id=workflow.id,
-            event_type=AuditEventType.WORKFLOW_SUCCEEDED,
-            actor_type=ActorType.SYSTEM,
-            actor_id=_SYSTEM_ACTOR,
-            payload={"step_count": len(steps)},
-        )
-        logger.info("workflow_execution_succeeded workflow_id=%s", workflow.id)
-        return self._reload(workflow.id)
+        with self._db_lock:
+            aggregated: dict[str, Any] = {
+                "steps": [
+                    {
+                        "step_id": step.id,
+                        "name": step.name,
+                        "position": step.position,
+                        "output": context.previous_step_outputs.get(step.id, {}),
+                    }
+                    for step in steps
+                ]
+            }
+            workflow_service.transition_workflow(self._db, workflow.id, WorkflowStatus.SUCCEEDED)
+            workflow_service.set_workflow_result(self._db, workflow.id, output_payload=aggregated)
+            audit_service.append_event(
+                self._db,
+                workflow_id=workflow.id,
+                event_type=AuditEventType.WORKFLOW_SUCCEEDED,
+                actor_type=ActorType.SYSTEM,
+                actor_id=_SYSTEM_ACTOR,
+                payload={"step_count": len(steps)},
+            )
+            logger.info("workflow_execution_succeeded workflow_id=%s", workflow.id)
+            return self._reload(workflow.id)
 
     def _maybe_auto_compensate(self, workflow_id: str) -> None:
-        """Best-effort automatic compensation after a workflow fails, if enabled.
-
-        Any exception here is logged and swallowed rather than propagated: the
-        primary execution failure (already persisted) must not be masked by a
-        secondary compensation failure, which `CompensationService` itself
-        already persists durably before any exception would propagate out of
-        this call.
-        """
         if not self._auto_compensate_on_failure or self._compensation_service is None:
             return
         try:
-            self._compensation_service.compensate_workflow(workflow_id)
+            with self._db_lock:
+                self._compensation_service.compensate_workflow(workflow_id)
         except Exception:
             logger.exception("automatic_compensation_failed workflow_id=%s", workflow_id)
 
     def _reload(self, workflow_id: str) -> Workflow:
-        workflow = workflow_service.get_workflow(self._db, workflow_id)
-        if workflow is None:
-            raise RuntimeError(f"workflow '{workflow_id}' disappeared during execution")
-        return workflow
+        with self._db_lock:
+            workflow = workflow_service.get_workflow(self._db, workflow_id)
+            if workflow is None:
+                raise RuntimeError(f"workflow '{workflow_id}' disappeared during execution")
+            return workflow

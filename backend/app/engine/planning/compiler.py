@@ -1,29 +1,30 @@
 """Task Graph Compiler V2 (Agent-Independent DAG Decomposition).
 
 Upgrades planning from fixed template lookup to a deterministic, bounded Task Graph Compiler.
-Inputs: user goal, workspace/project context, deterministic project metadata, explicit user constraints.
+Inputs: user goal, workspace/project context, project metadata, explicit user constraints.
 Outputs: typed executable provider-neutral DAG (WorkflowPlan with enriched TaskSpecs).
 
 Does NOT assign agent_type or take connected agents as required input.
 WHO does the work is decided later by AgentOrganizationCompiler and Router.
 """
 
-from enum import Enum
+import re
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.contracts.enums import AgentCapability, BenchmarkEvaluatorType
-from app.contracts.planning import ExpectedOutcome, TaskSpec, WorkflowPlan, _detect_cycle
+from app.contracts.planning import ExpectedOutcome, TaskSpec, _detect_cycle
 
 
-class TargetFileOwnership(str, Enum):
+class TargetFileOwnership(StrEnum):
     KNOWN = "KNOWN"
     PARTIAL = "PARTIAL"
     UNKNOWN = "UNKNOWN"
 
 
-class ComplexityLevel(str, Enum):
+class ComplexityLevel(StrEnum):
     TRIVIAL = "TRIVIAL"
     SIMPLE = "SIMPLE"
     MEDIUM = "MEDIUM"
@@ -103,20 +104,82 @@ class TaskGraphCompilerV2:
         lower_goal = goal_clean.lower()
         complexity = self._classify_complexity(lower_goal, workspace_context, project_metadata)
 
+        # Detect structural domains and requested files
+        frontend_keywords = {
+            "html", "css", "js", "javascript", "frontend",
+            "ui", "web", "page", "dashboard", "calculator",
+        }
+        backend_keywords = {
+            "python", "api", "backend", "server", "express", "fastapi", "flask", "endpoint", "rest"
+        }
+
+        words = set(re.findall(r"\b\w+\b", lower_goal))
+        has_frontend = bool(words & frontend_keywords)
+        has_backend = bool(words & backend_keywords)
+
+        # Extract explicit file paths requested in goal
+        explicit_files = re.findall(r"\b[\w\.-]+\.(?:html|css|js|py|ts|jsx|tsx|json)\b", lower_goal)
+
         nodes: list[CompiledTaskNode] = []
 
-        if complexity == ComplexityLevel.TRIVIAL or "calculator" in lower_goal:
-            nodes = self._compile_calculator_or_simple(goal_clean, lower_goal)
-        elif "full-stack" in lower_goal or "task tracker" in lower_goal or "fullstack" in lower_goal:
-            nodes = self._compile_fullstack_app(goal_clean, lower_goal)
-        elif complexity == ComplexityLevel.SIMPLE:
-            nodes = self._compile_simple_task(goal_clean, lower_goal)
+        if has_frontend and has_backend:
+            nodes = self._compile_fullstack_structure(goal_clean, explicit_files)
+        elif has_frontend or any(f.endswith((".html", ".css", ".js")) for f in explicit_files):
+            nodes = self._compile_frontend_structure(goal_clean, explicit_files)
+        elif has_backend or any(f.endswith(".py") for f in explicit_files):
+            nodes = self._compile_backend_structure(goal_clean, explicit_files)
+        elif complexity == ComplexityLevel.TRIVIAL or complexity == ComplexityLevel.SIMPLE:
+            nodes = self._compile_simple_structure(goal_clean, explicit_files)
         else:
-            nodes = self._compile_medium_or_large(goal_clean, lower_goal, complexity)
+            nodes = self._compile_medium_structure(goal_clean, explicit_files, complexity)
 
+        # Enforce parallel safety derivation from file ownership & overlaps
+        self._derive_parallel_safety(nodes)
+
+        # Validate bounds (tasks count, duplicate IDs, cycles, MAX_DEPTH)
         self._validate_and_bound_graph(nodes)
 
         return nodes
+
+    def _derive_parallel_safety(self, nodes: list[CompiledTaskNode]) -> None:
+        """Derive parallel_safe dynamically from file ownership and target file overlap."""
+        node_map = {n.task_id: n for n in nodes}
+
+        def is_dependent(a_id: str, b_id: str) -> bool:
+            """Check if a_id depends on b_id (directly or transitively)."""
+            visited: set[str] = set()
+            stack = list(node_map[a_id].dependencies) if a_id in node_map else []
+            while stack:
+                curr = stack.pop()
+                if curr == b_id:
+                    return True
+                if curr not in visited and curr in node_map:
+                    visited.add(curr)
+                    stack.extend(node_map[curr].dependencies)
+            return False
+
+        for i, node in enumerate(nodes):
+            if node.target_files_ownership != TargetFileOwnership.KNOWN or not node.target_files:
+                node.parallel_safe = False
+                continue
+
+            # Check target_file overlaps with concurrent (non-dependent) sibling nodes
+            has_concurrent_overlap = False
+            for j, other in enumerate(nodes):
+                if i == j:
+                    continue
+                # If A depends on B or B depends on A, they are sequential, not concurrent
+                is_dep = is_dependent(node.task_id, other.task_id) or is_dependent(
+                    other.task_id, node.task_id
+                )
+                if is_dep:
+                    continue
+                # If two non-dependent nodes share target files, they cannot run concurrently safely
+                if set(node.target_files) & set(other.target_files):
+                    has_concurrent_overlap = True
+                    break
+
+            node.parallel_safe = not has_concurrent_overlap
 
     def _classify_complexity(
         self,
@@ -125,7 +188,8 @@ class TaskGraphCompilerV2:
         project_metadata: dict[str, Any] | None,
     ) -> ComplexityLevel:
         signals = 0
-        if any(w in lower_goal for w in ["full-stack", "fullstack", "frontend", "backend", "database", "api"]):
+        fs_words = ["full-stack", "fullstack", "frontend", "backend", "database", "api"]
+        if any(w in lower_goal for w in fs_words):
             signals += 2
         if any(w in lower_goal for w in ["test", "tests", "unit test", "integration"]):
             signals += 1
@@ -142,52 +206,41 @@ class TaskGraphCompilerV2:
         else:
             return ComplexityLevel.LARGE
 
-    def _compile_calculator_or_simple(
-        self, goal: str, lower_goal: str
+    def _compile_frontend_structure(
+        self, goal: str, explicit_files: list[str]
     ) -> list[CompiledTaskNode]:
-        """Simple calculator or small app decomposition.
-
-        Produces:
-        T1: Implement calculator application (target_files: index.html, styles.css, script.js)
-        T2: Add automated tests (depends on T1, target_files: calculator.test.js)
-        T3: Objective verification (depends on T2)
-        """
-        is_calc = "calculator" in lower_goal
-        t1_files = ["index.html", "styles.css", "script.js"] if is_calc else []
-        t1_ownership = TargetFileOwnership.KNOWN if is_calc else TargetFileOwnership.UNKNOWN
+        default_fe = ["index.html", "styles.css", "script.js"]
+        target_files = list(dict.fromkeys(explicit_files)) if explicit_files else default_fe
 
         t1 = CompiledTaskNode(
             task_id="T1",
             task_type="code_generation",
-            title="Implement calculator application" if is_calc else "Implement application logic",
-            objective="Build the core HTML, CSS, and JS calculator implementation with keyboard and responsive UI." if is_calc else goal,
+            title="Implement frontend application",
+            objective=f"Implement frontend user interface for: {goal}",
             dependencies=[],
             required_capabilities=[AgentCapability.CODE_GENERATION, AgentCapability.FILE_EDITING],
             preferred_capabilities=[AgentCapability.DEBUGGING],
-            target_files=t1_files,
-            target_files_ownership=t1_ownership,
+            target_files=target_files,
+            target_files_ownership=TargetFileOwnership.KNOWN,
             verification_requirements={},
             parallel_safe=False,
             estimated_complexity=ComplexityLevel.SIMPLE,
         )
 
-        t2_files = ["calculator.test.js", "test/calculator.test.js"] if is_calc else []
-        t2_ownership = TargetFileOwnership.KNOWN if is_calc else TargetFileOwnership.UNKNOWN
-
         t2 = CompiledTaskNode(
             task_id="T2",
             task_type="test_generation",
-            title="Add automated tests",
-            objective="Write automated tests using Node's built-in test runner to verify calculator functionality.",
+            title="Add automated test suite",
+            objective="Add automated tests verifying frontend application functionality.",
             dependencies=["T1"],
             required_capabilities=[AgentCapability.TEST_GENERATION, AgentCapability.FILE_EDITING],
             preferred_capabilities=[AgentCapability.CODE_GENERATION],
-            target_files=t2_files,
-            target_files_ownership=t2_ownership,
+            target_files=["test/app.test.js"],
+            target_files_ownership=TargetFileOwnership.KNOWN,
             verification_requirements={
                 "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
                 "criteria": {"command": "node --test"},
-                "description": "Run Node tests to verify calculation logic",
+                "description": "Run node test runner for frontend logic",
             },
             parallel_safe=False,
             estimated_complexity=ComplexityLevel.SIMPLE,
@@ -206,7 +259,7 @@ class TaskGraphCompilerV2:
             verification_requirements={
                 "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
                 "criteria": {"command": "node --test"},
-                "description": "Objective verification of overall outcome",
+                "description": "Objective verification of frontend outcome",
             },
             parallel_safe=False,
             estimated_complexity=ComplexityLevel.TRIVIAL,
@@ -214,22 +267,22 @@ class TaskGraphCompilerV2:
 
         return [t1, t2, t3]
 
-    def _compile_fullstack_app(
-        self, goal: str, lower_goal: str
+    def _compile_fullstack_structure(
+        self, goal: str, explicit_files: list[str]
     ) -> list[CompiledTaskNode]:
-        """Full-stack app decomposition with independent parallel tasks.
+        default_fe = ["index.html", "styles.css", "app.js"]
+        fe_files = [f for f in explicit_files if f.endswith((".html", ".css", ".js"))] or default_fe
+        be_files = [f for f in explicit_files if f.endswith(".py")] or ["server.py", "api.py"]
 
-        Frontend (T1), Backend (T2), and Tests (T3) have non-overlapping target files and can run concurrently if dependencies allow.
-        """
         t1 = CompiledTaskNode(
             task_id="T1",
             task_type="frontend_development",
             title="Build frontend interface",
-            objective="Implement HTML/CSS/JS frontend interface for task tracker.",
+            objective="Implement frontend user interface.",
             dependencies=[],
             required_capabilities=[AgentCapability.CODE_GENERATION, AgentCapability.FILE_EDITING],
             preferred_capabilities=[],
-            target_files=["index.html", "styles.css", "app.js"],
+            target_files=fe_files,
             target_files_ownership=TargetFileOwnership.KNOWN,
             verification_requirements={},
             parallel_safe=True,
@@ -240,11 +293,11 @@ class TaskGraphCompilerV2:
             task_id="T2",
             task_type="backend_development",
             title="Build backend API",
-            objective="Implement Python API backend for task management.",
+            objective="Implement backend API logic.",
             dependencies=[],
             required_capabilities=[AgentCapability.CODE_GENERATION, AgentCapability.FILE_EDITING],
             preferred_capabilities=[AgentCapability.DEBUGGING],
-            target_files=["server.py", "api.py"],
+            target_files=be_files,
             target_files_ownership=TargetFileOwnership.KNOWN,
             verification_requirements={},
             parallel_safe=True,
@@ -278,7 +331,7 @@ class TaskGraphCompilerV2:
             dependencies=["T1", "T2"],
             required_capabilities=[AgentCapability.CODE_GENERATION, AgentCapability.FILE_EDITING],
             preferred_capabilities=[],
-            target_files=["index.html", "app.js", "server.py"],
+            target_files=list(set(fe_files + be_files)),
             target_files_ownership=TargetFileOwnership.KNOWN,
             verification_requirements={},
             parallel_safe=False,
@@ -289,7 +342,7 @@ class TaskGraphCompilerV2:
             task_id="T5",
             task_type="objective_verification",
             title="Objective verification",
-            objective="Verify task tracker implementation and test execution.",
+            objective="Verify full-stack application implementation and test execution.",
             dependencies=["T3", "T4"],
             required_capabilities=[AgentCapability.FILE_EDITING],
             preferred_capabilities=[],
@@ -298,7 +351,7 @@ class TaskGraphCompilerV2:
             verification_requirements={
                 "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
                 "criteria": {"command": "python -m unittest"},
-                "description": "Objective verification of task tracker",
+                "description": "Objective verification of full-stack outcome",
             },
             parallel_safe=False,
             estimated_complexity=ComplexityLevel.TRIVIAL,
@@ -306,19 +359,80 @@ class TaskGraphCompilerV2:
 
         return [t1, t2, t3, t4, t5]
 
-    def _compile_simple_task(
-        self, goal: str, lower_goal: str
+    def _compile_backend_structure(
+        self, goal: str, explicit_files: list[str]
     ) -> list[CompiledTaskNode]:
+        be_files = explicit_files or ["server.py", "api.py"]
+
+        t1 = CompiledTaskNode(
+            task_id="T1",
+            task_type="backend_development",
+            title="Implement backend service",
+            objective=f"Build backend service logic for: {goal}",
+            dependencies=[],
+            required_capabilities=[AgentCapability.CODE_GENERATION, AgentCapability.FILE_EDITING],
+            preferred_capabilities=[AgentCapability.DEBUGGING],
+            target_files=be_files,
+            target_files_ownership=TargetFileOwnership.KNOWN,
+            verification_requirements={},
+            parallel_safe=False,
+            estimated_complexity=ComplexityLevel.SIMPLE,
+        )
+
+        t2 = CompiledTaskNode(
+            task_id="T2",
+            task_type="test_generation",
+            title="Add backend test suite",
+            objective="Write automated unit tests for backend API.",
+            dependencies=["T1"],
+            required_capabilities=[AgentCapability.TEST_GENERATION, AgentCapability.FILE_EDITING],
+            preferred_capabilities=[],
+            target_files=["test_api.py"],
+            target_files_ownership=TargetFileOwnership.KNOWN,
+            verification_requirements={
+                "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                "criteria": {"command": "python -m unittest"},
+                "description": "Run Python unit tests",
+            },
+            parallel_safe=False,
+            estimated_complexity=ComplexityLevel.SIMPLE,
+        )
+
+        t3 = CompiledTaskNode(
+            task_id="T3",
+            task_type="objective_verification",
+            title="Final objective verification",
+            objective="Verify backend service implementation and unit test execution.",
+            dependencies=["T2"],
+            required_capabilities=[AgentCapability.FILE_EDITING],
+            preferred_capabilities=[],
+            target_files=[],
+            target_files_ownership=TargetFileOwnership.KNOWN,
+            verification_requirements={
+                "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                "criteria": {"command": "python -m unittest"},
+                "description": "Objective verification of backend outcome",
+            },
+            parallel_safe=False,
+            estimated_complexity=ComplexityLevel.TRIVIAL,
+        )
+
+        return [t1, t2, t3]
+
+    def _compile_simple_structure(
+        self, goal: str, explicit_files: list[str]
+    ) -> list[CompiledTaskNode]:
+        ownership = TargetFileOwnership.KNOWN if explicit_files else TargetFileOwnership.UNKNOWN
         t1 = CompiledTaskNode(
             task_id="T1",
             task_type="code_generation",
-            title="Execute goal",
+            title="Execute task goal",
             objective=goal,
             dependencies=[],
             required_capabilities=[AgentCapability.CODE_GENERATION, AgentCapability.FILE_EDITING],
             preferred_capabilities=[],
-            target_files=[],
-            target_files_ownership=TargetFileOwnership.UNKNOWN,
+            target_files=explicit_files,
+            target_files_ownership=ownership,
             verification_requirements={},
             parallel_safe=False,
             estimated_complexity=ComplexityLevel.SIMPLE,
@@ -333,15 +447,20 @@ class TaskGraphCompilerV2:
             preferred_capabilities=[],
             target_files=[],
             target_files_ownership=TargetFileOwnership.KNOWN,
-            verification_requirements={},
+            verification_requirements={
+                "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                "criteria": {"command": "python -m unittest"},
+                "description": "Verify task outcome",
+            },
             parallel_safe=False,
             estimated_complexity=ComplexityLevel.TRIVIAL,
         )
         return [t1, t2]
 
-    def _compile_medium_or_large(
-        self, goal: str, lower_goal: str, complexity: ComplexityLevel
+    def _compile_medium_structure(
+        self, goal: str, explicit_files: list[str], complexity: ComplexityLevel
     ) -> list[CompiledTaskNode]:
+        ownership = TargetFileOwnership.KNOWN if explicit_files else TargetFileOwnership.UNKNOWN
         t1 = CompiledTaskNode(
             task_id="T1",
             task_type="code_generation",
@@ -350,8 +469,8 @@ class TaskGraphCompilerV2:
             dependencies=[],
             required_capabilities=[AgentCapability.CODE_GENERATION, AgentCapability.FILE_EDITING],
             preferred_capabilities=[AgentCapability.DEBUGGING],
-            target_files=[],
-            target_files_ownership=TargetFileOwnership.UNKNOWN,
+            target_files=explicit_files,
+            target_files_ownership=ownership,
             verification_requirements={},
             parallel_safe=False,
             estimated_complexity=complexity,
@@ -366,7 +485,11 @@ class TaskGraphCompilerV2:
             preferred_capabilities=[],
             target_files=[],
             target_files_ownership=TargetFileOwnership.UNKNOWN,
-            verification_requirements={},
+            verification_requirements={
+                "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                "criteria": {"command": "python -m unittest"},
+                "description": "Run test suite",
+            },
             parallel_safe=False,
             estimated_complexity=ComplexityLevel.SIMPLE,
         )
@@ -380,14 +503,39 @@ class TaskGraphCompilerV2:
             preferred_capabilities=[],
             target_files=[],
             target_files_ownership=TargetFileOwnership.KNOWN,
-            verification_requirements={},
+            verification_requirements={
+                "evaluator_type": BenchmarkEvaluatorType.UNIT_TEST,
+                "criteria": {"command": "python -m unittest"},
+                "description": "Final objective verification",
+            },
             parallel_safe=False,
             estimated_complexity=ComplexityLevel.TRIVIAL,
         )
         return [t1, t2, t3]
 
+    def _calculate_dag_depth(self, nodes: list[CompiledTaskNode]) -> int:
+        """Calculate the longest path (depth) in the task graph DAG."""
+        node_map = {n.task_id: n for n in nodes}
+        memo: dict[str, int] = {}
+
+        def get_node_depth(task_id: str) -> int:
+            if task_id in memo:
+                return memo[task_id]
+            node = node_map.get(task_id)
+            if not node or not node.dependencies:
+                memo[task_id] = 1
+                return 1
+            max_dep_depth = max(get_node_depth(dep) for dep in node.dependencies if dep in node_map)
+            d = 1 + max_dep_depth
+            memo[task_id] = d
+            return d
+
+        if not nodes:
+            return 0
+        return max(get_node_depth(n.task_id) for n in nodes)
+
     def _validate_and_bound_graph(self, nodes: list[CompiledTaskNode]) -> None:
-        """Enforce task bounds, cycle detection, and duplicate task detection."""
+        """Enforce task bounds, cycle detection, duplicate task detection, and MAX_DEPTH."""
         if len(nodes) > self.MAX_TASKS:
             raise ValueError(f"Task graph exceeds max task limit of {self.MAX_TASKS}")
 
@@ -399,6 +547,11 @@ class TaskGraphCompilerV2:
         cycle = _detect_cycle(task_map)
         if cycle is not None:
             raise ValueError(f"Task graph contains cycle: {' -> '.join(cycle)}")
+
+        depth = self._calculate_dag_depth(nodes)
+        if depth > self.MAX_DEPTH:
+            msg = f"Task graph depth {depth} exceeds max depth limit of {self.MAX_DEPTH}"
+            raise ValueError(msg)
 
 
 __all__ = [

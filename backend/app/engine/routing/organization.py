@@ -1,7 +1,7 @@
 """Agent Organization Compiler.
 
-Assembles the execution team dynamically by mapping compiled tasks to eligible candidate agents.
-Selects the smallest effective team (e.g. 1 agent for simple/sequential graphs, multiple agents for independent parallel tasks).
+Assembles execution teams dynamically by mapping compiled tasks to candidate agents.
+Selects effective teams (e.g. 1 agent for sequential graphs, distinct agents for parallel tasks).
 Does NOT use hardcoded provider rules; respects eligibility hard filters and router scoring.
 """
 
@@ -19,7 +19,7 @@ class TaskAssignment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     task_id: str
-    selected_agent_type: str
+    selected_agent_type: str | None = None
     fallback_order: list[str] = Field(default_factory=list)
 
 
@@ -59,43 +59,20 @@ class AgentOrganizationCompiler:
 
         if not eligible_candidates:
             # Fallback to all candidates if none explicitly marked eligible
-            eligible_candidates = candidates
+            eligible_candidates = list(candidates)
 
-        assignments: dict[str, TaskAssignment] = {}
+        if not eligible_candidates:
+            # Explicit no-route when candidate pool is completely empty
+            assignments: dict[str, TaskAssignment] = {
+                t.task_id: TaskAssignment(
+                    task_id=t.task_id, selected_agent_type=None, fallback_order=[]
+                )
+                for t in tasks
+            }
+            return TeamAssignment(assignments=assignments, selected_agent_ids=[])
+
+        assignments = {}
         assigned_agents: set[str] = set()
-
-        # 2. Check if work is simple/trivial or single-task -> use smallest team (1 best agent)
-        is_simple_graph = len(tasks) <= 1 or (len(tasks) <= 2 and all(not t.parallel_safe for t in tasks))
-
-        if is_simple_graph and eligible_candidates:
-            # Route first task to find best overall candidate
-            first_req = RoutingRequest(
-                task_type=tasks[0].task_type,
-                required_capabilities=tasks[0].required_capabilities,
-            )
-            first_decision = self.router.route(first_req, eligible_candidates)
-            best_agent = first_decision.selected_agent_type
-
-            for task in tasks:
-                req = RoutingRequest(
-                    task_type=task.task_type,
-                    required_capabilities=task.required_capabilities,
-                )
-                decision = self.router.route(req, eligible_candidates)
-                selected = best_agent if any(c.descriptor.agent_type == best_agent for c in eligible_candidates) else decision.selected_agent_type
-                assignments[task.task_id] = TaskAssignment(
-                    task_id=task.task_id,
-                    selected_agent_type=selected,
-                    fallback_order=decision.fallback_order,
-                )
-                assigned_agents.add(selected)
-
-            return TeamAssignment(
-                assignments=assignments,
-                selected_agent_ids=sorted(list(assigned_agents)),
-            )
-
-        # 3. For multi-task parallel graphs: assign independent parallel tasks to distinct agents if available
         available_pool = list(eligible_candidates)
         used_agents: set[str] = set()
 
@@ -106,7 +83,11 @@ class AgentOrganizationCompiler:
             )
 
             # Prefer agents not yet assigned to an active task in this wave if task is parallel_safe
-            pool_for_task = [c for c in available_pool if c.descriptor.agent_type not in used_agents] if (task.parallel_safe and len(available_pool) > 1) else available_pool
+            pool_for_task = [
+                c for c in available_pool
+                if c.descriptor.agent_type not in used_agents
+            ] if (task.parallel_safe and len(available_pool) > 1) else available_pool
+
             if not pool_for_task:
                 pool_for_task = available_pool
 
@@ -116,11 +97,12 @@ class AgentOrganizationCompiler:
             assignments[task.task_id] = TaskAssignment(
                 task_id=task.task_id,
                 selected_agent_type=selected,
-                fallback_order=decision.fallback_order,
+                fallback_order=list(decision.fallback_order),
             )
-            assigned_agents.add(selected)
-            if task.parallel_safe:
-                used_agents.add(selected)
+            if selected is not None:
+                assigned_agents.add(selected)
+                if task.parallel_safe:
+                    used_agents.add(selected)
 
         return TeamAssignment(
             assignments=assignments,

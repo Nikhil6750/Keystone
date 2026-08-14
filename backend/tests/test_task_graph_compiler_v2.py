@@ -4,7 +4,6 @@ import pytest
 
 from app.contracts.enums import AgentCapability
 from app.engine.planning.compiler import (
-    ComplexityLevel,
     TargetFileOwnership,
     TaskGraphCompilerV2,
 )
@@ -18,7 +17,8 @@ def test_compiler_requires_non_empty_goal() -> None:
 
 def test_compiler_decomposes_simple_calculator_goal() -> None:
     compiler = TaskGraphCompilerV2()
-    nodes = compiler.compile("Build a polished calculator web application using HTML, CSS and JavaScript.")
+    goal = "Build a polished calculator web application using HTML, CSS and JavaScript."
+    nodes = compiler.compile(goal)
 
     assert len(nodes) == 3
     node_ids = [n.task_id for n in nodes]
@@ -52,7 +52,8 @@ def test_compiler_decomposes_simple_calculator_goal() -> None:
 
 def test_compiler_decomposes_fullstack_app_with_parallel_tasks() -> None:
     compiler = TaskGraphCompilerV2()
-    nodes = compiler.compile("Build a small full-stack task tracker with HTML/CSS/JS frontend and Python API backend.")
+    goal = "Build a small full-stack task tracker with HTML/CSS/JS frontend and Python API backend."
+    nodes = compiler.compile(goal)
 
     assert len(nodes) == 5
 
@@ -88,3 +89,52 @@ def test_compiler_bounds_and_validates_task_count() -> None:
 
     with pytest.raises(ValueError, match="exceeds max task limit"):
         compiler.compile("Build a small full-stack task tracker app")
+
+
+def test_compiler_enforces_max_depth() -> None:
+    from app.engine.planning.compiler import CompiledTaskNode
+
+    compiler = TaskGraphCompilerV2()
+    compiler.MAX_DEPTH = 3
+
+    n1 = CompiledTaskNode(task_id="T1", task_type="code_generation", title="T1", objective="o1")
+    n2 = CompiledTaskNode(
+        task_id="T2", task_type="code_generation", title="T2", objective="o2", dependencies=["T1"]
+    )
+    n3 = CompiledTaskNode(
+        task_id="T3", task_type="code_generation", title="T3", objective="o3", dependencies=["T2"]
+    )
+
+    nodes_depth3 = [n1, n2, n3]
+    compiler._validate_and_bound_graph(nodes_depth3)
+    assert compiler._calculate_dag_depth(nodes_depth3) == 3
+
+    n4 = CompiledTaskNode(
+        task_id="T4", task_type="code_generation", title="T4", objective="o4", dependencies=["T3"]
+    )
+    nodes_depth4 = [n1, n2, n3, n4]
+
+    with pytest.raises(ValueError, match="Task graph depth 4 exceeds max depth limit of 3"):
+        compiler._validate_and_bound_graph(nodes_depth4)
+
+
+def test_compiler_detects_cycles_and_duplicates() -> None:
+    from app.engine.planning.compiler import CompiledTaskNode
+
+    compiler = TaskGraphCompilerV2()
+
+    # Cycle: T1 -> T2 -> T1
+    c1 = CompiledTaskNode(
+        task_id="T1", task_type="code_generation", title="T1", objective="o1", dependencies=["T2"]
+    )
+    c2 = CompiledTaskNode(
+        task_id="T2", task_type="code_generation", title="T2", objective="o2", dependencies=["T1"]
+    )
+    with pytest.raises(ValueError, match="contains cycle"):
+        compiler._validate_and_bound_graph([c1, c2])
+
+    # Duplicate IDs: T1, T1
+    d1 = CompiledTaskNode(task_id="T1", task_type="code_generation", title="T1", objective="o1")
+    d2 = CompiledTaskNode(task_id="T1", task_type="code_generation", title="T1", objective="o1")
+    with pytest.raises(ValueError, match="Duplicate task IDs"):
+        compiler._validate_and_bound_graph([d1, d2])

@@ -48,9 +48,23 @@ class OrchestrationExecutionNotFoundError(OrchestrationError):
         super().__init__(f"orchestration execution '{execution_id}' not found")
 
 
+class OrchestrationExecutionAlreadyExistsError(OrchestrationError):
+    """Raised when a client reuses an existing execution ID.
+
+    The execution store must reject the duplicate atomically so an
+    in-flight record, event stream, and coordinator task can never be
+    overwritten by a second request.
+    """
+
+    def __init__(self, execution_id: str) -> None:
+        self.execution_id = execution_id
+        super().__init__(f"orchestration execution '{execution_id}' already exists")
+
+
 __all__ = [
     "InvalidOrchestrationRequestError",
     "OrchestrationError",
+    "OrchestrationExecutionAlreadyExistsError",
     "OrchestrationExecutionNotFoundError",
     "OrchestrationPersistenceError",
 ]

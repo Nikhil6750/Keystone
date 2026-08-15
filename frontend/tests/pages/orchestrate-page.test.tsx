@@ -38,7 +38,12 @@ vi.mock('@/hooks/use-agents', () => ({
 // workflows independently of this page's own content -- mocked so the test
 // only exercises real network calls this page itself makes.
 vi.mock('@/hooks/use-workflows', () => ({
-  useWorkflows: () => ({ data: { items: [], count: 0 }, loading: false, error: null, refresh: vi.fn() }),
+  useWorkflows: () => ({
+    data: { items: [], count: 0 },
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+  }),
 }));
 
 const createOrchestrationExecution = vi.fn();
@@ -67,7 +72,9 @@ vi.mock('@/services/intelligence', () => ({
   }),
 }));
 
-function terminalResult(overrides: Partial<OrchestrationExecutionRead> = {}): OrchestrationExecutionRead {
+function terminalResult(
+  overrides: Partial<OrchestrationExecutionRead> = {}
+): OrchestrationExecutionRead {
   return {
     execution_id: 'exec-1',
     job_status: 'completed',
@@ -111,6 +118,7 @@ describe('OrchestratePage', () => {
     render(<OrchestratePage />);
 
     await user.type(screen.getByLabelText('Goal'), 'Implement a REST endpoint with tests');
+    await user.type(screen.getByLabelText('Workspace root'), 'C:\\projects\\demo');
     await user.click(screen.getByRole('button', { name: 'Demo Agent' }));
     await user.click(screen.getByRole('button', { name: /run orchestration/i }));
 
@@ -118,13 +126,14 @@ describe('OrchestratePage', () => {
     expect(createOrchestrationExecution).toHaveBeenCalledWith({
       goal: 'Implement a REST endpoint with tests',
       available_agent_types: ['demo'],
+      workspace_root: 'C:\\projects\\demo',
     });
 
     await waitFor(() => expect(screen.getAllByText('Verified success').length).toBeGreaterThan(0));
     expect(screen.getByText('Completed')).toBeInTheDocument();
   });
 
-  it('disables submission until a goal and an agent are both selected', () => {
+  it('disables submission until a goal, workspace, and agent are selected', () => {
     render(<OrchestratePage />);
     expect(screen.getByRole('button', { name: /run orchestration/i })).toBeDisabled();
   });
@@ -147,10 +156,13 @@ describe('OrchestratePage', () => {
 
     render(<OrchestratePage />);
     await user.type(screen.getByLabelText('Goal'), 'Implement a REST endpoint with tests');
+    await user.type(screen.getByLabelText('Workspace root'), 'C:\\projects\\demo');
     await user.click(screen.getByRole('button', { name: 'Demo Agent' }));
     await user.click(screen.getByRole('button', { name: /run orchestration/i }));
 
-    await waitFor(() => expect(screen.getAllByText('Verification failed').length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(screen.getAllByText('Verification failed').length).toBeGreaterThan(0)
+    );
     expect(screen.queryAllByText('Verified success')).toHaveLength(0);
   });
 });

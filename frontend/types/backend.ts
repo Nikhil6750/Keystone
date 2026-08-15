@@ -23,6 +23,7 @@ export type APIErrorCode =
   | 'AGENT_TYPE_UNKNOWN'
   | 'AGENT_VERIFICATION_IN_PROGRESS'
   | 'ORCHESTRATION_EXECUTION_NOT_FOUND'
+  | 'ORCHESTRATION_EXECUTION_EXISTS'
   | 'AGENT_CONNECTION_NOT_FOUND'
   | 'CONNECTED_AGENT_NOT_FOUND'
   | 'AGENT_CONNECTION_EXISTS'
@@ -314,7 +315,7 @@ export interface OrchestrationExecutionCreate {
   request_id?: string | null;
   available_agent_types?: string[];
   knowledge_query?: string | null;
-  workspace_root?: string | null;
+  workspace_root: string;
 }
 
 export interface OrchestrationExecutionAccepted {

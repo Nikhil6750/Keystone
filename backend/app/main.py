@@ -140,6 +140,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.orchestration_execution_coordinator = OrchestrationExecutionCoordinator(
         store=app.state.orchestration_execution_store,
         service_factory=_build_orchestration_service_factory(app),
+        require_workspace=True,
     )
 
     from app.engine.quality.coordinator import QualityFactoryCoordinator

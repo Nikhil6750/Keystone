@@ -31,7 +31,12 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Protocol
 
-from app.adapters.connection import AgentConnectionCache, ConnectionStatus
+from app.adapters.connection import (
+    AgentConnectionCache,
+    AuthenticationStatus,
+    ConnectionStatus,
+    InstallationStatus,
+)
 from app.adapters.types import AgentType
 from app.contracts.adapter import AgentDescriptor
 from app.contracts.enums import AgentCapability, AgentStatus, RuntimeKind
@@ -244,6 +249,17 @@ class RegistryCandidateProvider:
             state = self.connection_cache.get(str(fallback_key))
         if state is None:
             return AgentStatus.UNKNOWN
+        if state.connection_status is ConnectionStatus.CONNECTED and not (
+            state.enabled
+            and state.registered
+            and state.installation_status is InstallationStatus.INSTALLED
+            and state.authentication_status is AuthenticationStatus.AUTHENTICATED
+        ):
+            # Treat internally inconsistent/corrupted cache state as
+            # unavailable. A "connected" string alone is not sufficient
+            # authority to route execution onto a disabled, missing, or
+            # unauthenticated runtime.
+            return AgentStatus.UNAVAILABLE
         return _CONNECTION_STATUS_TO_AGENT_STATUS.get(state.connection_status, AgentStatus.UNKNOWN)
 
     def _circuit_state_for(self, agent_type: str, fallback_key: object) -> CircuitState:

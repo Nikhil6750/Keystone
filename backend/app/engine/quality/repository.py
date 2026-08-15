@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Protocol
 
-from sqlalchemy import desc, select
+from sqlalchemy import delete, desc, select
 from sqlalchemy.orm import Session
 
 from app.contracts.quality import QualityGateResult, QualityProfile, QualityRun
@@ -205,26 +205,22 @@ class SqlAlchemyQualityRepository:
                     session.add(new_run_rec)
                     target_run_id = run.run_id
 
-                # 2. Persist Gate Results
-                for gr in run.gate_results:
-                    stmt_gr = (
-                        select(QualityGateResultRecord)
-                        .where(
-                            QualityGateResultRecord.run_id == target_run_id,
-                            QualityGateResultRecord.gate_id == gr.gate_id,
-                        )
-                        .limit(1)
+                # 2. Persist Gate Results (atomically clear old gates for target_run_id first)
+                session.execute(
+                    delete(QualityGateResultRecord).where(
+                        QualityGateResultRecord.run_id == target_run_id
                     )
-                    existing_gr = session.scalars(stmt_gr).first()
-                    if not existing_gr:
-                        gr_rec = QualityGateResultRecord.from_contract(
-                            gr,
-                            run_id=target_run_id,
-                            execution_id=run.execution_id,
-                            task_id=run.task_id,
-                            attempt_number=run.attempt_number,
-                        )
-                        session.add(gr_rec)
+                )
+
+                for gr in run.gate_results:
+                    gr_rec = QualityGateResultRecord.from_contract(
+                        gr,
+                        run_id=target_run_id,
+                        execution_id=run.execution_id,
+                        task_id=run.task_id,
+                        attempt_number=run.attempt_number,
+                    )
+                    session.add(gr_rec)
 
                 session.commit()
             except Exception as exc:

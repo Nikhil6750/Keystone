@@ -285,3 +285,135 @@ async def test_quality_factory_repair_loop_recovery(tmp_path: Path) -> None:
         assert len(adapter.received_repair_guidance) > 0
         assert "REQUIRED QUALITY VERIFICATION REPAIR NOTICE" in adapter.received_repair_guidance[0]
         assert "AssertionError: 42 != 0" in adapter.received_repair_guidance[0]
+
+
+@pytest.mark.asyncio
+async def test_quality_factory_required_skipped_fails_acceptance(tmp_path: Path) -> None:
+    db_file = tmp_path / "quality_test_skipped.db"
+    engine = create_engine(f"sqlite:///{db_file}", echo=False)
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine)
+
+    q_repo = SqlAlchemyQualityRepository(session_factory=session_factory)
+    q_registry = QualityGateExecutorRegistry()
+
+    # Executor returns SKIPPED for all gates
+    mock_exec = MockQualityGateExecutor(default_status=QualityGateStatus.SKIPPED)
+    q_registry.register_executor(QualityGateType.TEST, mock_exec)
+    q_registry.register_executor(QualityGateType.LINT, mock_exec)
+
+    q_coord = QualityFactoryCoordinator(repository=q_repo, registry=q_registry)
+    q_repo.save_profile(
+        QualityProfile(
+            profile_id="default-profile",
+            name="Default Profile",
+            gates=(
+                QualityGateSpec(
+                    gate_id="python-tests",
+                    gate_type=QualityGateType.TEST,
+                    name="Required Tests",
+                    required=True,
+                ),
+            ),
+            is_default=True,
+        )
+    )
+
+    with tempfile.TemporaryDirectory() as ws_dir:
+        ws_root = Path(ws_dir)
+        exec_registry = ExecutorRegistry()
+        adapter = QualityDemoAdapter()
+        exec_registry.register("quality-demo-agent", adapter)
+
+        from app.resilience.circuit_breaker import CircuitState
+
+        descriptor = AgentDescriptor(
+            agent_type="quality-demo-agent",
+            display_name="Quality Demo Agent",
+            capabilities=[
+                AgentCapability.CODE_GENERATION,
+                AgentCapability.TEST_GENERATION,
+                AgentCapability.TEST_EXECUTION,
+                AgentCapability.FILE_EDITING,
+            ],
+            cost_tier="standard",
+        )
+        candidate = CandidateAgent(
+            descriptor=descriptor,
+            status=AgentStatus.AVAILABLE,
+            circuit_state=CircuitState.CLOSED,
+        )
+        candidate_provider = FakeCandidateProvider([candidate])
+
+        service = EndToEndOrchestrationService(
+            db=session_factory(),
+            registry=exec_registry,
+            candidate_provider=candidate_provider,
+            quality_coordinator=q_coord,
+        )
+
+        req = OrchestrationRequest(
+            request_id="req-quality-skip-fail",
+            goal="Implement feature where tests get skipped",
+            workspace_root=str(ws_root),
+            available_agent_types=["quality-demo-agent"],
+        )
+
+        result = await service.orchestrate(req)
+        # Required gate was SKIPPED -> Must NOT be VERIFIED_SUCCESS
+        assert result.outcome != OrchestrationOutcome.VERIFIED_SUCCESS
+        assert result.quality_verdict_status == "REJECTED"
+
+
+@pytest.mark.asyncio
+async def test_non_applicable_quality_verification_preserves_legacy_behavior(
+    tmp_path: Path,
+) -> None:
+    db_file = tmp_path / "quality_test_legacy.db"
+    engine = create_engine(f"sqlite:///{db_file}", echo=False)
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine)
+
+    # When quality_coordinator is None (legacy non-software workflow)
+    exec_registry = ExecutorRegistry()
+    adapter = QualityDemoAdapter()
+    exec_registry.register("quality-demo-agent", adapter)
+
+    from app.resilience.circuit_breaker import CircuitState
+
+    descriptor = AgentDescriptor(
+        agent_type="quality-demo-agent",
+        display_name="Quality Demo Agent",
+        capabilities=[
+            AgentCapability.CODE_GENERATION,
+            AgentCapability.TEST_GENERATION,
+            AgentCapability.TEST_EXECUTION,
+            AgentCapability.FILE_EDITING,
+        ],
+        cost_tier="standard",
+    )
+    candidate = CandidateAgent(
+        descriptor=descriptor,
+        status=AgentStatus.AVAILABLE,
+        circuit_state=CircuitState.CLOSED,
+    )
+    candidate_provider = FakeCandidateProvider([candidate])
+
+    service = EndToEndOrchestrationService(
+        db=session_factory(),
+        registry=exec_registry,
+        candidate_provider=candidate_provider,
+        quality_coordinator=None,
+    )
+
+    req = OrchestrationRequest(
+        request_id="req-legacy-pass",
+        goal="Non-software task execution",
+        workspace_root=None,
+        available_agent_types=["quality-demo-agent"],
+    )
+
+    result = await service.orchestrate(req)
+    assert result.outcome == OrchestrationOutcome.VERIFIED_SUCCESS
+    assert result.quality_run_id is None
+    assert result.quality_verdict_status is None

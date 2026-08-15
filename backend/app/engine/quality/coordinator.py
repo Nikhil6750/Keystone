@@ -7,6 +7,7 @@ and bounded repair management.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -18,10 +19,12 @@ from app.contracts.quality import (
     QualityGateResult,
     QualityGateSpec,
     QualityGateStatus,
+    QualityGateType,
     QualityProfile,
     QualityRepairPacket,
     QualityRun,
     QualityVerdict,
+    QualityVerdictStatus,
 )
 from app.contracts.skills import SkillContract
 from app.engine.quality.compiler import QualityPlan, QualityPlanCompiler
@@ -62,37 +65,119 @@ class QualityFactoryCoordinator:
         Guarantees:
         1. Compiles a deterministic QualityPlan according to strict precedence and anti-weakening.
         2. Executes each gate through the registered provider-neutral executor.
-        3. Fails closed: infrastructure errors or failed required gates block acceptance.
+        3. Fails closed: infrastructure errors, malformed configuration, empty plans,
+           persistence errors, or failed required gates block acceptance.
         4. Persists the complete QualityRun with gate evidence and verdict for full traceability.
         """
         run_id = f"qrun-{uuid.uuid4().hex[:12]}"
         created_at = datetime.now(UTC)
 
-        # 1. Resolve Quality Profile
+        # 1. Resolve Quality Profile: explicit `profile` wins; otherwise fall back to
+        # the repository's registered default profile (lowest precedence layer per
+        # QualityPlanCompiler's docstring). This fallback must not be gated on
+        # `context.repository_id` being set -- production callers (see
+        # EndToEndOrchestrationService._make_verification_resolver) construct
+        # QualityExecutionContext without a repository_id, so gating on it silently
+        # disabled every registered default profile.
         effective_profile = profile
-        if effective_profile is None and context.repository_id:
+        if effective_profile is None:
             effective_profile = self.repository.get_default_profile()
 
-        # 2. Compile Quality Plan
-        plan = custom_plan or self.compiler.compile(
-            task=task,
-            profile=effective_profile,
-            skill=skill,
-            workspace_languages=context.languages,
-            workspace_frameworks=context.frameworks,
-        )
+        # 2. Compile Quality Plan (with defensive malformed config catching)
+        try:
+            plan = custom_plan or self.compiler.compile(
+                task=task,
+                profile=effective_profile,
+                skill=skill,
+                workspace_languages=context.languages,
+                workspace_frameworks=context.frameworks,
+            )
+        except Exception as exc:
+            logger.warning("quality_plan_compilation_failed error=%s", exc)
+            cfg_err_gate = QualityGateResult(
+                gate_id="quality-contract-validation",
+                gate_type=QualityGateType.CUSTOM,
+                name="Quality Contract Validation",
+                status=QualityGateStatus.ERROR,
+                required=True,
+                evidence=QualityEvidence(
+                    summary=f"Malformed quality contract or configuration: {exc}"
+                ),
+                failure_reason=f"Malformed quality contract or configuration: {exc}",
+                timestamp=datetime.now(UTC),
+            )
+            verdict = QualityVerdict.compute([cfg_err_gate], verdict_id=f"verdict-{run_id}")
+            run = QualityRun(
+                run_id=run_id,
+                execution_id=context.execution_id or f"exec-{uuid.uuid4().hex[:8]}",
+                workflow_id=workflow_id,
+                task_id=context.task_id or (task.key if task else None),
+                attempt_number=attempt_number,
+                agent_id=context.agent_id,
+                skill_id=context.skill_id or (skill.skill_id if skill else None),
+                skill_version=context.skill_version or (skill.version if skill else None),
+                profile_id=effective_profile.profile_id if effective_profile else None,
+                gate_results=(cfg_err_gate,),
+                verdict=verdict,
+                created_at=created_at,
+                completed_at=datetime.now(UTC),
+            )
+            with contextlib.suppress(Exception):
+                self.repository.save_run(run)
+            return verdict, run
 
-        # 3. Execute Gates
+        # 3. Empty plan check: if invoked Stage 9D produced 0 gates, fail closed
+        if not plan.gates:
+            empty_verdict = QualityVerdict(
+                verdict_id=f"verdict-{run_id}",
+                status=QualityVerdictStatus.REJECTED,
+                passed=False,
+                blocking_failures=(),
+                advisory_failures=(),
+                total_gates=0,
+                passed_gates=0,
+                failed_gates=0,
+                skipped_gates=0,
+                error_gates=0,
+                summary_explanation=(
+                    "NO_APPLICABLE_QUALITY_GATES: Quality verification was invoked "
+                    "but no applicable quality gates were compiled or available."
+                ),
+                created_at=datetime.now(UTC),
+            )
+            run = QualityRun(
+                run_id=run_id,
+                execution_id=context.execution_id or f"exec-{uuid.uuid4().hex[:8]}",
+                workflow_id=workflow_id,
+                task_id=context.task_id or (task.key if task else None),
+                attempt_number=attempt_number,
+                agent_id=context.agent_id,
+                skill_id=context.skill_id or (skill.skill_id if skill else None),
+                skill_version=context.skill_version or (skill.version if skill else None),
+                profile_id=(
+                    plan.profile_id
+                    or (effective_profile.profile_id if effective_profile else None)
+                ),
+                gate_results=(),
+                verdict=empty_verdict,
+                created_at=created_at,
+                completed_at=datetime.now(UTC),
+            )
+            with contextlib.suppress(Exception):
+                self.repository.save_run(run)
+            return empty_verdict, run
+
+        # 4. Execute Gates
         gate_results: list[QualityGateResult] = []
         for gate_spec in plan.gates:
             result = self._execute_single_gate(gate_spec, context)
             gate_results.append(result)
 
-        # 4. Compute Verdict
+        # 5. Compute Verdict
         verdict = QualityVerdict.compute(gate_results, verdict_id=f"verdict-{run_id}")
         completed_at = datetime.now(UTC)
 
-        # 5. Build and Persist Quality Run
+        # 6. Build and Persist Quality Run
         run = QualityRun(
             run_id=run_id,
             execution_id=context.execution_id or f"exec-{uuid.uuid4().hex[:8]}",
@@ -112,8 +197,42 @@ class QualityFactoryCoordinator:
 
         try:
             self.repository.save_run(run)
-        except Exception:
-            logger.exception("failed_to_persist_quality_run run_id=%s", run_id)
+        except Exception as exc:
+            logger.exception("failed_to_persist_quality_run run_id=%s error=%s", run_id, exc)
+            # Fail closed: persistence failure cannot produce a verified success verdict!
+            fail_verdict = QualityVerdict(
+                verdict_id=f"verdict-persist-fail-{run_id}",
+                status=QualityVerdictStatus.ERROR,
+                passed=False,
+                blocking_failures=run.gate_results,
+                advisory_failures=(),
+                total_gates=len(run.gate_results),
+                passed_gates=0,
+                failed_gates=len(run.gate_results),
+                skipped_gates=0,
+                error_gates=len(run.gate_results),
+                summary_explanation=(
+                    f"Quality persistence failure: could not persist authoritative "
+                    f"quality evidence ({exc}). Acceptance blocked."
+                ),
+                created_at=datetime.now(UTC),
+            )
+            unpersisted_run = QualityRun(
+                run_id=f"unpersisted-{run_id}",
+                execution_id=run.execution_id,
+                workflow_id=run.workflow_id,
+                task_id=run.task_id,
+                attempt_number=run.attempt_number,
+                agent_id=run.agent_id,
+                skill_id=run.skill_id,
+                skill_version=run.skill_version,
+                profile_id=run.profile_id,
+                gate_results=run.gate_results,
+                verdict=fail_verdict,
+                created_at=run.created_at,
+                completed_at=datetime.now(UTC),
+            )
+            return fail_verdict, unpersisted_run
 
         return verdict, run
 

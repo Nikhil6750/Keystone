@@ -211,23 +211,25 @@ class QualityVerdict:
         error_count = sum(1 for r in results if r.status is QualityGateStatus.ERROR)
         skipped_count = sum(1 for r in results if r.status is QualityGateStatus.SKIPPED)
 
+        # Only genuine PASSED satisfies a required gate.
+        # FAILED, ERROR, SKIPPED, or any non-PASSED status blocks acceptance.
         blocking = tuple(
             r
             for r in results
-            if r.required and r.status in (QualityGateStatus.FAILED, QualityGateStatus.ERROR)
+            if r.required and r.status is not QualityGateStatus.PASSED
         )
         advisory = tuple(
             r
             for r in results
-            if not r.required and r.status in (QualityGateStatus.FAILED, QualityGateStatus.ERROR)
+            if not r.required and r.status is not QualityGateStatus.PASSED
         )
 
         if not results:
-            # Zero gates executed -> Neutral Acceptance
+            # Invoked with zero gates -> Fail-closed
             return cls(
                 verdict_id=v_id,
-                status=QualityVerdictStatus.ACCEPTED,
-                passed=True,
+                status=QualityVerdictStatus.REJECTED,
+                passed=False,
                 blocking_failures=(),
                 advisory_failures=(),
                 total_gates=0,
@@ -235,16 +237,21 @@ class QualityVerdict:
                 failed_gates=0,
                 skipped_gates=0,
                 error_gates=0,
-                summary_explanation="No quality gates were configured or executed.",
+                summary_explanation=(
+                    "NO_APPLICABLE_QUALITY_GATES: Quality verification was invoked "
+                    "but no quality gates were provided or executed."
+                ),
             )
 
         if blocking:
-            # Required gate failure or error blocks acceptance
+            # Required gate failure, error, or skip blocks acceptance
             has_error = any(r.status is QualityGateStatus.ERROR for r in blocking)
             status = QualityVerdictStatus.ERROR if has_error else QualityVerdictStatus.REJECTED
-            failed_names = ", ".join(f"'{r.name}' ({r.gate_id})" for r in blocking)
+            failed_names = ", ".join(
+                f"'{r.name}' ({r.gate_id}: {r.status.value})" for r in blocking
+            )
             explanation = (
-                f"Quality verification failed: {len(blocking)} required gate(s) failed: "
+                f"Quality verification failed: {len(blocking)} required gate(s) did not pass: "
                 f"{failed_names}."
             )
             return cls(
@@ -261,13 +268,17 @@ class QualityVerdict:
                 summary_explanation=explanation,
             )
 
-        # All required gates passed (or skipped with justification)
+        # All required gates passed
         status = QualityVerdictStatus.ACCEPTED
         explanation = (
-            f"Quality verification passed: {passed_count}/{len(results)} gates passed successfully."
+            f"Quality verification passed: {passed_count}/{len(results)} "
+            "gate(s) passed successfully."
         )
         if advisory:
-            explanation += f" ({len(advisory)} advisory check(s) reported warnings)."
+            advisory_names = ", ".join(
+                f"'{r.name}' ({r.gate_id}: {r.status.value})" for r in advisory
+            )
+            explanation += f" ({len(advisory)} advisory gate(s) non-passing: {advisory_names})."
 
         return cls(
             verdict_id=v_id,

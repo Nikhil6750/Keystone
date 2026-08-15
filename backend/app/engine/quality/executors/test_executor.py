@@ -14,7 +14,11 @@ from app.contracts.quality import (
     QualityGateSpec,
     QualityGateStatus,
 )
-from app.engine.quality.process import SafeQualityProcessRunner
+from app.engine.quality.errors import QualitySecurityError
+from app.engine.quality.process import (
+    SafeQualityProcessRunner,
+    resolve_and_validate_target_path,
+)
 
 _PYTEST_SUMMARY_RE = re.compile(
     r"=+\s*(?:(?P<passed>\d+)\s+passed)?(?:,\s*)?(?:(?P<failed>\d+)\s+failed)?(?:,\s*)?(?:(?P<errors>\d+)\s+errors?)?(?:,\s*)?(?:(?P<skipped>\d+)\s+skipped)?.*=+",
@@ -57,7 +61,26 @@ class TestQualityGateExecutor:
         runner = SafeQualityProcessRunner(ws_root)
         cfg = spec.configuration or {}
         runner_type = cfg.get("runner", "auto")
-        target_path = cfg.get("target_path")
+        raw_target_path = cfg.get("target_path")
+
+        target_path: str | None = None
+        if raw_target_path:
+            try:
+                _, safe_rel = resolve_and_validate_target_path(ws_root, raw_target_path)
+                target_path = safe_rel
+            except QualitySecurityError as exc:
+                summary = f"Target path validation failed: {exc}"
+                evidence = QualityEvidence(summary=summary)
+                return QualityGateResult(
+                    gate_id=spec.gate_id,
+                    gate_type=spec.gate_type,
+                    name=spec.name,
+                    status=QualityGateStatus.ERROR,
+                    required=spec.required,
+                    evidence=evidence,
+                    failure_reason=summary,
+                    timestamp=datetime.now(UTC),
+                )
 
         # 1. Determine command arguments based on language/framework/configuration
         argv: list[str] = []

@@ -12,7 +12,11 @@ from app.contracts.quality import (
     QualityGateSpec,
     QualityGateStatus,
 )
-from app.engine.quality.process import SafeQualityProcessRunner
+from app.engine.quality.errors import QualitySecurityError
+from app.engine.quality.process import (
+    SafeQualityProcessRunner,
+    resolve_and_validate_target_path,
+)
 
 
 class LintQualityGateExecutor:
@@ -42,9 +46,25 @@ class LintQualityGateExecutor:
                 timestamp=datetime.now(UTC),
             )
 
-        runner = SafeQualityProcessRunner(ws_root)
         cfg = spec.configuration or {}
-        target_path = cfg.get("target_path", ".")
+        raw_target = cfg.get("target_path", ".")
+        try:
+            _, target_path = resolve_and_validate_target_path(ws_root, raw_target, default=".")
+        except QualitySecurityError as exc:
+            summary = f"Target path validation failed: {exc}"
+            evidence = QualityEvidence(summary=summary)
+            return QualityGateResult(
+                gate_id=spec.gate_id,
+                gate_type=spec.gate_type,
+                name=spec.name,
+                status=QualityGateStatus.ERROR,
+                required=spec.required,
+                evidence=evidence,
+                failure_reason=summary,
+                timestamp=datetime.now(UTC),
+            )
+
+        runner = SafeQualityProcessRunner(ws_root)
         linter = cfg.get("linter", "auto")
 
         is_node = any(lang in ("javascript", "typescript", "node") for lang in context.languages)

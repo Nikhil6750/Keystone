@@ -164,12 +164,12 @@ class QualityRunRecord(Base):
         blocking = tuple(
             r
             for r in gate_results
-            if r.required and r.status in (QualityGateStatus.FAILED, QualityGateStatus.ERROR)
+            if r.required and r.status is not QualityGateStatus.PASSED
         )
         advisory = tuple(
             r
             for r in gate_results
-            if not r.required and r.status in (QualityGateStatus.FAILED, QualityGateStatus.ERROR)
+            if not r.required and r.status is not QualityGateStatus.PASSED
         )
         return QualityVerdict(
             verdict_id=f"verdict-{self.run_id}",

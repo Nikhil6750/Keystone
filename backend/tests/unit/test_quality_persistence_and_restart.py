@@ -138,5 +138,134 @@ def test_sqlalchemy_quality_repository_and_restart() -> None:
     assert loaded_run.verdict.passed is True
     assert len(loaded_run.gate_results) == 1
     assert loaded_run.gate_results[0].gate_id == "test-gate"
+    assert loaded_run.gate_results[0].evidence is not None
     assert loaded_run.gate_results[0].evidence.summary == "All 10 tests passed"
     assert loaded_run.gate_results[0].evidence.metrics["passed"] == 10
+
+
+def test_re_persistence_reconciles_gate_rows_atomically() -> None:
+    engine = create_engine("sqlite:///:memory:", echo=False)
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine)
+    repo = SqlAlchemyQualityRepository(session_factory=session_factory)
+
+    now = datetime.now(UTC)
+    g1 = QualityGateResult(
+        gate_id="g1",
+        gate_type=QualityGateType.TEST,
+        name="Test 1",
+        status=QualityGateStatus.PASSED,
+        required=True,
+        evidence=QualityEvidence(summary="g1 pass"),
+    )
+    g2 = QualityGateResult(
+        gate_id="g2",
+        gate_type=QualityGateType.LINT,
+        name="Test 2",
+        status=QualityGateStatus.PASSED,
+        required=True,
+        evidence=QualityEvidence(summary="g2 pass"),
+    )
+    run_v1 = QualityRun(
+        run_id="run-reconcile",
+        execution_id="exec-rec",
+        task_id="task-rec",
+        attempt_number=1,
+        gate_results=(g1, g2),
+        verdict=QualityVerdict.compute([g1, g2], verdict_id="v-1"),
+        created_at=now,
+    )
+    repo.save_run(run_v1)
+    assert len(repo.get_gate_results_for_run("run-reconcile")) == 2
+
+    # Re-save the same run with ONLY g1 (updated) and g2 removed
+    g1_updated = QualityGateResult(
+        gate_id="g1",
+        gate_type=QualityGateType.TEST,
+        name="Test 1 Updated",
+        status=QualityGateStatus.PASSED,
+        required=True,
+        evidence=QualityEvidence(summary="g1 updated pass"),
+    )
+    run_v2 = QualityRun(
+        run_id="run-reconcile",
+        execution_id="exec-rec",
+        task_id="task-rec",
+        attempt_number=1,
+        gate_results=(g1_updated,),
+        verdict=QualityVerdict.compute([g1_updated], verdict_id="v-2"),
+        created_at=now,
+    )
+    repo.save_run(run_v2)
+
+    # Gate results MUST be reconciled to exactly 1 gate (no stale g2 row lingering)
+    gate_results = repo.get_gate_results_for_run("run-reconcile")
+    assert len(gate_results) == 1
+    assert gate_results[0].gate_id == "g1"
+    assert gate_results[0].name == "Test 1 Updated"
+
+
+def test_subsequent_repair_attempt_preserves_earlier_failed_run() -> None:
+    engine = create_engine("sqlite:///:memory:", echo=False)
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine)
+    repo = SqlAlchemyQualityRepository(session_factory=session_factory)
+
+    now = datetime.now(UTC)
+    # Attempt 1: Failed
+    g_fail = QualityGateResult(
+        gate_id="g-test",
+        gate_type=QualityGateType.TEST,
+        name="Test Gate",
+        status=QualityGateStatus.FAILED,
+        required=True,
+        evidence=QualityEvidence(summary="AssertionError"),
+        failure_reason="AssertionError",
+    )
+    run_att1 = QualityRun(
+        run_id="run-att-1",
+        execution_id="exec-repair-trace",
+        task_id="task-code",
+        attempt_number=1,
+        gate_results=(g_fail,),
+        verdict=QualityVerdict.compute([g_fail], verdict_id="v-att1"),
+        created_at=now,
+    )
+    repo.save_run(run_att1)
+
+    # Attempt 2: Repaired & Passed
+    g_pass = QualityGateResult(
+        gate_id="g-test",
+        gate_type=QualityGateType.TEST,
+        name="Test Gate",
+        status=QualityGateStatus.PASSED,
+        required=True,
+        evidence=QualityEvidence(summary="All tests passed"),
+    )
+    run_att2 = QualityRun(
+        run_id="run-att-2",
+        execution_id="exec-repair-trace",
+        task_id="task-code",
+        attempt_number=2,
+        gate_results=(g_pass,),
+        verdict=QualityVerdict.compute([g_pass], verdict_id="v-att2"),
+        created_at=now,
+    )
+    repo.save_run(run_att2)
+
+    # Verify both attempts exist independently with full immutable historical accuracy
+    runs = repo.get_runs_by_execution("exec-repair-trace")
+    assert len(runs) == 2
+
+    r1 = next(r for r in runs if r.attempt_number == 1)
+    assert r1.verdict is not None and r1.verdict.passed is False
+    assert len(r1.gate_results) == 1 and r1.gate_results[0].status == QualityGateStatus.FAILED
+
+    r2 = next(r for r in runs if r.attempt_number == 2)
+    assert r2.verdict is not None and r2.verdict.passed is True
+    assert len(r2.gate_results) == 1 and r2.gate_results[0].status == QualityGateStatus.PASSED
+
+    latest = repo.get_latest_run_for_task("task-code", execution_id="exec-repair-trace")
+    assert latest is not None
+    assert latest.attempt_number == 2
+    assert latest.verdict is not None and latest.verdict.passed is True

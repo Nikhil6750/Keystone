@@ -106,13 +106,14 @@ def test_quality_gate_result_invariants() -> None:
 
 
 def test_quality_verdict_computation_aggregation() -> None:
-    # 1. Zero gates -> Neutral Accepted
+    # 1. Zero gates -> Fail closed NO_APPLICABLE_QUALITY_GATES
     v_empty = QualityVerdict.compute([], verdict_id="v-empty")
-    assert v_empty.status == QualityVerdictStatus.ACCEPTED
-    assert v_empty.passed is True
+    assert v_empty.status == QualityVerdictStatus.REJECTED
+    assert v_empty.passed is False
     assert v_empty.total_gates == 0
+    assert "NO_APPLICABLE_QUALITY_GATES" in v_empty.summary_explanation
 
-    # 2. All required gates passed
+    # 2. All required gates passed -> Accepted
     r1 = QualityGateResult(
         gate_id="g1",
         gate_type=QualityGateType.TEST,
@@ -135,7 +136,7 @@ def test_quality_verdict_computation_aggregation() -> None:
     assert v_pass.passed_gates == 2
     assert v_pass.failed_gates == 0
 
-    # 3. Advisory (required=False) gate failed does NOT reject verdict
+    # 3. Advisory (required=False) gate failed or skipped does NOT reject verdict
     r_advisory = QualityGateResult(
         gate_id="g3",
         gate_type=QualityGateType.TYPE_CHECK,
@@ -150,7 +151,22 @@ def test_quality_verdict_computation_aggregation() -> None:
     assert v_advisory.passed is True
     assert v_advisory.passed_gates == 1
     assert v_advisory.failed_gates == 1
-    assert "advisory check(s) reported warnings" in v_advisory.summary_explanation
+    assert "advisory gate(s) non-passing" in v_advisory.summary_explanation
+
+    # Advisory SKIPPED does not block
+    r_adv_skip = QualityGateResult(
+        gate_id="g3b",
+        gate_type=QualityGateType.TYPE_CHECK,
+        name="MyPy Advisory Skip",
+        status=QualityGateStatus.SKIPPED,
+        required=False,
+        evidence=QualityEvidence(summary="Skipped advisory"),
+        skip_reason="No config found",
+    )
+    v_adv_skip = QualityVerdict.compute([r1, r_adv_skip], verdict_id="v-adv-skip")
+    assert v_adv_skip.status == QualityVerdictStatus.ACCEPTED
+    assert v_adv_skip.passed is True
+    assert v_adv_skip.skipped_gates == 1
 
     # 4. Required gate failed REJECTS verdict
     r_req_fail = QualityGateResult(
@@ -166,9 +182,30 @@ def test_quality_verdict_computation_aggregation() -> None:
     assert v_fail.status == QualityVerdictStatus.REJECTED
     assert v_fail.passed is False
     assert v_fail.failed_gates == 1
-    assert "required gate(s) failed: 'Pytest Suite' (g4)" in v_fail.summary_explanation
+    assert (
+        "required gate(s) did not pass: 'Pytest Suite' (g4: FAILED)" in v_fail.summary_explanation
+    )
 
-    # 5. Infrastructure/Execution ERROR on required gate marks ERROR status and blocks acceptance
+    # 5. Required gate SKIPPED must block acceptance (Fail Closed)
+    r_req_skip = QualityGateResult(
+        gate_id="g_req_skip",
+        gate_type=QualityGateType.TEST,
+        name="Required Tests",
+        status=QualityGateStatus.SKIPPED,
+        required=True,
+        evidence=QualityEvidence(summary="No tests found"),
+        skip_reason="No tests discovered",
+    )
+    v_req_skip = QualityVerdict.compute([r1, r_req_skip], verdict_id="v-req-skip")
+    assert v_req_skip.status == QualityVerdictStatus.REJECTED
+    assert v_req_skip.passed is False
+    assert v_req_skip.skipped_gates == 1
+    assert (
+        "required gate(s) did not pass: 'Required Tests' (g_req_skip: SKIPPED)"
+        in v_req_skip.summary_explanation
+    )
+
+    # 6. Infrastructure/Execution ERROR on required gate marks ERROR status and blocks acceptance
     r_error = QualityGateResult(
         gate_id="g5",
         gate_type=QualityGateType.BUILD,

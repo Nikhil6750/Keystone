@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import ClassVar
 
 from app.contracts.quality import (
     QualityEvidence,
@@ -13,12 +15,85 @@ from app.contracts.quality import (
     QualityGateStatus,
 )
 from app.engine.quality.errors import QualitySecurityError
-from app.engine.quality.process import SafeQualityProcessRunner
+from app.engine.quality.process import (
+    SafeQualityProcessRunner,
+    resolve_and_validate_target_path,
+)
+
+
+@dataclass(frozen=True)
+class TrustedQualityCommand:
+    """Server-side registered trusted verification command template."""
+
+    command_id: str
+    executable: str
+    args_template: tuple[str, ...]
+    description: str = ""
+
+
+class TrustedQualityCommandRegistry:
+    """Registry of pre-approved, deterministic verification command templates."""
+
+    _commands: ClassVar[dict[str, TrustedQualityCommand]] = {
+        "pytest-check": TrustedQualityCommand(
+            command_id="pytest-check",
+            executable="pytest",
+            args_template=("-q", "{target_path}"),
+            description="Run pytest against target path",
+        ),
+        "unittest-check": TrustedQualityCommand(
+            command_id="unittest-check",
+            executable="python",
+            args_template=("-m", "unittest", "discover", "-s", "{target_path}"),
+            description="Run python unittest discover against target path",
+        ),
+        "ruff-check": TrustedQualityCommand(
+            command_id="ruff-check",
+            executable="ruff",
+            args_template=("check", "{target_path}"),
+            description="Run ruff code quality check against target path",
+        ),
+        "mypy-check": TrustedQualityCommand(
+            command_id="mypy-check",
+            executable="mypy",
+            args_template=("{target_path}",),
+            description="Run mypy type checking against target path",
+        ),
+        "compileall-check": TrustedQualityCommand(
+            command_id="compileall-check",
+            executable="python",
+            args_template=("-m", "compileall", "-q", "{target_path}"),
+            description="Run python compileall against target path",
+        ),
+        "node-test": TrustedQualityCommand(
+            command_id="node-test",
+            executable="node",
+            args_template=("--test", "{target_path}"),
+            description="Run node native test runner against target path",
+        ),
+        "tsc-check": TrustedQualityCommand(
+            command_id="tsc-check",
+            executable="tsc",
+            args_template=("--noEmit",),
+            description="Run tsc type check",
+        ),
+    }
+
+    @classmethod
+    def get_command(cls, command_id: str) -> TrustedQualityCommand | None:
+        """Lookup a trusted command template by command_id."""
+        return cls._commands.get(command_id)
+
+    @classmethod
+    def register_command(cls, command: TrustedQualityCommand) -> None:
+        """Register a new trusted command template server-side."""
+        cls._commands[command.command_id] = command
 
 
 class DeterministicCommandQualityGateExecutor:
-    """Executes pre-registered or explicitly configured deterministic quality
-    verification commands.
+    """Executes server-side registered trusted deterministic quality verification commands.
+
+    Arbitrary untrusted argv from task/skill/planner payload is strictly rejected.
     """
 
     def execute(
@@ -43,9 +118,14 @@ class DeterministicCommandQualityGateExecutor:
             )
 
         cfg = spec.configuration or {}
-        argv = cfg.get("argv")
-        if not argv or not isinstance(argv, (list, tuple)):
-            evidence = QualityEvidence(summary="Custom gate configuration missing 'argv' array.")
+
+        # 1. Unconditional rejection of raw untrusted custom argv
+        if "argv" in cfg:
+            summary = (
+                "Arbitrary raw 'argv' configuration is strictly disallowed for custom gates. "
+                "Custom gates must specify a server-side registered 'command_id'."
+            )
+            evidence = QualityEvidence(summary=summary)
             return QualityGateResult(
                 gate_id=spec.gate_id,
                 gate_type=spec.gate_type,
@@ -53,17 +133,60 @@ class DeterministicCommandQualityGateExecutor:
                 status=QualityGateStatus.ERROR,
                 required=spec.required,
                 evidence=evidence,
-                failure_reason="Custom gate configuration missing 'argv' array",
+                failure_reason=summary,
                 timestamp=datetime.now(UTC),
             )
 
-        # Validate argv items are strings
-        if any(not isinstance(arg, str) for arg in argv):
-            raise QualitySecurityError("argv must contain only string arguments")
+        # 2. Resolve trusted command_id
+        command_id = str(
+            cfg.get("command_id") or cfg.get("registered_command_id") or spec.gate_id
+        ).strip()
+        trusted_cmd = TrustedQualityCommandRegistry.get_command(command_id)
+        if trusted_cmd is None:
+            summary = (
+                f"Unapproved or unregistered custom quality command_id: '{command_id}'. "
+                "Custom verification commands must use a server-side registered command_id."
+            )
+            evidence = QualityEvidence(summary=summary)
+            return QualityGateResult(
+                gate_id=spec.gate_id,
+                gate_type=spec.gate_type,
+                name=spec.name,
+                status=QualityGateStatus.ERROR,
+                required=spec.required,
+                evidence=evidence,
+                failure_reason=summary,
+                timestamp=datetime.now(UTC),
+            )
+
+        # 3. Validate and resolve target_path parameter if specified
+        target_path_param = cfg.get("target_path")
+        try:
+            _, safe_target_str = resolve_and_validate_target_path(
+                ws_root, target_path_param, default="."
+            )
+        except QualitySecurityError as exc:
+            summary = f"Target path validation failed: {exc}"
+            evidence = QualityEvidence(summary=summary)
+            return QualityGateResult(
+                gate_id=spec.gate_id,
+                gate_type=spec.gate_type,
+                name=spec.name,
+                status=QualityGateStatus.ERROR,
+                required=spec.required,
+                evidence=evidence,
+                failure_reason=summary,
+                timestamp=datetime.now(UTC),
+            )
+
+        # 4. Construct concrete argv from trusted template
+        concrete_argv: list[str] = [trusted_cmd.executable]
+        for arg in trusted_cmd.args_template:
+            concrete_argv.append(arg.replace("{target_path}", safe_target_str))
 
         runner = SafeQualityProcessRunner(ws_root)
         proc_res = runner.run(
-            argv=list(argv),
+            argv=concrete_argv,
             timeout_seconds=spec.timeout_seconds,
             env_overrides=context.environment_overrides,
         )
@@ -141,4 +264,8 @@ class DeterministicCommandQualityGateExecutor:
         )
 
 
-__all__ = ["DeterministicCommandQualityGateExecutor"]
+__all__ = [
+    "DeterministicCommandQualityGateExecutor",
+    "TrustedQualityCommand",
+    "TrustedQualityCommandRegistry",
+]

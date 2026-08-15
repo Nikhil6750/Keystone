@@ -69,6 +69,13 @@ class OrchestrationRequest(BaseModel):
     recovery_context: ManagerRecoveryContext | None = None
     knowledge_query: str | None = None
     workspace_root: str | None = None
+    # Opt-in (default `False`, zero behavior change for every existing
+    # caller): runs this request inside its own dedicated git worktree,
+    # isolating its writes from any other orchestration concurrently
+    # targeting the same `workspace_root`. Requires `workspace_root` to be
+    # a real git working tree on a checked-out branch; see
+    # `app.engine.orchestration.workspace_isolation`.
+    isolate_workspace: bool = False
 
     @field_validator("request_id")
     @classmethod

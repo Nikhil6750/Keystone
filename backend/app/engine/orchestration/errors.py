@@ -61,10 +61,29 @@ class OrchestrationExecutionAlreadyExistsError(OrchestrationError):
         super().__init__(f"orchestration execution '{execution_id}' already exists")
 
 
+class WorkspaceIsolationSetupError(OrchestrationError):
+    """Raised when `OrchestrationRequest.isolate_workspace=True` but a
+    dedicated git worktree could not be created for this run -- e.g.
+    `workspace_root` is not a real git working tree, `HEAD` is detached,
+    or `git worktree add` itself failed. See
+    `app.engine.orchestration.workspace_isolation`."""
+
+
+class WorkspaceIntegrationConflictError(OrchestrationError):
+    """Raised when an isolated run's branch could not be cleanly merged
+    back into its base branch (a real merge conflict, or any other
+    non-zero `git merge` result). The run's work is never lost -- its
+    branch is left in place in `workspace_root` for manual resolution;
+    this stage does not attempt automatic conflict resolution. See
+    `app.engine.orchestration.workspace_isolation`."""
+
+
 __all__ = [
     "InvalidOrchestrationRequestError",
     "OrchestrationError",
     "OrchestrationExecutionAlreadyExistsError",
     "OrchestrationExecutionNotFoundError",
     "OrchestrationPersistenceError",
+    "WorkspaceIntegrationConflictError",
+    "WorkspaceIsolationSetupError",
 ]

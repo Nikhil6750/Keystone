@@ -109,6 +109,7 @@ from app.engine.manager.validation import ManagerProposalValidator
 from app.engine.orchestration.compiler import compile_workflow_create, topological_order
 from app.engine.orchestration.errors import (
     OrchestrationPersistenceError,
+    WorkspaceIntegrationConflictError,
 )
 from app.engine.orchestration.events import (
     NullEventSink,
@@ -129,6 +130,7 @@ from app.engine.orchestration.models import (
 )
 from app.engine.orchestration.runtime import RuntimeCandidateProvider
 from app.engine.orchestration.verification_adapter import build_observed_outcome
+from app.engine.orchestration.workspace_isolation import GitWorktreeIsolationManager
 from app.engine.planning.planner import Planner
 from app.engine.quality.coordinator import QualityFactoryCoordinator
 from app.engine.quality.repair import QualityRepairManager
@@ -312,11 +314,43 @@ class EndToEndOrchestrationService:
     # --- Public entry point -------------------------------------------------
 
     async def orchestrate(self, request: OrchestrationRequest) -> OrchestrationResult:
-        """The single public entry point. `async` because Phase B's
-        `ManagerOrchestrator.orchestrate()` (Stage 8A, unmodified) is
-        itself `async` -- every other phase is synchronous DB/CPU work,
-        called directly (not offloaded), matching how `WorkflowEngine`
-        itself is synchronous throughout this codebase today."""
+        """The single public entry point. A thin wrapper around
+        `_orchestrate_inner`, which does all the real work unmodified.
+
+        When `request.isolate_workspace` is `False` (the default), this
+        calls straight through with zero behavior change from before this
+        field existed. When `True`, this run is given its own dedicated
+        git worktree (`app.engine.orchestration.workspace_isolation`) for
+        the duration of `_orchestrate_inner`, so a second, concurrent
+        orchestration targeting the same `workspace_root` never shares a
+        working tree or index with this one. On successful completion the
+        worktree's branch is merged back into `workspace_root` and the
+        worktree is removed; on any exception the worktree is still
+        cleaned up (branch preserved) before the exception propagates.
+        """
+        if not request.isolate_workspace or request.workspace_root is None:
+            return await self._orchestrate_inner(request)
+
+        isolation = GitWorktreeIsolationManager()
+        workspace = isolation.create(request.workspace_root, request.request_id)
+        isolated_request = request.model_copy(update={"workspace_root": workspace.worktree_path})
+        try:
+            result = await self._orchestrate_inner(isolated_request)
+        except BaseException:
+            isolation.cleanup(workspace, delete_branch=False)
+            raise
+        try:
+            isolation.integrate(workspace)
+        except WorkspaceIntegrationConflictError:
+            isolation.cleanup(workspace, delete_branch=False)
+            raise
+        isolation.cleanup(workspace, delete_branch=True)
+        return result
+
+    async def _orchestrate_inner(self, request: OrchestrationRequest) -> OrchestrationResult:
+        """The full Stage 8C.1 pipeline (see module docstring), unmodified
+        by `isolate_workspace` -- it only ever sees `request.workspace_root`
+        already pointed at the right directory, whichever that is."""
         execution_id = request.request_id
         self._last_quality_run = None
         self._quality_runs_by_task_key.clear()

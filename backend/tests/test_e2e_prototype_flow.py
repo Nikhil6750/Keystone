@@ -33,6 +33,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.adapters.demo import DemoAgentAdapter
 from app.api.deps import get_orchestration_execution_coordinator, get_orchestration_execution_store
 from app.contracts.adapter import AgentDescriptor
 from app.contracts.enums import AgentCapability, AgentStatus, RuntimeKind
@@ -107,6 +108,8 @@ def _build_full_pipeline_factory(
     *,
     db_engine: Engine,
     gate_status: QualityGateStatus,
+    agent_type: str = _AGENT_TYPE,
+    executor: RecordingExecutor | DemoAgentAdapter | None = None,
 ) -> tuple[ServiceFactory, SqlAlchemyQualityRepository, SqlAlchemyIntelligenceGraphRepository]:
     """A real `ServiceFactory` wiring the same production components
     `app.main.py` wires at startup (quality coordinator + intelligence
@@ -114,11 +117,11 @@ def _build_full_pipeline_factory(
     a subprocess-driven CLI adapter."""
     session_factory = sessionmaker(bind=db_engine, autoflush=False, expire_on_commit=False)
     registry = ExecutorRegistry()
-    registry.register(_AGENT_TYPE, RecordingExecutor(output=dict(_RICH_OUTPUT)))
-    manager = EchoingFakeManagerModel(agent_type=_AGENT_TYPE)
+    registry.register(agent_type, executor or RecordingExecutor(output=dict(_RICH_OUTPUT)))
+    manager = EchoingFakeManagerModel(agent_type=agent_type)
 
     descriptor = AgentDescriptor(
-        agent_type=_AGENT_TYPE,
+        agent_type=agent_type,
         display_name="E2E prototype test agent",
         runtime_kind=RuntimeKind.AGENT_CLI,
         capabilities=list(AgentCapability),
@@ -188,13 +191,22 @@ def _build_full_pipeline_factory(
 
 @asynccontextmanager
 async def _full_pipeline_client(
-    db_engine: Engine, *, gate_status: QualityGateStatus
+    db_engine: Engine,
+    *,
+    gate_status: QualityGateStatus,
+    agent_type: str = _AGENT_TYPE,
+    executor: RecordingExecutor | DemoAgentAdapter | None = None,
 ) -> AsyncIterator[AsyncClient]:
     factory, quality_repository, graph_repo = _build_full_pipeline_factory(
-        db_engine=db_engine, gate_status=gate_status
+        db_engine=db_engine,
+        gate_status=gate_status,
+        agent_type=agent_type,
+        executor=executor,
     )
     store = InMemoryOrchestrationExecutionStore()
-    coordinator = OrchestrationExecutionCoordinator(store=store, service_factory=factory)
+    coordinator = OrchestrationExecutionCoordinator(
+        store=store, service_factory=factory, require_workspace=True
+    )
 
     # `GET /api/v1/quality/...` and `.../intelligence/...` read
     # `request.app.state.quality_repository`/`.intelligence_query_service`
@@ -249,9 +261,7 @@ async def test_full_pipeline_happy_path_wires_quality_and_intelligence(
     execution, a passing Stage 9D quality verdict, and a Stage 9E
     intelligence graph -- all reachable through the public HTTP API, not
     constructed by hand."""
-    async with _full_pipeline_client(
-        e2e_db_engine, gate_status=QualityGateStatus.PASSED
-    ) as client:
+    async with _full_pipeline_client(e2e_db_engine, gate_status=QualityGateStatus.PASSED) as client:
         create_resp = await client.post(
             "/api/v1/orchestrations",
             json={
@@ -306,9 +316,7 @@ async def test_full_pipeline_quality_rejection_is_not_reported_as_success(
     the required Stage 9D quality gate fails -- the orchestration must
     report failure, never verified success, and the rejection must be
     visible through both the orchestration and quality APIs."""
-    async with _full_pipeline_client(
-        e2e_db_engine, gate_status=QualityGateStatus.FAILED
-    ) as client:
+    async with _full_pipeline_client(e2e_db_engine, gate_status=QualityGateStatus.FAILED) as client:
         create_resp = await client.post(
             "/api/v1/orchestrations",
             json={
@@ -331,15 +339,61 @@ async def test_full_pipeline_quality_rejection_is_not_reported_as_success(
 
 
 @pytest.mark.asyncio
+async def test_quality_enabled_pipeline_without_workspace_fails_closed(
+    e2e_db_engine: Engine,
+) -> None:
+    """Missing quality context must never silently bypass required gates."""
+    async with _full_pipeline_client(e2e_db_engine, gate_status=QualityGateStatus.FAILED) as client:
+        create_resp = await client.post(
+            "/api/v1/orchestrations",
+            json={
+                "goal": "Implement a REST endpoint with tests",
+                "available_agent_types": [_AGENT_TYPE],
+            },
+        )
+        assert create_resp.status_code == 422
+        assert create_resp.json()["error"] == {
+            "code": "INVALID_REQUEST",
+            "message": "workspace_root is required for the full quality pipeline",
+            "details": None,
+        }
+
+
+@pytest.mark.asyncio
+async def test_passing_quality_gates_cannot_certify_simulated_demo_execution(
+    e2e_db_engine: Engine, tmp_path: Path
+) -> None:
+    async with _full_pipeline_client(
+        e2e_db_engine,
+        gate_status=QualityGateStatus.PASSED,
+        agent_type="demo",
+        executor=DemoAgentAdapter(),
+    ) as client:
+        create_resp = await client.post(
+            "/api/v1/orchestrations",
+            json={
+                "goal": "Implement a REST endpoint with tests",
+                "available_agent_types": ["demo"],
+                "workspace_root": str(tmp_path),
+            },
+        )
+        assert create_resp.status_code == 202
+
+        final = await _poll_until_terminal(client, create_resp.json()["execution_id"])
+        assert final["job_status"] == "completed"
+        assert final["orchestration_outcome"] != "verified_success"
+        assert final["verification_status"] == "inconclusive"
+        assert final["quality_verdict_status"] == "ACCEPTED"
+
+
+@pytest.mark.asyncio
 async def test_unknown_agent_type_is_a_safe_terminal_failure_not_a_5xx(
     e2e_db_engine: Engine, tmp_path: Path
 ) -> None:
     """Deliberate failure path: an `available_agent_types` entry the
     backend has no registered executor for must resolve to a clean,
     observable terminal failure -- never a 500 and never a false success."""
-    async with _full_pipeline_client(
-        e2e_db_engine, gate_status=QualityGateStatus.PASSED
-    ) as client:
+    async with _full_pipeline_client(e2e_db_engine, gate_status=QualityGateStatus.PASSED) as client:
         create_resp = await client.post(
             "/api/v1/orchestrations",
             json={

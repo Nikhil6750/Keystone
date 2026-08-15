@@ -81,6 +81,7 @@ from datetime import UTC, datetime
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.adapters.types import AgentType
 from app.contracts.knowledge import KnowledgeSearchResult as ContractKnowledgeSearchResult
 from app.contracts.planning import PlanningRequest, TaskSpec, WorkflowPlan
 from app.contracts.quality import QualityExecutionContext, QualityRun
@@ -934,6 +935,36 @@ class EndToEndOrchestrationService:
                         evaluator_type=BenchmarkEvaluatorType.UNIT_TEST,
                         created_at=datetime.now(UTC),
                     )
+
+            # The opt-in demo adapter is deliberately simulated. Even a
+            # clean workspace and passing quality gates cannot prove that
+            # its canned response performed the requested work, so never
+            # let those gates manufacture a successful execution verdict.
+            # `execution_mode` is server-owned adapter metadata, not a
+            # client-supplied orchestration field.
+            attempt_metadata = (
+                attempt.output_payload.get("metadata") if attempt.output_payload else None
+            )
+            if (
+                step.agent_type == AgentType.DEMO.value
+                and isinstance(attempt_metadata, dict)
+                and attempt_metadata.get("execution_mode") == "demo"
+            ):
+                from app.contracts.enums import BenchmarkEvaluatorType
+
+                result = VerificationResult(
+                    verification_id=f"ver-{step.id}-{effective_attempt_number}",
+                    workflow_id=step.workflow_id,
+                    step_id=step.id,
+                    status=VerificationStatus.INCONCLUSIVE,
+                    evaluator_type=(
+                        task.expected_outcome.evaluator_type
+                        if task.expected_outcome
+                        else BenchmarkEvaluatorType.UNIT_TEST
+                    ),
+                    failure_reason="simulated demo execution cannot be verification evidence",
+                    created_at=datetime.now(UTC),
+                )
 
             if result is not None:
                 results_out[step.id] = result

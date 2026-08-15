@@ -228,6 +228,53 @@ async def test_post_rejects_unknown_fields(api_db_engine: Engine) -> None:
         assert response.status_code == 422
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"goal": "x" * 4001},
+        {"goal": GOAL, "request_id": "x" * 201},
+        {"goal": GOAL, "request_id": "unsafe/id"},
+        {"goal": GOAL, "workspace_root": "relative/path"},
+        {"goal": GOAL, "available_agent_types": ["agent"] * 51},
+        {"goal": GOAL, "available_agent_types": ["agent", "agent"]},
+    ],
+)
+async def test_post_rejects_malformed_or_unbounded_inputs_before_scheduling(
+    api_db_engine: Engine, payload: dict[str, object]
+) -> None:
+    async with _orchestration_client(api_db_engine) as (client, store, _coordinator):
+        response = await client.post("/api/v1/orchestrations", json=payload)
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "INVALID_REQUEST"
+        assert await store.get(str(payload.get("request_id", ""))) is None
+
+
+async def test_post_duplicate_request_id_returns_409_and_runs_once(
+    api_db_engine: Engine,
+) -> None:
+    executor = RecordingExecutor(output=dict(RICH_SUCCESS_OUTPUT))
+    async with _orchestration_client(api_db_engine, executor=executor) as (
+        client,
+        _store,
+        coordinator,
+    ):
+        payload = {
+            "goal": GOAL,
+            "request_id": "client-idempotency-key",
+            "available_agent_types": ["api-test-agent"],
+        }
+        first, duplicate = await asyncio.gather(
+            client.post("/api/v1/orchestrations", json=payload),
+            client.post("/api/v1/orchestrations", json=payload),
+        )
+        assert sorted((first.status_code, duplicate.status_code)) == [202, 409]
+        conflict = first if first.status_code == 409 else duplicate
+        assert conflict.json()["error"]["code"] == "ORCHESTRATION_EXECUTION_EXISTS"
+
+        await coordinator.wait_for("client-idempotency-key", timeout=5.0)
+        assert len({call.workflow_id for call in executor.calls}) == 1
+
+
 async def test_orchestration_runs_asynchronously_not_inline(api_db_engine: Engine) -> None:
     """POST must not block until the pipeline finishes -- the execution
     should still be running (or, at worst, not yet observed as completed

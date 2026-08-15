@@ -29,6 +29,7 @@ import type {
 } from '@/types/backend';
 
 const GOAL_MAX_LENGTH = 4000;
+const WORKSPACE_ROOT_MAX_LENGTH = 4096;
 
 type PipelineStageStatus = 'pending' | 'active' | 'done' | 'error';
 
@@ -164,6 +165,7 @@ function describeApiErrorSafe(error: unknown): string {
 export default function OrchestratePage() {
   const agents = useAgents();
   const [goal, setGoal] = React.useState('');
+  const [workspaceRoot, setWorkspaceRoot] = React.useState('');
   const [selectedAgentTypes, setSelectedAgentTypes] = React.useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = React.useState(false);
   const [submitError, setSubmitError] = React.useState<string | null>(null);
@@ -182,7 +184,11 @@ export default function OrchestratePage() {
     });
   };
 
-  const canSubmit = goal.trim().length > 0 && selectedAgentTypes.size > 0 && !submitting;
+  const canSubmit =
+    goal.trim().length > 0 &&
+    workspaceRoot.trim().length > 0 &&
+    selectedAgentTypes.size > 0 &&
+    !submitting;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
@@ -193,6 +199,7 @@ export default function OrchestratePage() {
       const accepted = await createOrchestrationExecution({
         goal: goal.trim(),
         available_agent_types: Array.from(selectedAgentTypes),
+        workspace_root: workspaceRoot.trim(),
       });
       setExecutionId(accepted.execution_id);
     } catch (error) {
@@ -205,15 +212,20 @@ export default function OrchestratePage() {
   const startOver = () => {
     setExecutionId(null);
     setGoal('');
+    setWorkspaceRoot('');
     setSubmitError(null);
   };
 
-  const isRunning = execution ? !['completed', 'failed', 'cancelled'].includes(execution.job_status) : false;
+  const isRunning = execution
+    ? !['completed', 'failed', 'cancelled'].includes(execution.job_status)
+    : false;
   const planningDone = Boolean(execution?.task_count);
   const agentDone = Boolean(execution?.selected_agent_types?.length);
   const executionDone = Boolean(execution?.workflow_id);
   const qualityReached = Boolean(execution?.quality_run_id);
-  const terminal = execution ? ['completed', 'failed', 'cancelled'].includes(execution.job_status) : false;
+  const terminal = execution
+    ? ['completed', 'failed', 'cancelled'].includes(execution.job_status)
+    : false;
 
   return (
     <AppLayout showSidebar={true}>
@@ -253,6 +265,28 @@ export default function OrchestratePage() {
                 placeholder="e.g. Implement a REST endpoint that returns the current server time, with tests"
                 className="w-full resize-none rounded-xl border border-white/[0.08] bg-white/[0.04] p-4 text-sm text-white placeholder:text-zinc-500 focus:border-blue-500/50 focus:outline-none"
               />
+            </div>
+
+            <div className="space-y-2">
+              <label
+                htmlFor="orchestrate-workspace-root"
+                className="block text-xs font-medium text-zinc-400"
+              >
+                Workspace root
+              </label>
+              <input
+                id="orchestrate-workspace-root"
+                value={workspaceRoot}
+                onChange={(e) =>
+                  setWorkspaceRoot(e.target.value.slice(0, WORKSPACE_ROOT_MAX_LENGTH))
+                }
+                placeholder="Absolute backend path, e.g. C:\\projects\\my-app"
+                className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-3 text-sm text-white placeholder:text-zinc-500 focus:border-blue-500/50 focus:outline-none"
+              />
+              <p className="text-[11px] text-zinc-500">
+                Required so execution and Software Quality Factory checks run against the same
+                project directory.
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -314,7 +348,9 @@ export default function OrchestratePage() {
 
             <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-5">
               <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
-                <h2 className="text-sm font-bold text-white">Execution {executionId.slice(0, 8)}</h2>
+                <h2 className="text-sm font-bold text-white">
+                  Execution {executionId.slice(0, 8)}
+                </h2>
                 {execution ? (
                   <ToneBadge tone={orchestrationJobStatusTone(execution.job_status)}>
                     {orchestrationJobStatusLabel(execution.job_status)}
@@ -328,7 +364,9 @@ export default function OrchestratePage() {
                 <PipelineStage
                   label="Planning (Task Graph)"
                   status={planningDone ? 'done' : isRunning ? 'active' : 'pending'}
-                  detail={execution?.task_count ? `${execution.task_count} task(s) compiled` : undefined}
+                  detail={
+                    execution?.task_count ? `${execution.task_count} task(s) compiled` : undefined
+                  }
                 />
                 <PipelineStage
                   label="Agent Organization"
@@ -355,16 +393,20 @@ export default function OrchestratePage() {
                       ? execution?.quality_verdict_status === 'ACCEPTED'
                         ? 'done'
                         : 'error'
-                      : executionDone
-                        ? 'active'
-                        : 'pending'
+                      : terminal
+                        ? 'error'
+                        : executionDone
+                          ? 'active'
+                          : 'pending'
                   }
                   detail={
                     execution?.quality_verdict_status
                       ? qualityVerdictStatusLabel(
                           execution.quality_verdict_status as QualityVerdictStatus
                         )
-                      : undefined
+                      : terminal
+                        ? 'Quality evidence unavailable'
+                        : undefined
                   }
                 />
                 <PipelineStage
@@ -386,7 +428,11 @@ export default function OrchestratePage() {
 
               {execution && terminal && (
                 <div className="space-y-2 border-t border-white/[0.06] pt-3">
-                  <ToneBadge tone={orchestrationOutcomeTone(execution.orchestration_outcome ?? 'runtime_failure')}>
+                  <ToneBadge
+                    tone={orchestrationOutcomeTone(
+                      execution.orchestration_outcome ?? 'runtime_failure'
+                    )}
+                  >
                     {execution.orchestration_outcome
                       ? orchestrationOutcomeLabel(execution.orchestration_outcome)
                       : 'Unknown outcome'}

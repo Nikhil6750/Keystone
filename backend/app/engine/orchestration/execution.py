@@ -46,7 +46,11 @@ from enum import StrEnum
 from typing import Protocol
 
 from app.engine.manager.errors import ManagerError
-from app.engine.orchestration.errors import OrchestrationPersistenceError
+from app.engine.orchestration.errors import (
+    InvalidOrchestrationRequestError,
+    OrchestrationExecutionAlreadyExistsError,
+    OrchestrationPersistenceError,
+)
 from app.engine.orchestration.events import (
     OrchestrationEvent,
     OrchestrationEventSequence,
@@ -70,6 +74,7 @@ _DEFAULT_SUBSCRIBER_QUEUE_SIZE = 200
 # provider/runtime content.
 _SAFE_SUMMARY_EXCEPTION_TYPES: tuple[type[Exception], ...] = (
     OrchestrationPersistenceError,
+    InvalidOrchestrationRequestError,
     ManagerError,
     # `WorkflowEngine.execute_workflow()`'s own documented contract: it
     # raises this when a step's circuit was already open before its first
@@ -189,6 +194,8 @@ class InMemoryOrchestrationExecutionStore:
 
     async def create(self, execution_id: str) -> None:
         async with self._lock:
+            if execution_id in self._records:
+                raise OrchestrationExecutionAlreadyExistsError(execution_id)
             now = datetime.now(UTC)
             self._records[execution_id] = OrchestrationExecutionRecord(
                 execution_id=execution_id,
@@ -317,10 +324,15 @@ class OrchestrationExecutionCoordinator:
     returns immediately."""
 
     def __init__(
-        self, *, store: OrchestrationExecutionStore, service_factory: ServiceFactory
+        self,
+        *,
+        store: OrchestrationExecutionStore,
+        service_factory: ServiceFactory,
+        require_workspace: bool = False,
     ) -> None:
         self._store = store
         self._service_factory = service_factory
+        self._require_workspace = require_workspace
         self._tasks: dict[str, asyncio.Task[None]] = {}
 
     async def start(self, request: OrchestrationRequest) -> str:
@@ -328,6 +340,10 @@ class OrchestrationExecutionCoordinator:
         schedule the background orchestration task. Returns the
         `execution_id` (== `request.request_id`) immediately -- never
         awaits the orchestration itself."""
+        if self._require_workspace and request.workspace_root is None:
+            raise InvalidOrchestrationRequestError(
+                "workspace_root is required for the full quality pipeline"
+            )
         execution_id = request.request_id
         await self._store.create(execution_id)
 
@@ -355,8 +371,9 @@ class OrchestrationExecutionCoordinator:
         sequence: OrchestrationEventSequence,
     ) -> None:
         await self._store.update_status(execution_id, OrchestrationExecutionStatus.RUNNING)
-        service, cleanup = self._service_factory(request, self._store, sequence)
+        cleanup: Callable[[], None] | None = None
         try:
+            service, cleanup = self._service_factory(request, self._store, sequence)
             result = await service.orchestrate(request)
         except Exception as exc:  # noqa: BLE001 - job-level failure, mapped to a safe summary
             logger.exception("orchestration_execution_failed execution_id=%s", execution_id)
@@ -374,7 +391,13 @@ class OrchestrationExecutionCoordinator:
             )
             return
         finally:
-            cleanup()
+            if cleanup is not None:
+                try:
+                    cleanup()
+                except Exception:  # noqa: BLE001 - cleanup must not strand the job
+                    logger.exception(
+                        "orchestration_execution_cleanup_failed execution_id=%s", execution_id
+                    )
         # `service.orchestrate()` already emitted `execution.completed` as
         # its own last act (using this same shared `sequence`) -- the
         # coordinator only needs to persist the final result here.

@@ -2,8 +2,7 @@
 
 from app.engine.skills.adaptive_rag import (
     SkillAdaptiveRAGTracker,
-    SkillRetrievalFeedback,
-    SkillRetrievalObservation,
+    SkillAdaptiveRetrievalAdapter,
     SkillRetrievalUtility,
 )
 from app.engine.skills.agent_intelligence import (
@@ -55,6 +54,7 @@ __all__ = [
     "MalformedSkillError",
     "ObsidianSkillVault",
     "SkillAdaptiveRAGTracker",
+    "SkillAdaptiveRetrievalAdapter",
     "SkillAgentIntelligenceEngine",
     "SkillAgentPerformance",
     "SkillError",
@@ -67,8 +67,6 @@ __all__ = [
     "SkillOrchestrationCoordinator",
     "SkillPromotionPolicy",
     "SkillRegistry",
-    "SkillRetrievalFeedback",
-    "SkillRetrievalObservation",
     "SkillRetrievalUtility",
     "SkillRetriever",
     "SkillValidationError",

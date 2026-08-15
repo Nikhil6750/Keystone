@@ -54,12 +54,19 @@ class Settings(BaseSettings):
     )
     retry_jitter_ratio: float = Field(default=0.1, validation_alias="KEYSTONE_RETRY_JITTER_RATIO")
 
-    # --- Circuit breaker ---
     circuit_breaker_failure_threshold: int = Field(
         default=3, validation_alias="KEYSTONE_CIRCUIT_BREAKER_FAILURE_THRESHOLD"
     )
     circuit_breaker_recovery_timeout_seconds: float = Field(
         default=30.0, validation_alias="KEYSTONE_CIRCUIT_BREAKER_RECOVERY_TIMEOUT_SECONDS"
+    )
+
+    # --- Skill Foundry ---
+    skill_vault_root: str | None = Field(
+        default=None, validation_alias="KEYSTONE_SKILL_VAULT_ROOT"
+    )
+    allowed_vault_roots: list[str] = Field(
+        default_factory=list, validation_alias="KEYSTONE_ALLOWED_VAULT_ROOTS"
     )
 
     # --- Claude Code ---

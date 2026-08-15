@@ -54,6 +54,14 @@ from app.contracts.routing import (
     RoutingDecision,
     RoutingRequest,
 )
+from app.contracts.skills import (
+    SkillAssignment,
+    SkillCategory,
+    SkillContract,
+    SkillContractValidationError,
+    SkillExecutionTrace,
+    SkillStatus,
+)
 from app.contracts.verification import VerificationEvidence, VerificationResult, VerificationStatus
 from app.contracts.workflow import (
     WorkflowDefinition,
@@ -100,6 +108,12 @@ __all__ = [
     "RoutingConstraints",
     "RoutingDecision",
     "RoutingRequest",
+    "SkillAssignment",
+    "SkillCategory",
+    "SkillContract",
+    "SkillContractValidationError",
+    "SkillExecutionTrace",
+    "SkillStatus",
     "VerificationEvidence",
     "VerificationResult",
     "VerificationStatus",
@@ -108,3 +122,4 @@ __all__ = [
     "WorkflowStepDefinition",
     "WorkflowStepStatus",
 ]
+

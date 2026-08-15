@@ -130,6 +130,12 @@ from app.engine.registry import ExecutorRegistry
 from app.engine.routing.availability import CandidateAgent
 from app.engine.routing.request_builder import build_routing_request
 from app.engine.routing.router import Router
+from app.engine.skills.adaptive_rag import SkillAdaptiveRAGTracker
+from app.engine.skills.agent_intelligence import SkillAgentIntelligenceEngine
+from app.engine.skills.evidence import SkillEvidenceRepository, SqlAlchemySkillEvidenceRepository
+from app.engine.skills.prompt_integration import attach_skill_to_task_payload
+from app.engine.skills.registry import SkillRegistry
+from app.engine.skills.retriever import SkillRetriever
 from app.engine.verification.aggregation import AggregatedVerification, CheckOutcome, aggregate
 from app.engine.verification.recovery import (
     RecoveryAction,
@@ -200,6 +206,11 @@ class EndToEndOrchestrationService:
         knowledge_search_limit: int = _DEFAULT_KNOWLEDGE_SEARCH_LIMIT,
         event_sink: OrchestrationEventSink | None = None,
         event_sequence: OrchestrationEventSequence | None = None,
+        skill_registry: SkillRegistry | None = None,
+        skill_evidence_repo: SkillEvidenceRepository | None = None,
+        skill_retriever: SkillRetriever | None = None,
+        skill_adaptive_tracker: SkillAdaptiveRAGTracker | None = None,
+        skill_agent_intelligence: SkillAgentIntelligenceEngine | None = None,
     ) -> None:
         self._db = db
         self._registry = registry
@@ -233,6 +244,24 @@ class EndToEndOrchestrationService:
         self._knowledge_search_limit = knowledge_search_limit
         self._event_sink = event_sink or NullEventSink()
         self._event_sequence = event_sequence or OrchestrationEventSequence()
+
+        # Skill Foundry Wiring (P1-1, P1-2, P1-4, P1-6)
+        self._skill_evidence_repo = skill_evidence_repo or SqlAlchemySkillEvidenceRepository(
+            session_factory=lambda: self._db
+        )
+        self._skill_registry = skill_registry or SkillRegistry(
+            evidence_repo=self._skill_evidence_repo,
+            session_factory=lambda: self._db,
+        )
+        self._skill_adaptive_tracker = skill_adaptive_tracker or SkillAdaptiveRAGTracker()
+        self._skill_retriever = skill_retriever or SkillRetriever(
+            registry=self._skill_registry,
+            evidence_repo=self._skill_evidence_repo,
+            adaptive_tracker=self._skill_adaptive_tracker,
+        )
+        self._skill_agent_intelligence = skill_agent_intelligence or SkillAgentIntelligenceEngine(
+            evidence_repo=self._skill_evidence_repo
+        )
 
     # --- Stage 8C.2: observational event emission ---------------------------
 
@@ -328,6 +357,9 @@ class EndToEndOrchestrationService:
             OrchestrationEventType.PLANNING_COMPLETED,
             message=f"task_count={len(plan.tasks)}",
         )
+
+        # Skill retrieval & enrichment for compiled task nodes (WHAT = Task, HOW = Skill)
+        self._enrich_plan_with_skills(plan, request, execution_id)
 
         await self._emit(execution_id, OrchestrationEventType.ROUTING_STARTED)
         routing = self._phase_c_routing(request, plan)
@@ -438,6 +470,9 @@ class EndToEndOrchestrationService:
 
         retrieval_feedback_recorded = self._phase_g_feedback(
             observation, aggregated, final_workflow.id, request
+        )
+        self._record_skill_feedback(
+            final_workflow, step_to_task, results, aggregated, execution_id
         )
         await self._emit(
             execution_id,
@@ -663,10 +698,17 @@ class EndToEndOrchestrationService:
                 target_files_ownership=ownership,
                 parallel_safe=payload.get("parallel_safe", False),
                 estimated_complexity=complexity,
+                skill_id=payload.get("skill_id"),
+                skill_version=payload.get("skill_version"),
+                skill_name=payload.get("skill_name"),
+                skill_guidance=payload.get("skill_guidance"),
             )
             compiled_nodes.append(node)
 
-        org_compiler = AgentOrganizationCompiler(router=self._router)
+        org_compiler = AgentOrganizationCompiler(
+            router=self._router,
+            skill_agent_intelligence=self._skill_agent_intelligence,
+        )
         team = org_compiler.assemble_team(compiled_nodes, candidates)
 
         if not team.assignments:
@@ -1061,6 +1103,142 @@ class EndToEndOrchestrationService:
         )
         self._retrieval_feedback_repository.add(feedback)
         return True
+
+    # --- Skill Foundry: Phase enrichment & verification feedback ------------
+
+    def _enrich_plan_with_skills(
+        self, plan: WorkflowPlan, request: OrchestrationRequest, execution_id: str
+    ) -> None:
+        """Retrieve and attach matching skills to compiled task nodes.
+
+        Invariant: TaskGraphCompiler operates independently of skill availability.
+        Skill selection failure degrades gracefully with zero effect on compilation.
+        """
+        if self._skill_retriever is None:
+            return
+
+        ws_context = {
+            "languages": getattr(request, "languages", []) or [],
+            "frameworks": getattr(request, "frameworks", []) or [],
+        }
+
+        for task in plan.tasks:
+            try:
+                matches = self._skill_retriever.retrieve_skills_for_task(
+                    task, workspace_context=ws_context, limit=1
+                )
+                if matches and matches[0].total_score >= self._skill_retriever.min_score_threshold:
+                    matched_skill = matches[0].skill
+                    if task.input_payload is None:
+                        task.input_payload = {}
+                    task.input_payload = attach_skill_to_task_payload(
+                        task.input_payload,
+                        matched_skill,
+                        execution_id=execution_id,
+                        task_id=task.key,
+                    )
+                    task.input_payload["skill_id"] = matched_skill.skill_id
+                    task.input_payload["skill_version"] = matched_skill.version
+                    task.input_payload["skill_name"] = matched_skill.name
+                    if self._skill_adaptive_tracker is not None:
+                        from app.engine.skills.adaptive_rag import _compute_task_fingerprint
+
+                        fp = _compute_task_fingerprint(
+                            task.task_type,
+                            task.input_payload.get("objective", task.name),
+                        )
+                        self._skill_adaptive_tracker.record_observation(
+                            task_fingerprint=fp,
+                            task_type=task.task_type,
+                            retrieved_skill_ids=tuple(m.skill.skill_id for m in matches),
+                            selected_skill_id=matched_skill.skill_id,
+                            agent_id=None,
+                            execution_id=execution_id,
+                            task_id=task.key,
+                        )
+            except Exception:
+                logger.exception("skill_retrieval_failed_for_task task_key=%s", task.key)
+
+    def _record_skill_feedback(
+        self,
+        workflow: Workflow,
+        step_to_task: dict[str, TaskSpec],
+        results: dict[str, VerificationResult],
+        aggregated: AggregatedVerification | None,
+        execution_id: str,
+    ) -> None:
+        """Persist objective verification evidence for executed skills."""
+        if self._skill_evidence_repo is None:
+            return
+
+        for step in workflow.steps:
+            task = step_to_task.get(step.id)
+            if task is None or not task.input_payload:
+                continue
+            skill_id = task.input_payload.get("skill_id")
+            skill_version = task.input_payload.get("skill_version")
+            if not skill_id or not skill_version:
+                continue
+
+            step_result = results.get(step.id)
+            if step_result is not None:
+                v_status = step_result.status
+                success = (v_status is VerificationStatus.PASSED)
+                failure_cat = step_result.failure_reason
+            elif aggregated is not None and aggregated.overall_status is not None:
+                v_status = aggregated.overall_status
+                success = (v_status is VerificationStatus.PASSED)
+                failure_cat = None
+            else:
+                v_status = VerificationStatus.INCONCLUSIVE
+                success = False
+                failure_cat = None
+
+            attempt = max(step.attempts, key=lambda a: a.attempt_number) if step.attempts else None
+            latency = (
+                (attempt.completed_at - attempt.started_at).total_seconds() * 1000.0
+                if (attempt and attempt.started_at and attempt.completed_at)
+                else 0.0
+            )
+
+            from app.engine.skills.evidence import SkillExecutionEvidence
+
+            evidence = SkillExecutionEvidence(
+                skill_id=skill_id,
+                skill_version=skill_version,
+                task_type=task.task_type,
+                agent_id=step.agent_type,
+                execution_id=execution_id,
+                task_id=task.key,
+                verification_status=v_status,
+                success=success,
+                failure_category=failure_cat,
+                latency_ms=latency,
+                recovery_required=len(step.attempts) > 1,
+            )
+            try:
+                self._skill_evidence_repo.record_evidence(evidence)
+            except Exception:
+                logger.exception("failed_to_record_skill_evidence")
+
+            if self._skill_adaptive_tracker is not None:
+                from app.engine.skills.adaptive_rag import _compute_task_fingerprint
+
+                fp = _compute_task_fingerprint(
+                    task.task_type,
+                    task.input_payload.get("objective", task.name),
+                )
+                try:
+                    self._skill_adaptive_tracker.record_feedback(
+                        task_fingerprint=fp,
+                        task_type=task.task_type,
+                        skill_id=skill_id,
+                        verification_status=v_status,
+                        agent_id=step.agent_type,
+                        execution_id=execution_id,
+                    )
+                except Exception:
+                    logger.exception("failed_to_record_skill_adaptive_feedback")
 
     # --- Shared helpers -----------------------------------------------------
 

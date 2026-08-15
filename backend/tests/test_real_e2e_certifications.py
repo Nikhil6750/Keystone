@@ -24,9 +24,6 @@ from app.engine.registry import ExecutorRegistry
 from app.resilience.circuit_breaker import CircuitBreakerRegistry
 from tests.support.orchestration_fakes import build_candidate
 
-CALCULATOR_DIR = r"C:\Keystone-MultiAgent-Calculator-V2"
-CERTIFICATION_DIR = r"C:\Keystone-MultiAgent-Certification"
-
 
 @dataclass
 class CalculatorAgentExecutor:
@@ -148,10 +145,9 @@ class ConcurrentTaskTrackerAgentExecutor:
 
 
 @pytest.mark.asyncio
-async def test_e2e_calculator_v2(db_session: Session) -> None:
-    """E2E Test A: Calculator in C:\\Keystone-MultiAgent-Calculator-V2"""
-    workspace = CALCULATOR_DIR
-    os.makedirs(workspace, exist_ok=True)
+async def test_e2e_calculator_v2(db_session: Session, tmp_path: Path) -> None:
+    """E2E Test A: Calculator built in an isolated per-test workspace."""
+    workspace = str(tmp_path)
 
     executor = CalculatorAgentExecutor(agent_id="qwen-coder")
     registry = ExecutorRegistry()
@@ -188,10 +184,11 @@ async def test_e2e_calculator_v2(db_session: Session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_e2e_multi_agent_certification_concurrency(db_session: Session) -> None:
+async def test_e2e_multi_agent_certification_concurrency(
+    db_session: Session, tmp_path: Path
+) -> None:
     """E2E Test B: Multi-Agent Certification with timestamp overlap proof."""
-    workspace = CERTIFICATION_DIR
-    os.makedirs(workspace, exist_ok=True)
+    workspace = str(tmp_path)
 
     exec_qwen = ConcurrentTaskTrackerAgentExecutor(agent_id="qwen-coder", sleep_seconds=0.3)
     exec_corp = ConcurrentTaskTrackerAgentExecutor(agent_id="corp-reviewer", sleep_seconds=0.3)
@@ -242,9 +239,9 @@ async def test_e2e_multi_agent_certification_concurrency(db_session: Session) ->
 
 
 @pytest.mark.asyncio
-async def test_e2e_reroute_unavailable_agent(db_session: Session) -> None:
+async def test_e2e_reroute_unavailable_agent(db_session: Session, tmp_path: Path) -> None:
     """E2E Test C: Unavailable agent / quota-blocked task rerouted to healthy agent."""
-    workspace = os.path.join(CERTIFICATION_DIR, "reroute_workspace")
+    workspace = os.path.join(str(tmp_path), "reroute_workspace")
     os.makedirs(workspace, exist_ok=True)
 
     healthy_executor = CalculatorAgentExecutor(agent_id="healthy-agent")

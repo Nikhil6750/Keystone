@@ -16,6 +16,10 @@ import type {
   CompensationAttemptStatus,
   ConnectionStatus,
   InstallationStatus,
+  OrchestrationExecutionStatus,
+  OrchestrationOutcome,
+  QualityGateStatus,
+  QualityVerdictStatus,
   StepStatus,
   WorkflowStatus,
 } from '@/types/backend';
@@ -248,4 +252,100 @@ export function formatTimestamp(value: string | null): string {
     minute: '2-digit',
     second: '2-digit',
   });
+}
+
+const ORCHESTRATION_JOB_STATUS_LABELS: Record<OrchestrationExecutionStatus, string> = {
+  accepted: 'Accepted',
+  running: 'Running',
+  completed: 'Completed',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+};
+
+const ORCHESTRATION_JOB_STATUS_TONES: Record<OrchestrationExecutionStatus, SemanticTone> = {
+  accepted: 'neutral',
+  running: 'info',
+  completed: 'success',
+  failed: 'error',
+  cancelled: 'neutral',
+};
+
+export function orchestrationJobStatusLabel(status: OrchestrationExecutionStatus): string {
+  return ORCHESTRATION_JOB_STATUS_LABELS[status];
+}
+
+export function orchestrationJobStatusTone(status: OrchestrationExecutionStatus): SemanticTone {
+  return ORCHESTRATION_JOB_STATUS_TONES[status];
+}
+
+const ORCHESTRATION_OUTCOME_LABELS: Record<OrchestrationOutcome, string> = {
+  verified_success: 'Verified success',
+  verification_failed: 'Verification failed',
+  runtime_failure: 'Runtime failure',
+  no_eligible_route: 'No eligible agent',
+  recovery_exhausted: 'Recovery exhausted',
+  human_review_required: 'Human review required',
+  cancelled: 'Cancelled',
+};
+
+const ORCHESTRATION_OUTCOME_TONES: Record<OrchestrationOutcome, SemanticTone> = {
+  verified_success: 'success',
+  verification_failed: 'error',
+  runtime_failure: 'error',
+  no_eligible_route: 'warning',
+  recovery_exhausted: 'error',
+  human_review_required: 'warning',
+  cancelled: 'neutral',
+};
+
+export function orchestrationOutcomeLabel(outcome: OrchestrationOutcome): string {
+  return ORCHESTRATION_OUTCOME_LABELS[outcome];
+}
+
+export function orchestrationOutcomeTone(outcome: OrchestrationOutcome): SemanticTone {
+  return ORCHESTRATION_OUTCOME_TONES[outcome];
+}
+
+const QUALITY_GATE_STATUS_LABELS: Record<QualityGateStatus, string> = {
+  PASSED: 'Passed',
+  FAILED: 'Failed',
+  ERROR: 'Error',
+  SKIPPED: 'Skipped',
+};
+
+const QUALITY_GATE_STATUS_TONES: Record<QualityGateStatus, SemanticTone> = {
+  PASSED: 'success',
+  FAILED: 'error',
+  ERROR: 'error',
+  SKIPPED: 'neutral',
+};
+
+export function qualityGateStatusLabel(status: QualityGateStatus): string {
+  return QUALITY_GATE_STATUS_LABELS[status];
+}
+
+export function qualityGateStatusTone(status: QualityGateStatus): SemanticTone {
+  return QUALITY_GATE_STATUS_TONES[status];
+}
+
+const QUALITY_VERDICT_STATUS_LABELS: Record<QualityVerdictStatus, string> = {
+  ACCEPTED: 'Accepted',
+  REJECTED: 'Rejected',
+  REPAIR_REQUIRED: 'Repair required',
+  ERROR: 'Error',
+};
+
+const QUALITY_VERDICT_STATUS_TONES: Record<QualityVerdictStatus, SemanticTone> = {
+  ACCEPTED: 'success',
+  REJECTED: 'error',
+  REPAIR_REQUIRED: 'warning',
+  ERROR: 'error',
+};
+
+export function qualityVerdictStatusLabel(status: QualityVerdictStatus): string {
+  return QUALITY_VERDICT_STATUS_LABELS[status];
+}
+
+export function qualityVerdictStatusTone(status: QualityVerdictStatus): SemanticTone {
+  return QUALITY_VERDICT_STATUS_TONES[status];
 }

@@ -22,6 +22,13 @@ export type APIErrorCode =
   | 'AUDIT_EVENT_CONFLICT'
   | 'AGENT_TYPE_UNKNOWN'
   | 'AGENT_VERIFICATION_IN_PROGRESS'
+  | 'ORCHESTRATION_EXECUTION_NOT_FOUND'
+  | 'AGENT_CONNECTION_NOT_FOUND'
+  | 'CONNECTED_AGENT_NOT_FOUND'
+  | 'AGENT_CONNECTION_EXISTS'
+  | 'CONNECTED_AGENT_EXISTS'
+  | 'AGENT_CONNECTION_HAS_DEPENDENTS'
+  | 'INVALID_AGENT_CONNECTION_REFERENCE'
   | 'INVALID_REQUEST'
   | 'INTERNAL_ERROR';
 
@@ -282,4 +289,211 @@ export interface HealthRead {
   status: string;
   service: string;
   version: string;
+}
+
+// --- Orchestrations (backend/app/schemas/orchestration.py) ---
+// The full Task Graph -> Agent Organization -> Skill Foundry -> execution
+// -> recovery -> Quality Factory -> Intelligence Graph pipeline, distinct
+// from the basic manual WorkflowCreate/execute flow above.
+
+export type OrchestrationExecutionStatus =
+  'accepted' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export type OrchestrationOutcome =
+  | 'verified_success'
+  | 'verification_failed'
+  | 'runtime_failure'
+  | 'no_eligible_route'
+  | 'recovery_exhausted'
+  | 'human_review_required'
+  | 'cancelled';
+
+export interface OrchestrationExecutionCreate {
+  goal: string;
+  task_type?: string | null;
+  request_id?: string | null;
+  available_agent_types?: string[];
+  knowledge_query?: string | null;
+  workspace_root?: string | null;
+}
+
+export interface OrchestrationExecutionAccepted {
+  execution_id: string;
+  status: OrchestrationExecutionStatus;
+  events_url: string;
+  result_url: string;
+}
+
+export interface OrchestrationExecutionRead {
+  execution_id: string;
+  job_status: OrchestrationExecutionStatus;
+  orchestration_outcome: OrchestrationOutcome | null;
+  workflow_id: string | null;
+  final_workflow_state: WorkflowStatus | null;
+  verification_status: 'passed' | 'failed' | 'inconclusive' | 'requires_human_review' | null;
+  task_count: number | null;
+  selected_agent_types: string[];
+  attempt_count: number | null;
+  recovery_used: boolean | null;
+  recovery_action: string | null;
+  learning_event_count: number | null;
+  retrieval_feedback_recorded: boolean | null;
+  issue_codes: string[];
+  quality_run_id: string | null;
+  quality_verdict_status: string | null;
+  error_summary: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// --- Quality (backend/app/api/routes/quality.py, Stage 9D) ---
+
+export type QualityGateStatus = 'PASSED' | 'FAILED' | 'ERROR' | 'SKIPPED';
+
+export type QualityVerdictStatus = 'ACCEPTED' | 'REJECTED' | 'REPAIR_REQUIRED' | 'ERROR';
+
+export interface QualityEvidenceRead {
+  summary: string;
+  exit_code: number | null;
+  diagnostics: string[];
+  artifact_references: string[];
+  stdout: string;
+  stderr: string;
+  metrics: Record<string, unknown>;
+}
+
+export interface QualityGateResultRead {
+  gate_id: string;
+  gate_type: string;
+  name: string;
+  status: QualityGateStatus;
+  required: boolean;
+  evidence: QualityEvidenceRead;
+  execution_time_ms: number;
+  failure_reason: string | null;
+  skip_reason: string | null;
+  timestamp: string;
+}
+
+export interface QualityVerdictRead {
+  verdict_id: string;
+  status: QualityVerdictStatus;
+  passed: boolean;
+  total_gates: number;
+  passed_gates: number;
+  failed_gates: number;
+  skipped_gates: number;
+  error_gates: number;
+  summary_explanation: string;
+  created_at: string;
+}
+
+export interface QualityRunRead {
+  run_id: string;
+  execution_id: string;
+  workflow_id: string | null;
+  task_id: string | null;
+  attempt_number: number;
+  agent_id: string | null;
+  skill_id: string | null;
+  skill_version: string | null;
+  profile_id: string | null;
+  status: string;
+  passed: boolean;
+  verdict: QualityVerdictRead | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+// --- Intelligence (backend/app/api/routes/intelligence.py, Stage 9E) ---
+
+export interface IntelligenceNodeRead {
+  node_id: string;
+  node_type: string;
+  canonical_id: string;
+  label: string;
+  workflow_id: string | null;
+  agent_type: string | null;
+  task_type: string | null;
+  skill_id: string | null;
+  skill_version: string | null;
+  status: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface IntelligenceEdgeRead {
+  edge_id: string;
+  edge_type: string;
+  source_node_id: string;
+  target_node_id: string;
+  created_at: string;
+}
+
+export interface NodeRelationshipsRead {
+  node: IntelligenceNodeRead;
+  outgoing: IntelligenceEdgeRead[];
+  incoming: IntelligenceEdgeRead[];
+}
+
+export interface TaskReliabilityRead {
+  task_type: string | null;
+  attempt_count: number;
+  success_count: number;
+  failure_count: number;
+  recovery_count: number;
+  quality_rejection_count: number;
+  success_rate: number | null;
+  sample_size_is_low: boolean;
+}
+
+export interface AgentReliabilityRead {
+  agent_type: string;
+  task_type: string | null;
+  observed_executions: number;
+  successful_executions: number;
+  failed_executions: number;
+  recovery_count: number;
+  quality_verified_successes: number;
+  success_rate: number | null;
+  sample_size_is_low: boolean;
+}
+
+export interface SkillReliabilityRead {
+  skill_id: string;
+  skill_version: string | null;
+  task_type: string | null;
+  uses: number;
+  successful_uses: number;
+  failed_uses: number;
+  quality_verified_uses: number;
+  success_rate: number | null;
+  sample_size_is_low: boolean;
+}
+
+export interface QualityGateIntelligenceRead {
+  task_type: string | null;
+  agent_type: string | null;
+  skill_id: string | null;
+  total_gate_results: number;
+  passed_count: number;
+  failed_count: number;
+  error_count: number;
+  skipped_count: number;
+  most_frequent_failed_gate_types: [string, number][];
+  sample_size_is_low: boolean;
+}
+
+export interface FailureAttributionRead {
+  attribution_id: string;
+  attempt_node_id: string;
+  category: string;
+  is_known: boolean;
+  explanation: string;
+  evidence_ids: string[];
+  workflow_id: string | null;
+  agent_type: string | null;
+  task_type: string | null;
+  skill_id: string | null;
+  created_at: string;
 }

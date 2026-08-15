@@ -21,6 +21,7 @@ export const APP_CONFIG = {
 export const ROUTES = {
   home: '/',
   chat: '/chat',
+  orchestrate: '/orchestrate',
   workflows: '/workflows',
   agents: '/agents',
   logs: '/logs',

@@ -180,4 +180,3 @@ def get_skill_lifecycle_manager(request: Request) -> "SkillLifecycleManager":
         mgr = SkillLifecycleManager(registry=registry, evidence_repo=evidence_repo)
         request.app.state.skill_lifecycle_manager = mgr
     return mgr
-

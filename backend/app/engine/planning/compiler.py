@@ -468,14 +468,13 @@ class TaskGraphCompilerV2:
 
         # Compound Case: Database Migration + Authentication
         if analysis["has_db"] and analysis["has_auth"]:
-            db_target_files = (
-                [f for f in explicit_files if "migrat" in f or "model" in f or "db" in f]
-                or ["alembic/versions/001_auth_migration.py", "models/user.py"]
-            )
-            auth_target_files = (
-                [f for f in explicit_files if "auth" in f or "service" in f]
-                or ["services/auth.py", "routes/auth.py"]
-            )
+            db_target_files = [
+                f for f in explicit_files if "migrat" in f or "model" in f or "db" in f
+            ] or ["alembic/versions/001_auth_migration.py", "models/user.py"]
+            auth_target_files = [f for f in explicit_files if "auth" in f or "service" in f] or [
+                "services/auth.py",
+                "routes/auth.py",
+            ]
             eval_cmd = "python -m unittest" if analysis["is_python"] else "node --test"
             t1 = CompiledTaskNode(
                 task_id="T1",

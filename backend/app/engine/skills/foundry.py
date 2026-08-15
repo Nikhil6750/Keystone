@@ -207,11 +207,7 @@ class CandidateSkillFoundry:
         return proposal, "Candidate skill proposal created successfully"
 
     def list_proposals(self) -> list[CandidateSkillProposal]:
-        return [
-            p
-            for pid, p in self._proposals.items()
-            if pid not in self._rejected_proposals
-        ]
+        return [p for pid, p in self._proposals.items() if pid not in self._rejected_proposals]
 
     def approve_proposal(self, proposal_id: str) -> SkillContract:
         """Human approves proposal -> registered in registry as CANDIDATE."""
@@ -228,9 +224,7 @@ class CandidateSkillFoundry:
 
         return skill
 
-    def reject_proposal(
-        self, proposal_id: str, reason: str = "Rejected by human reviewer"
-    ) -> None:
+    def reject_proposal(self, proposal_id: str, reason: str = "Rejected by human reviewer") -> None:
         """Human rejects candidate proposal."""
         if proposal_id not in self._proposals:
             raise KeyError(f"Proposal '{proposal_id}' not found")

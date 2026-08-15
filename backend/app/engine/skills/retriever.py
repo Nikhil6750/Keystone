@@ -92,12 +92,8 @@ class SkillRetriever:
         task_text = f"{title} {objective} {task_type}"
         task_tokens = _tokenize_text(task_text)
 
-        workspace_languages = set(
-            (workspace_context or {}).get("languages", [])
-        )
-        workspace_frameworks = set(
-            (workspace_context or {}).get("frameworks", [])
-        )
+        workspace_languages = set((workspace_context or {}).get("languages", []))
+        workspace_frameworks = set((workspace_context or {}).get("frameworks", []))
 
         all_skills = self.registry.list_skills(latest_only=True)
         scored_skills: list[SkillMatchScore] = []
@@ -133,8 +129,7 @@ class SkillRetriever:
 
             # 3. Semantic Relevance
             skill_text = (
-                f"{skill.name} {skill.description} "
-                f"{' '.join(skill.task_types)} {skill.procedure}"
+                f"{skill.name} {skill.description} {' '.join(skill.task_types)} {skill.procedure}"
             )
             skill_tokens = _tokenize_text(skill_text)
             jaccard = _jaccard_similarity(task_tokens, skill_tokens)
@@ -167,9 +162,7 @@ class SkillRetriever:
             if self.evidence_repo is not None:
                 metrics = self.evidence_repo.get_metrics_for_skill(skill.skill_id)
                 if metrics.total_samples > 0:
-                    verified_utility = metrics.smoothed_reliability(
-                        prior_alpha=1.0, prior_beta=1.0
-                    )
+                    verified_utility = metrics.smoothed_reliability(prior_alpha=1.0, prior_beta=1.0)
 
             if self.adaptive_tracker is not None:
                 adj = self.adaptive_tracker.get_utility_adjustment(skill.skill_id, task_type)

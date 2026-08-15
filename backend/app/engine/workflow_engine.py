@@ -190,13 +190,13 @@ class WorkflowEngine:
         is_terminal: bool,
         db: Session | None = None,
     ) -> None:
-        if self._learning_persistence is None:
-            return
-
         use_db = db or self._db
         verification_status: VerificationStatus | None = None
         if is_terminal and self._verification_resolver is not None:
             verification_status = self._verification_resolver(step, attempt)
+
+        if self._learning_persistence is None:
+            return
 
         duration_ms: float | None = None
         if attempt.started_at is not None and attempt.completed_at is not None:

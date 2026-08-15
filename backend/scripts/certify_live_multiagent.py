@@ -199,9 +199,7 @@ async def main() -> int:
                 name1, (s1, e1) = step_list[i]
                 name2, (s2, e2) = step_list[j]
                 overlap = max(0.0, (min(e1, e2) - max(s1, s2)).total_seconds())
-                print(
-                    f" - Concurrency Analysis ({name1} vs {name2}): overlap={overlap:.3f}s"
-                )
+                print(f" - Concurrency Analysis ({name1} vs {name2}): overlap={overlap:.3f}s")
                 if overlap > 0.0:
                     has_concurrency_overlap = True
 

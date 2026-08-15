@@ -48,6 +48,20 @@ from app.contracts.explainability import (
 from app.contracts.knowledge import KnowledgeDocument, KnowledgeSearchResult
 from app.contracts.passports import AgentPassport, AgentPassportMetricBucket
 from app.contracts.planning import ExpectedOutcome, PlanningRequest, TaskSpec, WorkflowPlan
+from app.contracts.quality import (
+    QualityContractValidationError,
+    QualityEvidence,
+    QualityExecutionContext,
+    QualityGateResult,
+    QualityGateSpec,
+    QualityGateStatus,
+    QualityGateType,
+    QualityProfile,
+    QualityRepairPacket,
+    QualityRun,
+    QualityVerdict,
+    QualityVerdictStatus,
+)
 from app.contracts.routing import (
     RoutingCandidateScore,
     RoutingConstraints,
@@ -108,6 +122,18 @@ __all__ = [
     "RoutingConstraints",
     "RoutingDecision",
     "RoutingRequest",
+    "QualityContractValidationError",
+    "QualityEvidence",
+    "QualityExecutionContext",
+    "QualityGateResult",
+    "QualityGateSpec",
+    "QualityGateStatus",
+    "QualityGateType",
+    "QualityProfile",
+    "QualityRepairPacket",
+    "QualityRun",
+    "QualityVerdict",
+    "QualityVerdictStatus",
     "SkillAssignment",
     "SkillCategory",
     "SkillContract",
@@ -122,4 +148,3 @@ __all__ = [
     "WorkflowStepDefinition",
     "WorkflowStepStatus",
 ]
-

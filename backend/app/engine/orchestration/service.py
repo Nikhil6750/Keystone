@@ -72,6 +72,7 @@ not a redesign of Stage 4E's recovery semantics themselves.
 """
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -82,6 +83,7 @@ from sqlalchemy.orm import Session
 
 from app.contracts.knowledge import KnowledgeSearchResult as ContractKnowledgeSearchResult
 from app.contracts.planning import PlanningRequest, TaskSpec, WorkflowPlan
+from app.contracts.quality import QualityExecutionContext, QualityRun
 from app.contracts.routing import RoutingRequest
 from app.contracts.verification import VerificationResult, VerificationStatus
 from app.engine.adaptive_retrieval.feedback import RetrievalFeedback, RetrievalFeedbackRepository
@@ -126,6 +128,8 @@ from app.engine.orchestration.models import (
 from app.engine.orchestration.runtime import RuntimeCandidateProvider
 from app.engine.orchestration.verification_adapter import build_observed_outcome
 from app.engine.planning.planner import Planner
+from app.engine.quality.coordinator import QualityFactoryCoordinator
+from app.engine.quality.repair import QualityRepairManager
 from app.engine.registry import ExecutorRegistry
 from app.engine.routing.availability import CandidateAgent
 from app.engine.routing.request_builder import build_routing_request
@@ -211,10 +215,12 @@ class EndToEndOrchestrationService:
         skill_retriever: SkillRetriever | None = None,
         skill_adaptive_tracker: SkillAdaptiveRAGTracker | None = None,
         skill_agent_intelligence: SkillAgentIntelligenceEngine | None = None,
+        quality_coordinator: QualityFactoryCoordinator | None = None,
     ) -> None:
         self._db = db
         self._registry = registry
         self._workspace_root: str | None = None
+        self._last_quality_run: QualityRun | None = None
         self._candidate_provider = candidate_provider
         self._knowledge_index = knowledge_index
         self._adaptive_retriever = adaptive_retriever
@@ -263,6 +269,10 @@ class EndToEndOrchestrationService:
             evidence_repo=self._skill_evidence_repo
         )
 
+        # Stage 9D Software Quality Factory Wiring
+        self._quality_coordinator = quality_coordinator
+        self._quality_runs_by_task_key: dict[str, QualityRun] = {}
+
     # --- Stage 8C.2: observational event emission ---------------------------
 
     async def _emit(
@@ -302,6 +312,8 @@ class EndToEndOrchestrationService:
         called directly (not offloaded), matching how `WorkflowEngine`
         itself is synchronous throughout this codebase today."""
         execution_id = request.request_id
+        self._last_quality_run = None
+        self._quality_runs_by_task_key.clear()
         # Already validated by `OrchestrationRequest`'s own field validator
         # (absolute, exists, is a directory) -- read once here and handed
         # to every `WorkflowEngine` this orchestration constructs (Phase D
@@ -440,6 +452,7 @@ class EndToEndOrchestrationService:
             agent_type_by_task_key,
             routing_context_by_task_key,
             learning_event_ids,
+            execution_id,
         )
         await self._emit(
             execution_id,
@@ -471,9 +484,7 @@ class EndToEndOrchestrationService:
         retrieval_feedback_recorded = self._phase_g_feedback(
             observation, aggregated, final_workflow.id, request
         )
-        self._record_skill_feedback(
-            final_workflow, step_to_task, results, aggregated, execution_id
-        )
+        self._record_skill_feedback(final_workflow, step_to_task, results, aggregated, execution_id)
         await self._emit(
             execution_id,
             OrchestrationEventType.RETRIEVAL_FEEDBACK_COMPLETED,
@@ -749,7 +760,9 @@ class EndToEndOrchestrationService:
 
         step_to_task = self._map_steps_to_tasks(workflow, ordered_tasks)
         results: dict[str, VerificationResult] = {}
-        resolver = self._make_verification_resolver(step_to_task, results)
+        resolver = self._make_verification_resolver(
+            step_to_task, results, execution_id=execution_id
+        )
 
         engine = WorkflowEngine(
             self._db,
@@ -813,7 +826,11 @@ class EndToEndOrchestrationService:
         return {step.id: task for step, task in zip(ordered_steps, ordered_tasks, strict=True)}
 
     def _make_verification_resolver(
-        self, step_to_task: dict[str, TaskSpec], results_out: dict[str, VerificationResult]
+        self,
+        step_to_task: dict[str, TaskSpec],
+        results_out: dict[str, VerificationResult],
+        execution_id: str = "exec-default",
+        attempt_number_offset: int = 0,
     ) -> Callable[[WorkflowStep, StepAttempt], VerificationStatus | None]:
         # Only ever constructed when a real, validated `workspace_root` is
         # present (Stage 8C.3 P1 fix) -- every existing caller/test that
@@ -831,26 +848,90 @@ class EndToEndOrchestrationService:
             if attempt.status != AttemptStatus.SUCCEEDED:
                 return None
             task = step_to_task.get(step.id)
-            if task is None or task.expected_outcome is None:
+            if task is None:
                 return None
-            payload = dict(attempt.output_payload) if attempt.output_payload else {}
-            if evidence_collector is not None:
-                # "if trustworthy structured evidence already present:
-                # consume it; else if real workspace execution: collect
-                # objective evidence" -- `collect()` never overwrites a key
-                # `payload` already has.
-                payload.update(evidence_collector.collect(task.expected_outcome, payload))
-            observed = build_observed_outcome(payload)
-            result = verify_one(
-                task.expected_outcome,
-                observed,
-                verification_id=f"ver-{step.id}-{attempt.attempt_number}",
-                workflow_id=step.workflow_id,
-                step_id=step.id,
-                created_at=datetime.now(UTC),
-            )
-            results_out[step.id] = result
-            return result.status
+
+            effective_attempt_number = attempt.attempt_number + attempt_number_offset
+
+            result = None
+            if task.expected_outcome is not None:
+                payload = dict(attempt.output_payload) if attempt.output_payload else {}
+                if evidence_collector is not None:
+                    # "if trustworthy structured evidence already present:
+                    # consume it; else if real workspace execution: collect
+                    # objective evidence" -- `collect()` never overwrites a key
+                    # `payload` already has.
+                    payload.update(evidence_collector.collect(task.expected_outcome, payload))
+                observed = build_observed_outcome(payload)
+                result = verify_one(
+                    task.expected_outcome,
+                    observed,
+                    verification_id=f"ver-{step.id}-{effective_attempt_number}",
+                    workflow_id=step.workflow_id,
+                    step_id=step.id,
+                    created_at=datetime.now(UTC),
+                )
+
+            # Stage 9D Software Quality Factory Verification
+            if self._quality_coordinator is not None and self._workspace_root is not None:
+                q_context = QualityExecutionContext(
+                    workspace_root=self._workspace_root,
+                    task_id=task.key,
+                    task_type=task.task_type,
+                    execution_id=execution_id,
+                    agent_id=step.agent_type,
+                )
+                skill_obj = None
+                if self._skill_registry and task.input_payload and "skill_id" in task.input_payload:
+                    with contextlib.suppress(Exception):
+                        skill_obj = self._skill_registry.get_skill(
+                            task.input_payload["skill_id"],
+                            task.input_payload.get("skill_version", "1.0.0"),
+                        )
+
+                q_verdict, q_run = self._quality_coordinator.verify_software_execution(
+                    context=q_context,
+                    task=task,
+                    skill=skill_obj,
+                    workflow_id=step.workflow_id,
+                    attempt_number=effective_attempt_number,
+                )
+                self._quality_runs_by_task_key[task.key] = q_run
+                self._last_quality_run = q_run
+
+                if not q_verdict.passed:
+                    from app.contracts.enums import BenchmarkEvaluatorType
+
+                    eval_type = (
+                        task.expected_outcome.evaluator_type
+                        if task.expected_outcome
+                        else BenchmarkEvaluatorType.UNIT_TEST
+                    )
+                    result = VerificationResult(
+                        verification_id=f"ver-{step.id}-{effective_attempt_number}",
+                        workflow_id=step.workflow_id,
+                        step_id=step.id,
+                        status=VerificationStatus.FAILED,
+                        evaluator_type=eval_type,
+                        failure_reason=q_verdict.summary_explanation,
+                        created_at=datetime.now(UTC),
+                    )
+                elif result is None:
+                    from app.contracts.enums import BenchmarkEvaluatorType
+
+                    result = VerificationResult(
+                        verification_id=f"ver-{step.id}-{effective_attempt_number}",
+                        workflow_id=step.workflow_id,
+                        step_id=step.id,
+                        status=VerificationStatus.PASSED,
+                        evaluator_type=BenchmarkEvaluatorType.UNIT_TEST,
+                        created_at=datetime.now(UTC),
+                    )
+
+            if result is not None:
+                results_out[step.id] = result
+                return result.status
+            return None
 
         return resolver
 
@@ -878,6 +959,7 @@ class EndToEndOrchestrationService:
         agent_type_by_task_key: dict[str, str],
         routing_context_by_task_key: dict[str, _RoutingContext],
         learning_event_ids: list[str],
+        execution_id: str = "exec-default",
     ) -> tuple[
         Workflow,
         AggregatedVerification | None,
@@ -925,6 +1007,7 @@ class EndToEndOrchestrationService:
                 routing_context_by_task_key,
                 decision,
                 attempt_number,
+                execution_id=execution_id,
             )
             if cycle is None:
                 last_action = RecoveryAction.FAIL
@@ -942,7 +1025,15 @@ class EndToEndOrchestrationService:
                 all_rerouted_tasks.append((t_k, p_agent, n_agent, "verification_failure"))
             current_agent_types = new_cycle_agent_types
 
-            next_verification = self._aggregate({**results, **current_results})
+            task_key_to_result = {}
+            for s_id, t_spec in step_to_task.items():
+                if s_id in results:
+                    task_key_to_result[t_spec.key] = results[s_id]
+            for s_id, t_spec in current_step_to_task.items():
+                if s_id in current_results:
+                    task_key_to_result[t_spec.key] = current_results[s_id]
+
+            next_verification = self._aggregate(task_key_to_result)
             if next_verification is None:
                 # Unreachable in practice (current_results is always
                 # non-empty after a successful recovery cycle), but never
@@ -972,6 +1063,7 @@ class EndToEndOrchestrationService:
         routing_context_by_task_key: dict[str, _RoutingContext],
         decision: RecoveryDecision,
         attempt_number: int,
+        execution_id: str = "exec-default",
     ) -> (
         tuple[
             Workflow, dict[str, TaskSpec], dict[str, VerificationResult], dict[str, str], list[str]
@@ -995,6 +1087,33 @@ class EndToEndOrchestrationService:
         # undeclared task" validator rejecting a subset whose dependency
         # already passed and is not being re-run.
         recovery_tasks = [task.model_copy(update={"depends_on": []}) for task in failed_tasks]
+
+        # Stage 9D: Inject structured quality repair packet if available
+        if self._quality_coordinator is not None:
+            for r_task in recovery_tasks:
+                task_qrun = self._quality_runs_by_task_key.get(r_task.key) or self._last_quality_run
+                if (
+                    task_qrun is not None
+                    and task_qrun.verdict is not None
+                    and not task_qrun.verdict.passed
+                ):
+                    repair_packet = self._quality_coordinator.create_repair_packet(
+                        task_qrun, max_repair_attempts=self._recovery_policy.max_attempts
+                    )
+                    if repair_packet:
+                        repair_guidance = QualityRepairManager.format_repair_prompt_section(
+                            repair_packet
+                        )
+                        new_payload = dict(r_task.input_payload or {})
+                        new_payload["repair_guidance"] = repair_guidance
+                        new_payload["repair_packet"] = {
+                            "attempt_number": repair_packet.attempt_number,
+                            "blocking_gate_ids": list(repair_packet.blocking_gate_ids),
+                            "failure_summaries": list(repair_packet.failure_summaries),
+                            "diagnostics": list(repair_packet.diagnostics),
+                        }
+                        r_task.input_payload = new_payload
+
         new_agent_type_by_task_key: dict[str, str] = {}
 
         for task, recovery_task in zip(failed_tasks, recovery_tasks, strict=True):
@@ -1028,7 +1147,12 @@ class EndToEndOrchestrationService:
         recovery_workflow = workflow_service.create_workflow(self._db, recovery_workflow_create)
         new_step_to_task = self._map_steps_to_tasks(recovery_workflow, recovery_tasks)
         new_results: dict[str, VerificationResult] = {}
-        resolver = self._make_verification_resolver(new_step_to_task, new_results)
+        resolver = self._make_verification_resolver(
+            new_step_to_task,
+            new_results,
+            execution_id=execution_id,
+            attempt_number_offset=attempt_number,
+        )
 
         engine = WorkflowEngine(
             self._db,
@@ -1183,11 +1307,11 @@ class EndToEndOrchestrationService:
             step_result = results.get(step.id)
             if step_result is not None:
                 v_status = step_result.status
-                success = (v_status is VerificationStatus.PASSED)
+                success = v_status is VerificationStatus.PASSED
                 failure_cat = step_result.failure_reason
             elif aggregated is not None and aggregated.overall_status is not None:
                 v_status = aggregated.overall_status
-                success = (v_status is VerificationStatus.PASSED)
+                success = v_status is VerificationStatus.PASSED
                 failure_cat = None
             else:
                 v_status = VerificationStatus.INCONCLUSIVE
@@ -1303,6 +1427,19 @@ class EndToEndOrchestrationService:
             retrieval_feedback_recorded=retrieval_feedback_recorded,
             warnings=tuple(warnings),
             issue_codes=tuple(issue_codes),
+            quality_run_id=(
+                self._last_quality_run.run_id
+                if (
+                    self._last_quality_run
+                    and not self._last_quality_run.run_id.startswith("unpersisted-")
+                )
+                else None
+            ),
+            quality_verdict_status=(
+                self._last_quality_run.verdict.status.value
+                if (self._last_quality_run and self._last_quality_run.verdict)
+                else None
+            ),
         )
 
 

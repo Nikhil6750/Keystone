@@ -111,9 +111,7 @@ class SkillContract:
                 st_enum = SkillStatus(self.status)
                 object.__setattr__(self, "status", st_enum)
             except ValueError as err:
-                raise SkillContractValidationError(
-                    f"Invalid skill status: {self.status}"
-                ) from err
+                raise SkillContractValidationError(f"Invalid skill status: {self.status}") from err
 
     def is_eligible_for_retrieval(self) -> bool:
         """Deprecated skills are not eligible for active retrieval."""

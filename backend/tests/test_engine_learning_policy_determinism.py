@@ -51,10 +51,9 @@ def test_shuffled_event_order_produces_identical_recommendation() -> None:
 
 
 def test_shuffled_candidate_agent_types_produces_identical_recommendation() -> None:
-    events = (
-        _events("agent_a", 8, prefix="a", verification_status=VerificationStatus.PASSED)
-        + _events("agent_b", 6, prefix="b", verification_status=VerificationStatus.PASSED)
-    )
+    events = _events(
+        "agent_a", 8, prefix="a", verification_status=VerificationStatus.PASSED
+    ) + _events("agent_b", 6, prefix="b", verification_status=VerificationStatus.PASSED)
     passports = rebuild_all_passports(events, updated_at=_NOW)
     policy = LearningPolicy()
     forward = policy.recommend(
@@ -67,10 +66,9 @@ def test_shuffled_candidate_agent_types_produces_identical_recommendation() -> N
 
 
 def test_repeated_recommendation_twenty_times_is_stable() -> None:
-    events = (
-        _events("agent_a", 9, prefix="a", verification_status=VerificationStatus.PASSED)
-        + _events("agent_b", 5, prefix="b", verification_status=VerificationStatus.FAILED)
-    )
+    events = _events(
+        "agent_a", 9, prefix="a", verification_status=VerificationStatus.PASSED
+    ) + _events("agent_b", 5, prefix="b", verification_status=VerificationStatus.FAILED)
     passports = rebuild_all_passports(events, updated_at=_NOW)
     policy = LearningPolicy()
     first = policy.recommend(passports, task_type="code_generation")

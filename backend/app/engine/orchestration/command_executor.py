@@ -80,8 +80,7 @@ class SubprocessCommandExecutor:
         executable = spec.argv[0]
         if executable not in ALLOWED_EXECUTABLES:
             raise UnapprovedCommandError(
-                f"executable {executable!r} is not in the approved evidence-collection "
-                "allow-list"
+                f"executable {executable!r} is not in the approved evidence-collection allow-list"
             )
         if spec.cwd is None or not Path(spec.cwd).is_dir():
             raise ValueError("CommandSpec.cwd must be an existing directory")

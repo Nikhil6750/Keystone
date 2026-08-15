@@ -81,8 +81,7 @@ def compute_confidence(decision: RoutingDecision) -> Confidence | None:
             value=0.0,
             basis=(
                 "No historical evidence differentiated the eligible candidates; "
-                "deterministic fallback ordering selected this candidate."
-                + _BASIS_SUFFIX
+                "deterministic fallback ordering selected this candidate." + _BASIS_SUFFIX
             ),
             sample_size=selected.sample_size,
             low_sample_size=True,

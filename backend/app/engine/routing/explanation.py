@@ -69,13 +69,10 @@ def explain_parallel_selection(
     )
 
 
-def explain_no_candidates(
-    all_scores: list[RoutingCandidateScore], request: RoutingRequest
-) -> str:
+def explain_no_candidates(all_scores: list[RoutingCandidateScore], request: RoutingRequest) -> str:
     if not all_scores:
         return (
-            "No candidate agents were provided to the router for "
-            f"task_type='{request.task_type}'."
+            f"No candidate agents were provided to the router for task_type='{request.task_type}'."
         )
     reasons = "; ".join(
         f"{score.agent_type} ({score.excluded_reason or 'not eligible'})" for score in all_scores

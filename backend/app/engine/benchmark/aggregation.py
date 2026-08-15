@@ -85,18 +85,12 @@ class BenchmarkAggregateMetrics:
 
 def _calculate_bucket_metrics(results: list[BenchmarkExecutionResult]) -> BenchmarkBucketMetrics:
     execution_count = len(results)
-    exec_success = sum(
-        1 for r in results if r.execution_status is AgentExecutionStatus.SUCCEEDED
-    )
-    exec_failure = sum(
-        1 for r in results if r.execution_status is AgentExecutionStatus.FAILED
-    )
+    exec_success = sum(1 for r in results if r.execution_status is AgentExecutionStatus.SUCCEEDED)
+    exec_failure = sum(1 for r in results if r.execution_status is AgentExecutionStatus.FAILED)
     cancellation_count = sum(
         1 for r in results if r.execution_status is AgentExecutionStatus.CANCELLED
     )
-    timeout_count = sum(
-        1 for r in results if r.execution_status is AgentExecutionStatus.TIMED_OUT
-    )
+    timeout_count = sum(1 for r in results if r.execution_status is AgentExecutionStatus.TIMED_OUT)
 
     verified_success = sum(
         1
@@ -114,9 +108,7 @@ def _calculate_bucket_metrics(results: list[BenchmarkExecutionResult]) -> Benchm
         1 for r in results if r.verification_status is VerificationStatus.REQUIRES_HUMAN_REVIEW
     )
 
-    sample_count = (
-        verified_success + verification_failure + ver_inconclusive + ver_human_review
-    )
+    sample_count = verified_success + verification_failure + ver_inconclusive + ver_human_review
     verified_success_rate = (verified_success / sample_count) if sample_count > 0 else None
 
     durations = sorted(r.duration_ms for r in results if r.duration_ms is not None)
@@ -140,18 +132,12 @@ def _aggregate_agent_results(
     agent_type: str, results: list[BenchmarkExecutionResult]
 ) -> BenchmarkAgentMetrics:
     execution_count = len(results)
-    exec_success = sum(
-        1 for r in results if r.execution_status is AgentExecutionStatus.SUCCEEDED
-    )
-    exec_failure = sum(
-        1 for r in results if r.execution_status is AgentExecutionStatus.FAILED
-    )
+    exec_success = sum(1 for r in results if r.execution_status is AgentExecutionStatus.SUCCEEDED)
+    exec_failure = sum(1 for r in results if r.execution_status is AgentExecutionStatus.FAILED)
     cancellation_count = sum(
         1 for r in results if r.execution_status is AgentExecutionStatus.CANCELLED
     )
-    timeout_count = sum(
-        1 for r in results if r.execution_status is AgentExecutionStatus.TIMED_OUT
-    )
+    timeout_count = sum(1 for r in results if r.execution_status is AgentExecutionStatus.TIMED_OUT)
 
     verified_success = sum(
         1
@@ -169,9 +155,7 @@ def _aggregate_agent_results(
         1 for r in results if r.verification_status is VerificationStatus.REQUIRES_HUMAN_REVIEW
     )
 
-    sample_count = (
-        verified_success + verification_failure + ver_inconclusive + ver_human_review
-    )
+    sample_count = verified_success + verification_failure + ver_inconclusive + ver_human_review
     verified_success_rate = (verified_success / sample_count) if sample_count > 0 else None
 
     durations = sorted(r.duration_ms for r in results if r.duration_ms is not None)

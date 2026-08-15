@@ -203,9 +203,7 @@ class InMemoryOrchestrationExecutionStore:
         async with self._lock:
             return self._records.get(execution_id)
 
-    async def update_status(
-        self, execution_id: str, status: OrchestrationExecutionStatus
-    ) -> None:
+    async def update_status(self, execution_id: str, status: OrchestrationExecutionStatus) -> None:
         async with self._lock:
             record = self._records.get(execution_id)
             if record is None:
@@ -259,8 +257,7 @@ class InMemoryOrchestrationExecutionStore:
                 self._subscribers[event.execution_id] = [q for q in live if q not in dead]
             for queue in dead:
                 logger.warning(
-                    "orchestration_event_subscriber_dropped_slow_consumer "
-                    "execution_id=%s",
+                    "orchestration_event_subscriber_dropped_slow_consumer execution_id=%s",
                     event.execution_id,
                 )
                 with contextlib.suppress(asyncio.QueueFull):

@@ -41,6 +41,41 @@ export class MessageBridge {
 
     if (actionType === 'GET_WORKSPACE_TREE' && webview) {
       this.sendWorkspaceTree(webview);
+    } else if ((actionType === 'SELECT_WORKSPACE_FOLDER' || actionType === 'selectWorkspaceFolder') && webview) {
+      void this.selectWorkspaceFolder(webview);
+    }
+  }
+
+  public static async selectWorkspaceFolder(webview: vscode.Webview): Promise<void> {
+    const folders = vscode.workspace.workspaceFolders;
+    let selectedPath: string | undefined;
+
+    if (folders && folders.length > 1) {
+      const picked = await vscode.window.showWorkspaceFolderPick({
+        placeHolder: 'Select a project folder for Keystone',
+      });
+      if (picked) {
+        selectedPath = picked.uri.fsPath;
+      }
+    } else {
+      const picked = await vscode.window.showOpenDialog({
+        canSelectFiles: false,
+        canSelectFolders: true,
+        canSelectMany: false,
+        openLabel: 'Select Project Folder',
+      });
+      if (picked && picked.length > 0) {
+        selectedPath = picked[0].fsPath;
+      }
+    }
+
+    if (selectedPath) {
+      webview.postMessage({
+        type: 'WORKSPACE_FOLDER_SELECTED',
+        payload: {
+          folderPath: selectedPath,
+        },
+      });
     }
   }
 

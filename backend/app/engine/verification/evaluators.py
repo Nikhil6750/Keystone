@@ -827,9 +827,7 @@ def evaluate_human_reviewed(
     if not isinstance(status_value, str):
         return EvaluatorOutcome(
             status=VerificationStatus.INCONCLUSIVE,
-            evidence=[
-                _evidence("human_reviewed", "observed human_review_status was not a string")
-            ],
+            evidence=[_evidence("human_reviewed", "observed human_review_status was not a string")],
         )
 
     normalized = status_value.strip().lower()

@@ -210,9 +210,7 @@ def test_cancellation_does_not_affect_execution_reliability_component() -> None:
 
 
 def test_cancellations_do_not_worsen_recommendation_outcome() -> None:
-    base_events = _events(
-        "agent_a", 8, prefix="a", verification_status=VerificationStatus.PASSED
-    )
+    base_events = _events("agent_a", 8, prefix="a", verification_status=VerificationStatus.PASSED)
     cancelled_events = _events(
         "agent_a",
         4,

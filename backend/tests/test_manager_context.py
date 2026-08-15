@@ -22,9 +22,7 @@ def test_builds_minimal_request() -> None:
 
 def test_truncates_oversized_knowledge_context_deterministically() -> None:
     items = [_knowledge(f"doc-{i}", score=float(i)) for i in range(30)]
-    request = build_manager_request(
-        request_id="req-1", goal="goal", knowledge_context=items
-    )
+    request = build_manager_request(request_id="req-1", goal="goal", knowledge_context=items)
     assert len(request.knowledge_context) == MAX_KNOWLEDGE_CONTEXT_ITEMS
     # Highest score first (doc-29 has score 29.0, the maximum).
     assert request.knowledge_context[0].document_id == "doc-29"

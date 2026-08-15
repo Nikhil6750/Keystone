@@ -91,6 +91,7 @@ EXCLUSION_REASON_PHRASES: dict[str, str] = {
     COST_ABOVE_THRESHOLD: "exceeded the configured cost limit",
 }
 
+
 def safe_construct[ModelT: BaseModel](model_cls: type[ModelT], **kwargs: Any) -> ModelT:
     """Construct a contract model, translating any `pydantic.ValidationError`
     into the engine's own typed `ExplainabilityDataError` — callers of the
@@ -295,9 +296,7 @@ def validate_routing_decision(decision: RoutingDecision) -> None:
     # `RoutingDecision`'s own model validators — nothing to repeat here.
 
     if decision.selected_agent_type is not None and decision.candidates:
-        matches = [
-            c for c in decision.candidates if c.agent_type == decision.selected_agent_type
-        ]
+        matches = [c for c in decision.candidates if c.agent_type == decision.selected_agent_type]
         if not matches:
             raise ExplainabilityDataError(
                 f"selected_agent_type '{decision.selected_agent_type}' is not among "

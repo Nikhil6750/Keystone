@@ -57,9 +57,7 @@ def _walk_credentials(node: Any) -> None:
         for key, nested in node.items():
             normalized = _normalize_key(key)
             if normalized in _RESERVED_CREDENTIAL_KEYS:
-                raise ValueError(
-                    f"dict key '{key}' is prohibited (credential-shaped)"
-                )
+                raise ValueError(f"dict key '{key}' is prohibited (credential-shaped)")
             _walk_credentials(nested)
     elif isinstance(node, list | tuple):
         for item in node:
@@ -133,9 +131,7 @@ class BenchmarkCase:
             reject_reasoning_shaped_keys(self.metadata)
             reject_credential_shaped_keys(self.metadata)
         except ValueError as exc:
-            raise MalformedBenchmarkCaseError(
-                f"metadata contains prohibited key: {exc}"
-            ) from exc
+            raise MalformedBenchmarkCaseError(f"metadata contains prohibited key: {exc}") from exc
 
 
 @dataclass(frozen=True)

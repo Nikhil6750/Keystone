@@ -59,7 +59,15 @@ class OrchestrationEventType(StrEnum):
     MANAGER_COMPLETED = "manager.completed"
     MANAGER_FALLBACK = "manager.fallback"
 
+    GOAL_RECEIVED = "goal.received"
+    PLANNING_STARTED = "planning.started"
     PLANNING_COMPLETED = "planning.completed"
+
+    TEAM_ASSEMBLED = "team.assembled"
+
+    TASK_READY = "task.ready"
+    TASK_WAITING = "task.waiting"
+    AGENT_SELECTED = "agent.selected"
 
     ROUTING_STARTED = "routing.started"
     ROUTING_TASK_SELECTED = "routing.task_selected"
@@ -71,6 +79,10 @@ class OrchestrationEventType(StrEnum):
     STEP_STARTED = "step.started"
     STEP_COMPLETED = "step.completed"
     STEP_FAILED = "step.failed"
+
+    FILE_ACTIVITY = "file.activity"
+    EXECUTION_HEARTBEAT = "execution.heartbeat"
+    EXECUTION_PROGRESS = "execution.progress"
 
     VERIFICATION_STARTED = "verification.started"
     VERIFICATION_COMPLETED = "verification.completed"
@@ -109,6 +121,12 @@ class OrchestrationEvent:
     verification_status: str | None = None
     safe_issue_codes: tuple[str, ...] = field(default_factory=tuple)
     message: str | None = None
+    elapsed_seconds: float | None = None
+    relative_path: str | None = None
+    activity: str | None = None
+    previous_agent_id: str | None = None
+    new_agent_id: str | None = None
+    reason_category: str | None = None
 
 
 class OrchestrationEventSink(Protocol):

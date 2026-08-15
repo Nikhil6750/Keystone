@@ -57,9 +57,7 @@ class AdaptiveRetrievalPolicy:
                 "must be True, or no evidence source could ever be used"
             )
 
-    def production_feedback(
-        self, feedback: Iterable[RetrievalFeedback]
-    ) -> list[RetrievalFeedback]:
+    def production_feedback(self, feedback: Iterable[RetrievalFeedback]) -> list[RetrievalFeedback]:
         """Only `EvidenceSource.PRODUCTION` feedback, or `[]` if
         `allow_production_evidence` is `False`. Deliberately returns a
         *separate* list from `benchmark_feedback` rather than one combined
@@ -75,9 +73,7 @@ class AdaptiveRetrievalPolicy:
             return []
         return [item for item in feedback if item.evidence_source is EvidenceSource.PRODUCTION]
 
-    def benchmark_feedback(
-        self, feedback: Iterable[RetrievalFeedback]
-    ) -> list[RetrievalFeedback]:
+    def benchmark_feedback(self, feedback: Iterable[RetrievalFeedback]) -> list[RetrievalFeedback]:
         """Only `EvidenceSource.BENCHMARK` feedback, or `[]` if
         `allow_benchmark_evidence` is `False` (the default) -- see
         `production_feedback`'s docstring for why this is a separate method

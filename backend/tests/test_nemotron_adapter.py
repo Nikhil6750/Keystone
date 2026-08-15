@@ -205,9 +205,7 @@ async def test_missing_content_maps_to_invalid_response() -> None:
 
 async def test_unexpected_tool_calls_maps_to_invalid_response() -> None:
     payload = {
-        "choices": [
-            {"message": {"content": "irrelevant", "tool_calls": [{"id": "call_1"}]}}
-        ]
+        "choices": [{"message": {"content": "irrelevant", "tool_calls": [{"id": "call_1"}]}}]
     }
     response = TransportResponse(status_code=200, body=json.dumps(payload).encode("utf-8"))
     fake = FakeNemotronTransport(response=response)

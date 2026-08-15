@@ -111,9 +111,10 @@ class Settings(BaseSettings):
 
     # --- Codex ---
     # Live-verified against Codex CLI 0.146.0. Always uses non-interactive JSONL
-    # execution, an ephemeral session, and a read-only sandbox. The prompt is sent
-    # via stdin; the isolated process working directory is intentionally not a Git
-    # repository, so the non-interactive command explicitly skips that check.
+    # execution, an ephemeral session, and a workspace-write sandbox so unattended
+    # coding steps can edit their validated workspace. The prompt is sent via stdin;
+    # a fresh workspace need not be a Git repository, so the non-interactive command
+    # explicitly skips that check.
     codex_enabled: bool = Field(default=False, validation_alias="KEYSTONE_CODEX_ENABLED")
     codex_executable: str = Field(default="codex", validation_alias="KEYSTONE_CODEX_EXECUTABLE")
     codex_arguments: list[str] = Field(
@@ -152,9 +153,9 @@ class Settings(BaseSettings):
     # --- Google Antigravity ---
     # A separate, Gemini-*powered* local coding agent with its own native executable
     # (`agy`) — distinct from the standalone Gemini CLI above. Live verification
-    # against 1.1.10 confirmed `--print` is a value flag, so the prompt must
-    # immediately follow it as a discrete argument. Sandbox mode and slash-command
-    # expansion disabling keep this headless invocation constrained.
+    # against 1.1.10 confirmed that headless execution is `agy -p <prompt>`.
+    # The prompt is therefore passed as one discrete argv value, never through a
+    # shell or stdin.
     antigravity_enabled: bool = Field(
         default=False, validation_alias="KEYSTONE_ANTIGRAVITY_ENABLED"
     )
@@ -162,21 +163,14 @@ class Settings(BaseSettings):
         default="agy", validation_alias="KEYSTONE_ANTIGRAVITY_EXECUTABLE"
     )
     antigravity_arguments: list[str] = Field(
-        default_factory=lambda: [
-            "--output-format",
-            "json",
-            "--sandbox",
-            "--disable-slash-commands",
-            "--print",
-            "{prompt}",
-        ],
+        default_factory=lambda: ["-p", "{prompt}"],
         validation_alias="KEYSTONE_ANTIGRAVITY_ARGUMENTS",
     )
     antigravity_input_mode: str = Field(
         default="prompt_argument", validation_alias="KEYSTONE_ANTIGRAVITY_INPUT_MODE"
     )
     antigravity_output_mode: str = Field(
-        default="json", validation_alias="KEYSTONE_ANTIGRAVITY_OUTPUT_MODE"
+        default="text", validation_alias="KEYSTONE_ANTIGRAVITY_OUTPUT_MODE"
     )
     antigravity_timeout_seconds: float | None = Field(
         default=None, validation_alias="KEYSTONE_ANTIGRAVITY_TIMEOUT_SECONDS"

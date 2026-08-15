@@ -84,8 +84,12 @@ def test_aggregation_verified_success_only_counts_passed() -> None:
 
 
 def test_aggregation_execution_success_separate_from_verification_failure() -> None:
-    results = [_result(execution_status=AgentExecutionStatus.SUCCEEDED,
-                        verification_status=VerificationStatus.FAILED)]
+    results = [
+        _result(
+            execution_status=AgentExecutionStatus.SUCCEEDED,
+            verification_status=VerificationStatus.FAILED,
+        )
+    ]
     passports = _passports_for(results)
     p = passports["a1"]
     assert p.overall_metrics.success_count == 1  # execution succeeded
@@ -95,11 +99,17 @@ def test_aggregation_execution_success_separate_from_verification_failure() -> N
 
 def test_aggregation_cancellation_semantics_match_stage5() -> None:
     results = [
-        _result(repetition=1, execution_status=AgentExecutionStatus.CANCELLED,
-                verification_status=VerificationStatus.INCONCLUSIVE,
-                failure_category=FailureCategory.CANCELLED),
-        _result(repetition=2, execution_status=AgentExecutionStatus.SUCCEEDED,
-                verification_status=VerificationStatus.PASSED),
+        _result(
+            repetition=1,
+            execution_status=AgentExecutionStatus.CANCELLED,
+            verification_status=VerificationStatus.INCONCLUSIVE,
+            failure_category=FailureCategory.CANCELLED,
+        ),
+        _result(
+            repetition=2,
+            execution_status=AgentExecutionStatus.SUCCEEDED,
+            verification_status=VerificationStatus.PASSED,
+        ),
     ]
     passports = _passports_for(results)
     m = passports["a1"].overall_metrics
@@ -112,9 +122,11 @@ def test_aggregation_cancellation_semantics_match_stage5() -> None:
 
 def test_aggregation_timeout_counts_as_execution_failure() -> None:
     results = [
-        _result(execution_status=AgentExecutionStatus.TIMED_OUT,
-                verification_status=VerificationStatus.INCONCLUSIVE,
-                failure_category=FailureCategory.TIMEOUT),
+        _result(
+            execution_status=AgentExecutionStatus.TIMED_OUT,
+            verification_status=VerificationStatus.INCONCLUSIVE,
+            failure_category=FailureCategory.TIMEOUT,
+        ),
     ]
     passports = _passports_for(results)
     m = passports["a1"].overall_metrics
@@ -133,9 +145,7 @@ def test_aggregation_no_duplicated_formula_reused_from_stage5() -> None:
     results = [_result(repetition=i, duration_ms=float(100 * i)) for i in range(1, 6)]
     records = convert_benchmark_results_to_learning_records(results, campaign_id=_CAMPAIGN_ID)
     via_adapter = build_benchmark_learning_passports(records, updated_at=_CREATED_AT)
-    via_direct_stage5 = rebuild_all_passports(
-        [r.event for r in records], updated_at=_CREATED_AT
-    )
+    via_direct_stage5 = rebuild_all_passports([r.event for r in records], updated_at=_CREATED_AT)
     assert via_adapter["a1"] == via_direct_stage5["a1"]
 
 

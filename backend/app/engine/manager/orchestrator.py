@@ -176,8 +176,7 @@ class ManagerOrchestrator:
             if not result.accepted:
                 validation_issue_codes = [issue.code for issue in result.issues]
                 warnings.append(
-                    "manager proposal rejected by deterministic validation; "
-                    "using unmodified plan"
+                    "manager proposal rejected by deterministic validation; using unmodified plan"
                 )
             else:
                 manager_identifier = response.provider_identifier

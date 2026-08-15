@@ -153,8 +153,7 @@ class RetrievalFeedback:
         else:
             if self.campaign_id is not None:
                 raise MalformedRetrievalFeedbackError(
-                    "campaign_id must be None when evidence_source is "
-                    "EvidenceSource.PRODUCTION"
+                    "campaign_id must be None when evidence_source is EvidenceSource.PRODUCTION"
                 )
             if self.execution_id is None or not self.execution_id.strip():
                 raise MalformedRetrievalFeedbackError(
@@ -167,8 +166,12 @@ class RetrievalFeedback:
             self,
             "feedback_id",
             _feedback_id(
-                self.retrieval_id, self.verification_status, self.execution_status,
-                self.evidence_source, self.campaign_id, self.execution_id,
+                self.retrieval_id,
+                self.verification_status,
+                self.execution_status,
+                self.evidence_source,
+                self.campaign_id,
+                self.execution_id,
             ),
         )
 

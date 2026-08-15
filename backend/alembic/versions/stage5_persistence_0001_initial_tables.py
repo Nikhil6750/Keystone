@@ -61,9 +61,7 @@ def upgrade() -> None:
     op.create_index(
         "ix_learning_events_agent_type", "learning_events", ["agent_type"], unique=False
     )
-    op.create_index(
-        "ix_learning_events_task_type", "learning_events", ["task_type"], unique=False
-    )
+    op.create_index("ix_learning_events_task_type", "learning_events", ["task_type"], unique=False)
     op.create_index(
         "ix_learning_events_repository_id", "learning_events", ["repository_id"], unique=False
     )
@@ -108,9 +106,7 @@ def upgrade() -> None:
         sa.Column("known_cost_sample_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
     )
-    op.create_index(
-        "ix_agent_passports_agent_type", "agent_passports", ["agent_type"], unique=True
-    )
+    op.create_index("ix_agent_passports_agent_type", "agent_passports", ["agent_type"], unique=True)
 
     op.create_table(
         "agent_passport_buckets",
@@ -122,9 +118,7 @@ def upgrade() -> None:
         sa.Column("success_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("failure_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("verified_success_count", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column(
-            "verification_failure_count", sa.Integer(), nullable=False, server_default="0"
-        ),
+        sa.Column("verification_failure_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column(
             "verification_inconclusive_count", sa.Integer(), nullable=False, server_default="0"
         ),

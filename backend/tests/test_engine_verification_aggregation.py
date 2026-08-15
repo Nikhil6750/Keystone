@@ -33,9 +33,7 @@ def test_all_required_checks_pass() -> None:
 def test_one_required_failure_prevents_passed() -> None:
     checks = [
         CheckOutcome(result=_result(VerificationStatus.PASSED), required=True),
-        CheckOutcome(
-            result=_result(VerificationStatus.FAILED, failure_reason="x"), required=True
-        ),
+        CheckOutcome(result=_result(VerificationStatus.FAILED, failure_reason="x"), required=True),
     ]
     aggregated = aggregate(checks, created_at=_NOW)
     assert aggregated.overall_status is VerificationStatus.FAILED

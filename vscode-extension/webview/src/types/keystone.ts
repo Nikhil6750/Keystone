@@ -160,7 +160,13 @@ export type OrchestrationEventType =
   | 'manager.started'
   | 'manager.completed'
   | 'manager.fallback'
+  | 'goal.received'
+  | 'planning.started'
   | 'planning.completed'
+  | 'team.assembled'
+  | 'task.ready'
+  | 'task.waiting'
+  | 'agent.selected'
   | 'routing.started'
   | 'routing.task_selected'
   | 'routing.failed'
@@ -169,6 +175,9 @@ export type OrchestrationEventType =
   | 'step.started'
   | 'step.completed'
   | 'step.failed'
+  | 'file.activity'
+  | 'execution.heartbeat'
+  | 'execution.progress'
   | 'verification.started'
   | 'verification.completed'
   | 'recovery.started'
@@ -197,6 +206,12 @@ export interface OrchestrationEvent {
   verification_status: string | null;
   safe_issue_codes: string[];
   message: string | null;
+  elapsed_seconds?: number | null;
+  relative_path?: string | null;
+  activity?: string | null;
+  previous_agent_id?: string | null;
+  new_agent_id?: string | null;
+  reason_category?: string | null;
 }
 
 export const TERMINAL_EVENT_TYPES: ReadonlySet<OrchestrationEventType> = new Set([

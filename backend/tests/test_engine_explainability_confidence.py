@@ -50,9 +50,7 @@ def test_confidence_reflects_low_sample_size() -> None:
         overall={"claude_code": AgentPassportMetricBucket(execution_count=2, success_count=2)}
     )
     router = Router(evidence=evidence)
-    decision = router.route(
-        _request(), [_candidate("claude_code"), _candidate("codex")]
-    )
+    decision = router.route(_request(), [_candidate("claude_code"), _candidate("codex")])
     confidence = compute_confidence(decision)
     assert confidence is not None
     assert confidence.low_sample_size is True

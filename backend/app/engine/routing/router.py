@@ -74,8 +74,7 @@ class DuplicateRoutingCandidateError(RoutingError):
     def __init__(self, duplicate_agent_types: list[str]) -> None:
         self.duplicate_agent_types = duplicate_agent_types
         super().__init__(
-            "duplicate candidate agent_type(s) in routing pool: "
-            + ", ".join(duplicate_agent_types)
+            "duplicate candidate agent_type(s) in routing pool: " + ", ".join(duplicate_agent_types)
         )
 
 
@@ -102,8 +101,7 @@ class UnsafeManualOverrideError(RoutingError):
         self.agent_type = agent_type
         self.reason = reason
         super().__init__(
-            f"manual override agent type '{agent_type}' failed a hard safety/policy "
-            f"check: {reason}"
+            f"manual override agent type '{agent_type}' failed a hard safety/policy check: {reason}"
         )
 
 
@@ -182,8 +180,7 @@ class Router:
 
         pool = self._restrict_pool(request, candidates)
         scores = [
-            score_candidate(candidate, request, self._evidence, self._weights)
-            for candidate in pool
+            score_candidate(candidate, request, self._evidence, self._weights) for candidate in pool
         ]
         eligible = [score for score in scores if score.eligible]
 

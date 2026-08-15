@@ -224,9 +224,7 @@ def test_identical_duplicate_replay_ignores_created_at_drift(db_session: Session
     repo.record_event(db_session, e1)
     db_session.commit()
 
-    e1_replay = _create_sample_event(
-        event_id="evt-ts", created_at=datetime(2026, 6, 6, tzinfo=UTC)
-    )
+    e1_replay = _create_sample_event(event_id="evt-ts", created_at=datetime(2026, 6, 6, tzinfo=UTC))
     repo.record_event(db_session, e1_replay)  # must not raise
     db_session.commit()
 
@@ -430,8 +428,7 @@ def test_requires_human_review_verification_status_round_trips(db_session: Sessi
     rec = repo.get_event_by_id(db_session, "evt-human-review")
     assert rec is not None
     assert (
-        repo.record_to_domain(rec).verification_status
-        is VerificationStatus.REQUIRES_HUMAN_REVIEW
+        repo.record_to_domain(rec).verification_status is VerificationStatus.REQUIRES_HUMAN_REVIEW
     )
 
 

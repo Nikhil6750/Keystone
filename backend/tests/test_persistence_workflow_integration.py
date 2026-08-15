@@ -31,9 +31,14 @@ def _build_engine(db_session: Session, executor_registry, **overrides):
     return WorkflowEngine(db_session, executor_registry, **kwargs)
 
 
-def _create_workflow(db_session: Session, *, task_type: str | None = "coding",
-                      repository_id: str | None = "acme/api", agent_type: str = "claude_code",
-                      max_attempts: int = 3):
+def _create_workflow(
+    db_session: Session,
+    *,
+    task_type: str | None = "coding",
+    repository_id: str | None = "acme/api",
+    agent_type: str = "claude_code",
+    max_attempts: int = 3,
+):
     step_input: dict = {}
     if task_type is not None:
         step_input["task_type"] = task_type

@@ -114,8 +114,12 @@ def test_adaptive_retrieval_never_constructs_a_passport_evidence_provider_itself
     import app.engine.adaptive_retrieval.scoring as scoring_module
 
     for module in (
-        feedback_module, models_module, passport_module, policy_module,
-        reranking_module, scoring_module,
+        feedback_module,
+        models_module,
+        passport_module,
+        policy_module,
+        reranking_module,
+        scoring_module,
     ):
         source_file = module.__file__
         assert source_file is not None

@@ -89,7 +89,9 @@ def build_link_graph(notes: tuple[MarkdownNote, ...]) -> VaultLinkGraph:
 
     backlink_map: dict[str, set[str]] = defaultdict(set)
     for resolved_link in resolved_sorted:
-        backlink_map[resolved_link.target_relative_path].add(resolved_link.link.source_relative_path)
+        backlink_map[resolved_link.target_relative_path].add(
+            resolved_link.link.source_relative_path
+        )
 
     backlinks = tuple(
         KnowledgeBacklink(target_relative_path=target, source_relative_paths=tuple(sorted(sources)))

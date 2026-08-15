@@ -11,7 +11,6 @@ from typing import Any
 
 from app.contracts.planning import PlanningRequest, TaskSpec, WorkflowPlan
 from app.engine.planning.classifier import TaskClassifier
-from app.engine.planning.templates import get_templates_for_plan
 from app.engine.planning.validation import validate_task_graph
 
 
@@ -28,27 +27,29 @@ class Planner:
         same ordering, same capabilities, same dependencies, same expected outcomes).
         `created_at` records the operational creation time in UTC.
         """
-        # 1. Deterministic Goal Classification & Complexity Assessment
+        # 1. Deterministic Goal Classification & Task Graph Compilation V2
         classification = self.classifier.classify(request.goal)
 
-        # 2. Select Template for (Category, ComplexityTier)
-        templates = get_templates_for_plan(
-            classification.category, classification.complexity_tier
+        from app.engine.planning.compiler import TaskGraphCompilerV2
+
+        compiler = TaskGraphCompilerV2()
+        meta = request.metadata or {}
+        compiler_nodes = compiler.compile(
+            goal=request.goal,
+            workspace_context=meta.get("workspace_context"),
+            project_metadata=meta.get("project_metadata"),
         )
 
-        # 3. Knowledge Context Privacy (Opaque metadata only -- no raw snippets, contents, or paths)
+        # 2. Knowledge Context Privacy (Opaque metadata only -- no raw snippets, contents, or paths)
         knowledge_titles: list[str] = []
         for item in request.knowledge_context:
             if item.title and item.title.strip():
                 knowledge_titles.append(item.title.strip())
 
-        # 4. Generate Provider-Neutral TaskSpecs
-        tasks: list[TaskSpec] = []
-        for tmpl in templates:
-            task_spec = tmpl.build_task_spec(request.goal)
-            tasks.append(task_spec)
+        # 3. Generate Provider-Neutral TaskSpecs from Compiler Nodes
+        tasks: list[TaskSpec] = [node.to_task_spec() for node in compiler_nodes]
 
-        # 5. Validate Task Graph (Delegated to WorkflowPlan contract source of truth)
+        # 4. Validate Task Graph (Delegated to WorkflowPlan contract source of truth)
         validate_task_graph(tasks)
 
         # 6. Safe Metadata Provenance Assembly (no sensitive paths or content)
@@ -72,9 +73,7 @@ class Planner:
 
         # 7. Compute Deterministic plan_id and Operational Timestamp
         repo_name = (
-            request.repository.name
-            if request.repository and request.repository.name
-            else ""
+            request.repository.name if request.repository and request.repository.name else ""
         )
         plan_id = self._compute_deterministic_plan_id(
             goal=classification.normalized_goal,
@@ -106,9 +105,7 @@ class Planner:
         return f"plan_{digest}"
 
 
-def plan_workflow(
-    request: PlanningRequest, planner: Planner | None = None
-) -> WorkflowPlan:
+def plan_workflow(request: PlanningRequest, planner: Planner | None = None) -> WorkflowPlan:
     """Public helper to decompose a PlanningRequest into a WorkflowPlan."""
     p = planner or Planner()
     return p.plan(request)

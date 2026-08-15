@@ -145,8 +145,7 @@ def build_manager_response_contract() -> str:
         "object (additional/unknown properties are rejected). Do not rename "
         "any field.",
         "",
-        "Each task_proposals[] item is a ManagerTaskProposal object with "
-        "exactly these fields:",
+        "Each task_proposals[] item is a ManagerTaskProposal object with exactly these fields:",
         *_describe_object_fields(task_proposal_schema, defs, _TASK_PROPOSAL_BOUND_HINTS),
         "",
         "No fields beyond exactly this list are permitted on a "
@@ -160,8 +159,7 @@ def build_manager_response_contract() -> str:
         "value present in this same response; task_proposals keys must be "
         "unique within the response and must not form a dependency cycle.",
         "",
-        "Each evidence_summary[] item is a ManagerEvidenceRef object with "
-        "exactly these fields:",
+        "Each evidence_summary[] item is a ManagerEvidenceRef object with exactly these fields:",
         *_describe_object_fields(evidence_ref_schema, defs, {}),
         "",
         "No fields beyond exactly this list are permitted on a "

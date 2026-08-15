@@ -81,8 +81,7 @@ def _exclusion_counterfactual(score: RoutingCandidateScore) -> CounterfactualCon
         description = f"'{agent}' could become eligible once the runtime becomes available again."
     elif code == EXPLICITLY_EXCLUDED:
         description = (
-            f"'{agent}' could become eligible if the explicit exclusion policy for it "
-            "were removed."
+            f"'{agent}' could become eligible if the explicit exclusion policy for it were removed."
         )
     else:
         return None

@@ -123,9 +123,7 @@ def test_rejects_recovery_recommendation_without_recovery_context() -> None:
     response = ManagerResponse(request_id="req-1", recovery_recommendation=RecoveryAction.REROUTE)
     result = validator.validate(response, request)
     assert not result.accepted
-    assert any(
-        issue.code == RECOVERY_RECOMMENDATION_WITHOUT_CONTEXT for issue in result.issues
-    )
+    assert any(issue.code == RECOVERY_RECOMMENDATION_WITHOUT_CONTEXT for issue in result.issues)
 
 
 def test_accepts_recovery_recommendation_with_recovery_context() -> None:

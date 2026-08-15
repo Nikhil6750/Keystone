@@ -224,9 +224,7 @@ class ManagerRequest(BaseModel):
 
     @field_validator("available_capabilities")
     @classmethod
-    def _available_capabilities_bounded(
-        cls, value: list[AgentCapability]
-    ) -> list[AgentCapability]:
+    def _available_capabilities_bounded(cls, value: list[AgentCapability]) -> list[AgentCapability]:
         if len(value) > MAX_AVAILABLE_CAPABILITIES:
             raise ValueError(
                 "available_capabilities must not contain more than "
@@ -348,9 +346,7 @@ class ManagerTaskProposal(BaseModel):
 
     @field_validator("required_capabilities")
     @classmethod
-    def _required_capabilities_bounded(
-        cls, value: list[AgentCapability]
-    ) -> list[AgentCapability]:
+    def _required_capabilities_bounded(cls, value: list[AgentCapability]) -> list[AgentCapability]:
         if len(value) > MAX_CAPABILITIES_PER_TASK:
             raise ValueError(
                 "required_capabilities must not contain more than "
@@ -474,9 +470,7 @@ class ManagerResponse(BaseModel):
 
     @field_validator("task_proposals")
     @classmethod
-    def _task_proposals_bounded(
-        cls, value: list[ManagerTaskProposal]
-    ) -> list[ManagerTaskProposal]:
+    def _task_proposals_bounded(cls, value: list[ManagerTaskProposal]) -> list[ManagerTaskProposal]:
         if len(value) > MAX_TASK_PROPOSALS:
             raise ValueError(
                 f"task_proposals must not contain more than {MAX_TASK_PROPOSALS} entries"
@@ -515,9 +509,7 @@ class ManagerResponse(BaseModel):
 
     @field_validator("evidence_summary")
     @classmethod
-    def _evidence_summary_bounded(
-        cls, value: list[ManagerEvidenceRef]
-    ) -> list[ManagerEvidenceRef]:
+    def _evidence_summary_bounded(cls, value: list[ManagerEvidenceRef]) -> list[ManagerEvidenceRef]:
         if len(value) > MAX_EVIDENCE_ITEMS:
             raise ValueError(
                 f"evidence_summary must not contain more than {MAX_EVIDENCE_ITEMS} items"

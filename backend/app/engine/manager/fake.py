@@ -37,9 +37,7 @@ class FakeManagerModel:
             raise self.exception
         if self.response is not None:
             return self.response
-        raise ManagerUnavailableError(
-            "FakeManagerModel has no configured response or exception"
-        )
+        raise ManagerUnavailableError("FakeManagerModel has no configured response or exception")
 
 
 __all__ = ["FakeManagerModel"]

@@ -50,9 +50,7 @@ def _retrying_runner(inner: ScriptedInnerRunner) -> RetryingStepRunner:
         retry_policy=RetryPolicy(
             base_delay_seconds=0.001, max_delay_seconds=0.005, jitter_ratio=0.0
         ),
-        circuit_breakers=CircuitBreakerRegistry(
-            failure_threshold=5, recovery_timeout_seconds=30.0
-        ),
+        circuit_breakers=CircuitBreakerRegistry(failure_threshold=5, recovery_timeout_seconds=30.0),
     )
 
 

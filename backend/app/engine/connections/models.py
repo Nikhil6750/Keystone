@@ -96,9 +96,7 @@ def validate_metadata(meta: dict[str, Any] | None) -> dict[str, str]:
 
         key_lower = key_clean.lower()
         if key_lower in RESERVED_METADATA_KEYS:
-            raise ValueError(
-                f"metadata key '{key_clean}' is a reserved internal bridge key"
-            )
+            raise ValueError(f"metadata key '{key_clean}' is a reserved internal bridge key")
 
         normalized_key = (
             key_lower.replace("-", "").replace("_", "").replace(" ", "").replace(":", "")
@@ -116,9 +114,7 @@ def validate_metadata(meta: dict[str, Any] | None) -> dict[str, str]:
                 "passwd",
             )
         ):
-            raise ValueError(
-                f"metadata key '{key_clean}' is secret-bearing and strictly forbidden"
-            )
+            raise ValueError(f"metadata key '{key_clean}' is secret-bearing and strictly forbidden")
 
         validated[key_clean] = val
 
@@ -244,9 +240,7 @@ class AgentConnectionUpdate(BaseModel):
 
     @field_validator("metadata")
     @classmethod
-    def _validate_metadata_field(
-        cls, meta: dict[str, Any] | None
-    ) -> dict[str, str] | None:
+    def _validate_metadata_field(cls, meta: dict[str, Any] | None) -> dict[str, str] | None:
         if meta is not None:
             return validate_metadata(meta)
         return None
@@ -377,9 +371,7 @@ class ConnectedAgentUpdate(BaseModel):
 
     @field_validator("metadata")
     @classmethod
-    def _validate_metadata_field(
-        cls, meta: dict[str, Any] | None
-    ) -> dict[str, str] | None:
+    def _validate_metadata_field(cls, meta: dict[str, Any] | None) -> dict[str, str] | None:
         if meta is not None:
             return validate_metadata(meta)
         return None

@@ -172,9 +172,7 @@ def rebuild_retrieval_passport(
         repository_task_type_buckets={
             key: _bucket(items, chunk_id=chunk_id) for key, items in by_repository_task.items()
         },
-        agent_buckets={
-            key: _bucket(items, chunk_id=chunk_id) for key, items in by_agent.items()
-        },
+        agent_buckets={key: _bucket(items, chunk_id=chunk_id) for key, items in by_agent.items()},
     )
 
 

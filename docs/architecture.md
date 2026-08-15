@@ -117,6 +117,50 @@ synchronously and sequentially in position order, given a database session and a
   actually wait), transitions back to `RUNNING`, and creates the next attempt. If the
   failure itself opens the circuit, no further retry is attempted for that step
   regardless of attempts remaining.
+
+`WorkflowEngine.resume_workflow(workflow_id)` (Stage 3) recovers a workflow left
+`RUNNING` by a process interruption — a pure extension of the class above, reusing
+`_execute_step` via a shared `_run_to_completion` helper (extracted from
+`execute_workflow`'s loop with no behavior change; the full existing test suite passed
+unchanged before and after the extraction) rather than a second execution path:
+
+- Requires `RUNNING` status; raises the existing `InvalidWorkflowStateError` otherwise
+  and `WorkflowNotFoundError` if the workflow doesn't exist — no new API-facing error
+  shapes.
+- Claims the workflow atomically via `workflow_service.claim_workflow_for_resume`, a
+  single conditional `UPDATE ... WHERE version = :expected_version` (using the
+  `Workflow.version` column that already existed for this purpose but wasn't yet used
+  as an optimistic-concurrency guard) — a second concurrent resume attempt loses the
+  race and gets `WorkflowResumeConflictError` rather than double-executing the workflow.
+- Already-`SUCCEEDED` steps are never re-run: their persisted `output_payload` seeds
+  the resumed `ExecutionContext` exactly as if they had just completed.
+- The one step still `RUNNING` at interruption time (if any) has its dangling
+  `StepAttempt` explicitly marked `FAILED` with `error_type="EXECUTION_INTERRUPTED"`
+  (never assumed to have silently succeeded), is transitioned `RUNNING → RETRYING`, and
+  is then re-attempted with a fresh `StepAttempt` — consuming one unit of its
+  `max_attempts` budget, same as any other retry.
+- Emits a new `AuditEventType.WORKFLOW_RESUMED` event (additive to the enum, no DB
+  migration — the column is un-constrained `VARCHAR`) before continuing; the resumed
+  run's events extend the same hash-linked chain, verified by
+  `tests/test_engine_resume.py::test_resume_preserves_audit_chain_integrity`.
+
+### `engine/workflow/` — Stage 3 additions (retry and idempotency for the graph scheduler)
+Per the Stage 2 scheduler's own docstring promise, Stage 3 adds retry/backoff/circuit-
+breaker behavior and duplicate-execution protection as decorators around the additive
+`GraphScheduler` from Stage 2, without changing the scheduler itself:
+
+- `retry_runner.py` — `RetryingStepRunner` wraps any `StepRunner`, reusing
+  `RetryPolicy.compute_delay()` (its math, not its blocking `time.sleep`-based
+  `Sleeper`, replaced here by `asyncio.sleep`) and the existing per-agent-type
+  `CircuitBreakerRegistry` — the same failure-classification shape as the live engine's
+  retry loop above, driven by the Stage 1 `FailureCategory` taxonomy via
+  `classify_legacy_error_type`.
+- `idempotency.py` — `IdempotentExecutionGuard[T]` ensures at most one execution runs
+  per idempotency key at a time; a duplicate call for an in-flight key awaits and
+  shares that call's result (success or failure) instead of starting a second
+  execution, and a duplicate call for an already-completed key returns the cached
+  result immediately. In-memory only, per-process — the same persistence-deferral
+  posture as the rest of this additive package.
 - On any other step failure — non-retryable, retries exhausted, or a missing executor
   (`ExecutorNotRegisteredError`) — persists the step/attempt/workflow as `FAILED` with a
   safe error message, and stops; later steps are left `PENDING`. A missing executor or
@@ -215,6 +259,66 @@ effects (e.g. a partially-refunded charge) is indistinguishable from a fully suc
 one at this layer. Provider-backed compensation handlers (calling a real external
 system to undo a step) are out of scope for this prototype; only the demo handler and
 the test-only fakes exist today.
+
+`CompensationService.resume_compensation(workflow_id)` recovers a workflow left
+`COMPENSATING` by a process interruption — the same gap `WorkflowEngine.resume_workflow`
+closes for execution, closed here for compensation. Requires `COMPENSATING` status;
+claims the workflow via the same atomic `Workflow.version` check as execution resume
+(`workflow_service.claim_workflow_for_compensation_resume`), so two concurrent
+compensation-resumes can never both proceed. A step already `COMPENSATED` is never
+re-compensated; the one step (if any) whose handler was in flight when the process was
+interrupted has its dangling `CompensationAttempt` marked `FAILED` first — never assumed
+to have silently succeeded — then re-attempted with a fresh attempt. Remaining eligible
+steps continue in the same reverse-position order a fresh run would use. The returned
+summary is rebuilt from current persisted step/attempt state, not from any in-memory
+list from the interrupted run, which does not survive a process restart. Emits a new
+`WORKFLOW_COMPENSATION_RESUMED` audit event, additive to the enum (unconstrained
+`VARCHAR` column, no migration), extending the same hash-linked chain.
+
+### `engine/workflow/` — DAG graph and concurrent scheduler
+An additive, dependency-aware execution capability alongside the live sequential
+`WorkflowEngine` above — not a replacement for it. **Implementation status:
+implemented as a standalone, fully-tested capability; not yet wired into the live
+`/workflows` API or the persisted `Workflow`/`WorkflowStep` models** (that wiring
+needs a schema migration for step dependencies/new statuses and is a breaking change
+to `POST /workflows/{id}/execute`'s synchronous contract — both require explicit
+sign-off before proceeding, per the build plan's manual checkpoints).
+
+- `graph.py` — `WorkflowGraph.from_definition()` builds an adjacency view of a Stage 1
+  `WorkflowDefinition`/`WorkflowStepDefinition` graph, detects cycles (the one
+  structural check the contract layer doesn't already perform — duplicate keys,
+  unknown dependencies, and self-dependencies are rejected by the contract's own
+  validators), and provides deterministic `ready_steps()`, `transitive_dependents()`,
+  and `topological_order()` (ties broken by declaration order).
+- `scheduler.py` — `GraphScheduler.run()` executes one workflow's DAG to completion:
+  independent steps run concurrently under two configurable bounds
+  (`max_concurrent_steps_per_workflow`, and `max_concurrent_per_agent_type` shared
+  across every `run()` call on one scheduler instance); a failed step skips its
+  transitive dependents without aborting unrelated branches; cancellation
+  (`cancellation.py::CancellationToken`, one per run, never shared) stops scheduling
+  new work and cancels in-flight steps cooperatively rather than waiting for them to
+  finish naturally; each step has a timeout (`WorkflowStepDefinition.timeout_seconds`
+  or a scheduler-wide default) enforced independently of the runner. The core loop is
+  driven entirely by `asyncio.wait(..., return_when=FIRST_COMPLETED)` — no busy-wait,
+  no fixed-interval polling. State is local to each `run()` call, so two concurrent
+  workflows (even sharing one `GraphScheduler` instance) never observe or affect each
+  other's cancellation or failure.
+- `runner.py` — the `StepRunner` protocol the scheduler delegates actual step
+  execution to, independent of both the live `AgentExecutor` and the Stage 1
+  `AgentAdapter` contract so a later stage can bridge to either without scheduler
+  changes. Retries are explicitly out of scope here (Stage 3 adds retry as a
+  `StepRunner` decorator); each step runs at most once this stage.
+- `events.py` — the `StateSink` protocol the scheduler emits a `WorkflowExecutionEvent`
+  to for every transition — the "restart-safe persisted state preparation" seam. No
+  implementation here writes to a database; `tests/support/graph_fakes.py`'s
+  `RecordingStateSink` is the only implementation, used to assert event ordering.
+- `state_machine.py` — a validated transition table (`transition_graph_workflow`,
+  `transition_graph_step`) for the in-memory `GraphWorkflowStatus`/`GraphStepStatus`
+  enums (`status.py`), covering the fuller status vocabulary (`ready`, `cancelling`,
+  `planning`, ...) than the persisted `WorkflowStatus`/`StepStatus` enums, which are
+  unchanged. Mirrors `engine/state_machine.py`'s pattern but is independently testable
+  rather than wired into the scheduler's per-step bookkeeping, since the scheduler only
+  ever produces valid terminal outcomes by construction.
 
 ### `adapters/`
 Local CLI integration layers between the orchestration engine and individual coding
@@ -404,6 +508,159 @@ Audit events are appended immediately after the state transition that produced t
 commits — never before, and never for a transition that didn't actually commit — but
 this is **best-effort sequential coupling, not single-transaction atomicity**: the state
 transition and its audit event are two separate commits.
+
+### `engine/planning/`, `engine/routing/`, `engine/verification/`, `engine/learning/`, `engine/knowledge/`, `engine/adaptive_retrieval/` — Stages 4A–7.5
+The intelligence-layer subsystems `contracts/`'s Stage 4A note above says do not exist
+yet in this document's original text are, as of Stage 8B.1, all implemented and
+certified: a deterministic `Planner` (`engine/planning/planner.py`, goal → `WorkflowPlan`
+via rule-based templates, no LLM call), a `Router` (`engine/routing/router.py`, candidate
+eligibility + explainable scoring, no LLM call), Stage 4E verification/recovery
+(`engine/verification/`: `verify_one`/`aggregate`, `decide_recovery`/`reroute`), Stage 5
+learning (`engine/learning/`, `LearningEvent` → `AgentPassport`, persisted via
+`persistence/service.py::LearningPersistenceService`), a lexical `KnowledgeIndex`
+(`engine/knowledge/`, Stage 6A/6B, no embeddings), and Stage 7.5 adaptive retrieval
+(`engine/adaptive_retrieval/`, re-ranks Stage 6A's own candidates only, disabled by
+default). None of these call an external provider. This document's stale "Explicitly out
+of scope" list below still says otherwise for the self-learning RAG item; that note is now
+incorrect and is left as a known documentation gap outside this addition's scope — see
+Stage 8C.1 below for the first component that actually wires all of these together.
+
+### `engine/manager/` and `integrations/nemotron/` — Stage 8A/8B/8B.1
+`engine/manager/` is the one place in this codebase that talks to an LLM as advisory
+intelligence: `ManagerModel` (Protocol) → `ManagerOrchestrator` → the deterministic
+`Planner` above. A `ManagerResponse` is validated by `ManagerProposalValidator`
+(unknown agent/capability references, structural bounds, `extra="forbid"`) before any
+part of it can influence orchestration, and even a validated response only ever adjusts
+`RoutingConstraints.preferred_agent_types` (a ranking hint) — it can never grant
+`Router` eligibility it didn't already have, mark verification passed, or write learning/
+retrieval-passport state. `integrations/nemotron/` implements `ManagerModel` against
+NVIDIA Nemotron 3 Ultra's OpenAI-compatible hosted endpoint (the one exception to "Keystone
+never calls a provider's HTTP API" in "Explicitly out of scope" below — that line predates
+Stage 8B and is now specific to *agent execution*, not the advisory Manager). Manager
+unavailability/timeout/an invalid or rejected proposal all fall back to the unmodified
+`Planner` path — Keystone is never unusable because the Manager is down.
+
+### `engine/orchestration/` — Stage 8C.1
+The first application-service layer composing every subsystem above into one pipeline:
+Knowledge (`KnowledgeIndex.search` [+ `AdaptiveRetriever.retrieve`] → `ContextBuilder`) →
+Manager (`ManagerOrchestrator` → `Planner`, unmodified) → Router (`build_routing_request`
+→ `Router.route`, unmodified, per task) → Workflow (a new `compiler.py` topologically
+orders a `WorkflowPlan`'s DAG into the live position-ordered `WorkflowCreate` — no DAG
+support existed in the live engine before this — then `WorkflowEngine.execute_workflow`,
+unmodified) → Verification (`verify_one`/`aggregate`, invoked through `WorkflowEngine`'s
+own `VerificationResolver` seam) → Recovery (`decide_recovery`/`reroute`, bounded by
+`RecoveryPolicy.max_attempts`; a failed step's own `TaskSpec.input_payload` is static, so
+recovery re-executes just the failed subset as an independent recovery `Workflow`) →
+Learning (`WorkflowEngine`'s own `learning_persistence` wiring, so a step's execution and
+verification outcome are recorded together, once) → Retrieval feedback
+(`RetrievalFeedback`, constructed only with `verification_status=PASSED` as positive
+evidence — never merely because a chunk was retrieved or used).
+**Implementation status: implemented (`EndToEndOrchestrationService`).** Authority is
+unchanged from the subsystems above: the Manager cannot bypass `Planner` or `Router`,
+cannot self-verify, and cannot mutate learning/retrieval-passport state directly;
+`Router` eligibility, `WorkflowEngine` state ownership, and Stage 4E verified-success
+semantics are all reused exactly as certified, never re-implemented. Stage 8C.2 (below)
+adds the FastAPI/SSE surface that calls this service; Stage 8C.3 (CLI/VS Code/frontend
+wiring) does not exist yet.
+
+### `engine/orchestration/events.py`, `execution.py`, `api/routes/orchestrations.py` — Stage 8C.2
+
+Exposes Stage 8C.1 through a small, stable, provider-neutral HTTP API and an
+observability event stream, without redesigning anything above it:
+
+- **`POST /api/v1/orchestrations`** starts one execution as an isolated background
+  `asyncio.Task` (`OrchestrationExecutionCoordinator.start`) and returns `202 Accepted`
+  with an `execution_id` immediately — it never calls `await service.orchestrate(...)`
+  inline from the request handler. The public request body
+  (`OrchestrationExecutionCreate`) reuses `OrchestrationRequest`'s own contract types
+  (`RepositoryMetadata`, `RoutingConstraints`, `AgentCapability`) directly rather than a
+  parallel schema, and accepts only bounded, typed, `extra="forbid"` fields — no field
+  accepts arbitrary code, a shell command, an API key, a provider `Authorization`
+  header, a raw Manager prompt, or an arbitrary runtime object.
+- **`GET /api/v1/orchestrations/{execution_id}`** returns safe, observable state.
+  Transport/job status (`accepted`/`running`/`completed`/`failed`/`cancelled`,
+  `OrchestrationExecutionStatus`) and business outcome (`OrchestrationOutcome` —
+  `verified_success`/`no_eligible_route`/`recovery_exhausted`/...) are deliberately
+  separate fields, never collapsed: a `completed` job can carry any business outcome,
+  including a non-success one — the asynchronous execution still reached a valid
+  terminal *business* result.
+- **`GET /api/v1/orchestrations/{execution_id}/events`** streams `OrchestrationEvent`s
+  as Server-Sent Events (`text/event-stream`), replaying stored history first and then
+  following live pushes from a bounded, per-connection `asyncio.Queue` — never a
+  polling loop, never a second Manager/Workflow run just because a client (re)connects.
+
+**Event instrumentation is purely observational.** `EndToEndOrchestrationService
+.orchestrate()` optionally emits events to an injected `OrchestrationEventSink`
+(`app.engine.orchestration.events`, mirroring the existing `StateSink` pattern from
+`engine/workflow/events.py`) at meaningful phase boundaries only (`execution.started`,
+`manager.completed`/`manager.fallback`, `routing.task_selected` per task,
+`workflow.created`, `step.started`/`step.completed`/`step.failed`,
+`verification.completed`, `recovery.*`, `retrieval_feedback.completed`,
+`execution.completed`/`execution.failed`) — never inside a phase method, never
+influencing what any phase decides, and a sink failure is caught and logged, never
+re-raised: a broken event sink can never turn a verified success into a business
+failure. Every event field is bounded and typed (no `payload: dict[str, Any]` escape
+hatch) — chain-of-thought, a raw provider response, a prompt, an API key, an
+`Authorization` header, and unrestricted worker stdout/stderr can never reach an event
+or the SSE stream, structurally, not by a runtime filter alone.
+
+**Agent identifiers are open strings everywhere, never a fixed enum.** The API places
+no `CLAUDE`/`CODEX`/`GEMINI`-shaped constraint on `available_agent_types` or on any
+event's `agent_id` — any dynamically registered agent ID (`"deepseek-reviewer"`,
+`"my-openrouter-qwen-agent"`, a smoke-test's own `"keystone-live-fake-worker"`) is
+exactly as valid and exactly as routable as a built-in one, live-verified end to end in
+Stage 8C.1's own diagnostics and in this stage's API integration tests.
+
+**Implementation status: implemented, in-memory only.**
+`InMemoryOrchestrationExecutionStore` (execution records + bounded event history +
+bounded per-subscriber live queues) is explicitly **not restart-safe** — a process
+restart loses all execution/event history — and is deliberately built behind a
+storage-neutral `OrchestrationExecutionStore` Protocol so a future persistence-backed
+implementation can replace it without the coordinator or API layer changing. No
+database migration was introduced for this stage. No CLI, VS Code extension, or
+frontend wiring exists yet (Stage 8C.3); no OpenRouter/provider credential onboarding
+exists yet; no distributed queue/broker/multi-node fanout exists.
+
+### `contracts/`
+Canonical, provider-neutral Pydantic v2 domain contracts shared across the engine, API,
+CLI and extension clients — the stable vNext shapes for workflow graphs, agent adapters,
+routing, agent passports, knowledge and benchmarking.
+**Implementation status: contracts defined (this stage); consuming subsystems land in
+later stages.** `contracts/adapter.py` (`AgentAdapter` protocol, `AgentDescriptor`,
+`AgentExecutionRequest`/`AgentExecutionResult`, `AgentUsage`, `RepositoryMetadata`),
+`contracts/workflow.py` (`WorkflowDefinition`/`WorkflowStepDefinition` — DAG-aware,
+additive to the live position-ordered `WorkflowCreate`/`WorkflowStepCreate` — and
+`WorkflowExecutionEvent`), `contracts/routing.py` (`RoutingRequest`/
+`RoutingCandidateScore`/`RoutingDecision`), `contracts/passports.py` (`AgentPassport`),
+`contracts/knowledge.py` (`KnowledgeDocument`/`KnowledgeSearchResult`),
+`contracts/benchmark.py` (`BenchmarkDefinition`/`BenchmarkTask`/`BenchmarkResult`),
+`contracts/errors.py` (the `FailureCategory` taxonomy and `classify_legacy_error_type`
+bridge from existing `StepExecutionError.error_type` strings), and
+`contracts/schema_export.py` (the `CONTRACT_MODELS` registry and JSON Schema generator
+behind `scripts/export_contracts.py`, whose output is committed under
+`backend/contracts/schemas/`). See [`contracts.md`](./contracts.md) for the ownership
+and dependency-direction model. This package is purely additive: `schemas/`,
+`models/enums.py`, and the live engine/API behavior described above are unchanged.
+
+**Stage 4A** adds the intelligence layer's typed foundation, contracts only —
+no Planner, Router, Verifier, or Explainability logic exists yet:
+`contracts/planning.py` (`TaskSpec` — deliberately no `agent_type`, the
+Planner decides *what* work exists, never *who* performs it — `WorkflowPlan`,
+`ExpectedOutcome`, `PlanningRequest`), `contracts/verification.py`
+(`VerificationResult`/`VerificationEvidence`/`VerificationStatus`, reusing
+`BenchmarkEvaluatorType` rather than a second objective-evaluator
+taxonomy), and `contracts/explainability.py` (`DecisionTrace`,
+`EvidenceItem`, `ScoreContribution`, `ExclusionReason`, `Confidence`,
+`CounterfactualCondition`, `RoutingExplanation` — a read-only lens over
+existing decisions, alongside the tamper-evident `AuditEvent` chain, not a
+replacement for it). `AgentDescriptor` gained an additive `runtime_kind`
+field (`RuntimeKind`: `AGENT_CLI`/`MODEL_API`/`LOCAL_MODEL`/`HYBRID`,
+defaulting to `AGENT_CLI` for backward compatibility) and `AgentCapability`
+gained three additive interaction-mode tags (`RAW_COMPLETION`,
+`STRUCTURED_OUTPUT`, `TOOL_CALLING`) — the same `AgentAdapter` contract
+serves both agent-CLI and model-API runtimes; see
+[`contracts.md`](./contracts.md#intelligence-layer-architecture-stage-4a) for
+the full component breakdown.
 
 ### Known limitations (by design, for this prototype)
 

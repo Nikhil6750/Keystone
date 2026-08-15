@@ -1,4 +1,4 @@
-import type { ExtensionRequest, EngineResponse } from '../../../shared-contracts/src';
+import type { ExtensionRequest, EngineResponse } from '../../../shared-contracts';
 
 /**
  * Placeholder API contract boundary for communicating with Keystone backend engine.

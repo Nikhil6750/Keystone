@@ -1,0 +1,66 @@
+{
+  "additionalProperties": false,
+  "description": "One node in a DAG-aware workflow definition.",
+  "properties": {
+    "agent_type": {
+      "title": "Agent Type",
+      "type": "string"
+    },
+    "compensation_handler": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Compensation Handler"
+    },
+    "depends_on": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Depends On",
+      "type": "array"
+    },
+    "input_payload": {
+      "additionalProperties": true,
+      "title": "Input Payload",
+      "type": "object"
+    },
+    "key": {
+      "title": "Key",
+      "type": "string"
+    },
+    "max_attempts": {
+      "default": 3,
+      "title": "Max Attempts",
+      "type": "integer"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "timeout_seconds": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Timeout Seconds"
+    }
+  },
+  "required": [
+    "key",
+    "name",
+    "agent_type"
+  ],
+  "title": "WorkflowStepDefinition",
+  "type": "object"
+}

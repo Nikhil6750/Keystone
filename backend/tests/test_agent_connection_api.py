@@ -81,7 +81,27 @@ async def test_verify_response_includes_supported_capabilities(client: AsyncClie
     response = await client.post("/api/v1/agents/demo/verify")
 
     assert response.status_code == 200
-    assert response.json()["capabilities"] == ["workflow_step_execution"]
+    # Derived from `STATIC_AGENT_DESCRIPTORS` (the same declaration the
+    # Router's own eligibility check reads) rather than a separate, thinner
+    # capability table -- see `app.services.agent_availability
+    # .capabilities_for`. The demo adapter always returns the same canned,
+    # clearly-labeled simulated result regardless of capability, so its
+    # descriptor declares the same broad capability set as the real CLI
+    # adapters -- otherwise it is permanently unroutable for the
+    # "implement + test" task graphs the real Planner generates for most
+    # goals, defeating its purpose as the no-cost local E2E path.
+    assert response.json()["capabilities"] == [
+        "code_generation",
+        "code_review",
+        "debugging",
+        "refactoring",
+        "test_generation",
+        "file_editing",
+        "general_reasoning",
+        "test_execution",
+        "planning",
+        "documentation",
+    ]
 
 
 async def test_duplicate_concurrent_verification_returns_409(

@@ -151,6 +151,61 @@ def test_temporary_working_directory_is_cleaned_up() -> None:
     assert not os.path.exists(captured_cwd[0])
 
 
+def test_explicit_cwd_is_used_verbatim_and_never_deleted(tmp_path: object) -> None:
+    """A real coding-agent step (Stage 8C.3) passes its already-validated
+    workspace directory as `cwd`; the runner must use it exactly, and --
+    unlike its own fallback temp directory -- must never delete it, since
+    the caller (not this call) owns that directory's lifetime."""
+    workspace = str(tmp_path)
+    captured_cwd: list[str] = []
+
+    def _fake_run(*args: object, **kwargs: object) -> MagicMock:
+        cwd = kwargs.get("cwd")
+        assert isinstance(cwd, str)
+        captured_cwd.append(cwd)
+        return _completed()
+
+    runner = SubprocessRunner()
+    with (
+        patch("app.adapters.process_runner.shutil.which", return_value="/usr/bin/mock"),
+        patch("app.adapters.process_runner.subprocess.run", side_effect=_fake_run),
+    ):
+        runner.run(
+            "mock",
+            [],
+            stdin_text=None,
+            timeout_seconds=5.0,
+            max_output_characters=1000,
+            cwd=workspace,
+        )
+
+    assert captured_cwd == [workspace]
+    assert os.path.exists(workspace)  # never deleted -- caller-owned
+
+
+def test_explicit_cwd_survives_a_process_failure_without_being_deleted(tmp_path: object) -> None:
+    workspace = str(tmp_path)
+    runner = SubprocessRunner()
+    with (
+        patch("app.adapters.process_runner.shutil.which", return_value="/usr/bin/mock"),
+        patch(
+            "app.adapters.process_runner.subprocess.run",
+            return_value=_completed(returncode=1, stderr="boom"),
+        ),
+        pytest.raises(AgentProcessError),
+    ):
+        runner.run(
+            "mock",
+            [],
+            stdin_text=None,
+            timeout_seconds=5.0,
+            max_output_characters=1000,
+            cwd=workspace,
+        )
+
+    assert os.path.exists(workspace)
+
+
 def test_temp_directory_cleanup_survives_a_transient_windows_file_lock() -> None:
     """Regression test for a real bug: Google Antigravity's `agy.exe` was observed
     on Windows to briefly hold a file handle open inside its working directory
@@ -231,6 +286,13 @@ def test_workflow_payload_cannot_inject_executable_arguments() -> None:
     passes explicitly — there is no code path that reads workflow step input to
     build the command. This test documents that `run()`'s signature has no such
     parameter, so a workflow payload has no way to reach the command line.
+
+    `cwd` (Stage 8C.3) does not weaken this: it is a working *directory*,
+    never appended to `command`/`arguments` and never shell-interpreted --
+    it flows only from `OrchestrationRequest.workspace_root`, itself
+    validated server-side (`app.adapters.workspace.validate_workspace_root`
+    -- absolute, must already exist, must be a directory) before it can
+    reach here, never from a workflow step's own input payload.
     """
     import inspect
 
@@ -243,6 +305,7 @@ def test_workflow_payload_cannot_inject_executable_arguments() -> None:
         "timeout_seconds",
         "max_output_characters",
         "env_overrides",
+        "cwd",
     }
 
 

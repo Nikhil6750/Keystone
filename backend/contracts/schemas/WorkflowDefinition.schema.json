@@ -1,0 +1,119 @@
+{
+  "$defs": {
+    "WorkflowStepDefinition": {
+      "additionalProperties": false,
+      "description": "One node in a DAG-aware workflow definition.",
+      "properties": {
+        "agent_type": {
+          "title": "Agent Type",
+          "type": "string"
+        },
+        "compensation_handler": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Compensation Handler"
+        },
+        "depends_on": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "input_payload": {
+          "additionalProperties": true,
+          "title": "Input Payload",
+          "type": "object"
+        },
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "max_attempts": {
+          "default": 3,
+          "title": "Max Attempts",
+          "type": "integer"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeout Seconds"
+        }
+      },
+      "required": [
+        "key",
+        "name",
+        "agent_type"
+      ],
+      "title": "WorkflowStepDefinition",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A DAG-aware workflow definition: steps plus their declared dependencies.",
+  "properties": {
+    "concurrency_limit": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Concurrency Limit"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "input_payload": {
+      "additionalProperties": true,
+      "title": "Input Payload",
+      "type": "object"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "steps": {
+      "items": {
+        "$ref": "#/$defs/WorkflowStepDefinition"
+      },
+      "title": "Steps",
+      "type": "array"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "title": "WorkflowDefinition",
+  "type": "object"
+}

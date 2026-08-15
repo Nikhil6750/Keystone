@@ -1,4 +1,4 @@
-"""FastAPI dependency providers for the API layer."""
+from typing import TYPE_CHECKING
 
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
@@ -8,10 +8,24 @@ from app.core.config import Settings, get_settings
 from app.database.session import get_db
 from app.engine.compensation import CompensationService
 from app.engine.compensation_registry import CompensationRegistry
+from app.engine.connections.repository import (
+    AgentConnectionRepository,
+    ConnectedAgentRepository,
+)
+from app.engine.orchestration.execution import (
+    OrchestrationExecutionCoordinator,
+    OrchestrationExecutionStore,
+)
 from app.engine.registry import ExecutorRegistry
 from app.engine.workflow_engine import WorkflowEngine
 from app.resilience.circuit_breaker import CircuitBreakerRegistry
 from app.resilience.retry import RetryPolicy
+
+if TYPE_CHECKING:
+    from app.engine.skills.evidence import SkillEvidenceRepository
+    from app.engine.skills.foundry import CandidateSkillFoundry
+    from app.engine.skills.lifecycle import SkillLifecycleManager
+    from app.engine.skills.registry import SkillRegistry
 
 
 def get_executor_registry(request: Request) -> ExecutorRegistry:
@@ -74,3 +88,95 @@ def get_agent_connection_cache(request: Request) -> AgentConnectionCache:
     """Return the application's agent-connection cache, created during lifespan startup."""
     cache: AgentConnectionCache = request.app.state.agent_connection_cache
     return cache
+
+
+def get_orchestration_execution_store(request: Request) -> OrchestrationExecutionStore:
+    """Return the application's orchestration execution store, created
+    during lifespan startup. Overridden in tests exactly like every other
+    `app.state`-backed dependency here -- see `tests/conftest.py`."""
+    store: OrchestrationExecutionStore = request.app.state.orchestration_execution_store
+    return store
+
+
+def get_orchestration_execution_coordinator(request: Request) -> OrchestrationExecutionCoordinator:
+    """Return the application's orchestration execution coordinator,
+    created once during lifespan startup (never per-request: it owns the
+    only strong reference keeping background execution tasks alive -- see
+    `app.engine.orchestration.execution`)."""
+    coordinator: OrchestrationExecutionCoordinator = (
+        request.app.state.orchestration_execution_coordinator
+    )
+    return coordinator
+
+
+def get_agent_connection_repository(request: Request) -> AgentConnectionRepository:
+    """Return the application's AgentConnectionRepository, created during lifespan startup."""
+    repo: AgentConnectionRepository | None = getattr(
+        request.app.state, "agent_connection_repository", None
+    )
+    if repo is None:
+        raise RuntimeError("AgentConnectionRepository is not initialized on app.state")
+    return repo
+
+
+def get_connected_agent_repository(request: Request) -> ConnectedAgentRepository:
+    """Return the application's ConnectedAgentRepository, created during lifespan startup."""
+    repo: ConnectedAgentRepository | None = getattr(
+        request.app.state, "connected_agent_repository", None
+    )
+    if repo is None:
+        raise RuntimeError("ConnectedAgentRepository is not initialized on app.state")
+    return repo
+
+
+def get_skill_registry(request: Request) -> "SkillRegistry":
+    """Return the application's SkillRegistry, created during lifespan startup."""
+    from app.engine.skills.registry import SkillRegistry
+
+    reg: SkillRegistry | None = getattr(request.app.state, "skill_registry", None)
+    if reg is None:
+        reg = SkillRegistry()
+        request.app.state.skill_registry = reg
+    return reg
+
+
+def get_skill_evidence_repo(request: Request) -> "SkillEvidenceRepository":
+    """Return the application's SkillEvidenceRepository, created during lifespan startup."""
+    from app.engine.skills.evidence import (
+        InMemorySkillEvidenceRepository,
+        SkillEvidenceRepository,
+    )
+
+    repo: SkillEvidenceRepository | None = getattr(request.app.state, "skill_evidence_repo", None)
+    if repo is None:
+        repo = InMemorySkillEvidenceRepository()
+        request.app.state.skill_evidence_repo = repo
+    return repo
+
+
+def get_candidate_skill_foundry(request: Request) -> "CandidateSkillFoundry":
+    """Return the application's CandidateSkillFoundry, created during lifespan startup."""
+    from app.engine.skills.foundry import CandidateSkillFoundry
+
+    foundry: CandidateSkillFoundry | None = getattr(
+        request.app.state, "candidate_skill_foundry", None
+    )
+    if foundry is None:
+        registry = get_skill_registry(request)
+        evidence_repo = get_skill_evidence_repo(request)
+        foundry = CandidateSkillFoundry(registry=registry, evidence_repo=evidence_repo)
+        request.app.state.candidate_skill_foundry = foundry
+    return foundry
+
+
+def get_skill_lifecycle_manager(request: Request) -> "SkillLifecycleManager":
+    """Return the application's SkillLifecycleManager."""
+    from app.engine.skills.lifecycle import SkillLifecycleManager
+
+    mgr: SkillLifecycleManager | None = getattr(request.app.state, "skill_lifecycle_manager", None)
+    if mgr is None:
+        registry = get_skill_registry(request)
+        evidence_repo = get_skill_evidence_repo(request)
+        mgr = SkillLifecycleManager(registry=registry, evidence_repo=evidence_repo)
+        request.app.state.skill_lifecycle_manager = mgr
+    return mgr

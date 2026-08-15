@@ -1,0 +1,72 @@
+{
+  "$defs": {
+    "APIError": {
+      "description": "One error's code, human-readable message, and optional structured details.",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/APIErrorCode"
+        },
+        "details": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Details"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "APIError",
+      "type": "object"
+    },
+    "APIErrorCode": {
+      "enum": [
+        "WORKFLOW_NOT_FOUND",
+        "INVALID_WORKFLOW_STATE",
+        "AGENT_EXECUTOR_NOT_REGISTERED",
+        "STEP_EXECUTION_FAILED",
+        "CIRCUIT_BREAKER_OPEN",
+        "INVALID_COMPENSATION_STATE",
+        "COMPENSATION_HANDLER_NOT_REGISTERED",
+        "COMPENSATION_EXECUTION_FAILED",
+        "COMPENSATION_ALREADY_COMPLETED",
+        "AUDIT_CHAIN_INVALID",
+        "AUDIT_EVENT_CONFLICT",
+        "AGENT_TYPE_UNKNOWN",
+        "AGENT_VERIFICATION_IN_PROGRESS",
+        "ORCHESTRATION_EXECUTION_NOT_FOUND",
+        "ORCHESTRATION_EXECUTION_EXISTS",
+        "AGENT_CONNECTION_NOT_FOUND",
+        "CONNECTED_AGENT_NOT_FOUND",
+        "AGENT_CONNECTION_EXISTS",
+        "CONNECTED_AGENT_EXISTS",
+        "AGENT_CONNECTION_HAS_DEPENDENTS",
+        "INVALID_AGENT_CONNECTION_REFERENCE",
+        "INVALID_REQUEST",
+        "INTERNAL_ERROR"
+      ],
+      "title": "APIErrorCode",
+      "type": "string"
+    }
+  },
+  "description": "The `{\"error\": {...}}` response body returned for all handled API errors.",
+  "properties": {
+    "error": {
+      "$ref": "#/$defs/APIError"
+    }
+  },
+  "required": [
+    "error"
+  ],
+  "title": "APIErrorEnvelope",
+  "type": "object"
+}

@@ -17,7 +17,14 @@ describe('/logs route', () => {
       const logsPageModule = await import('@/app/logs/page');
       expect(logsPageModule.default).toBeTypeOf('function');
     },
-    15_000 // first dynamic import of a page module can be slow to transform under load
+    // First dynamic import of a page module transforms the whole module
+    // graph on demand. 15s was observed to intermittently time out when the
+    // machine is under heavy concurrent load (e.g. a backend pytest run
+    // executing at the same time) -- not a regression in the module itself
+    // (this same import reliably completes in 3-4s standalone/under normal
+    // load). 45s gives real headroom for cold-start transform time under
+    // contention without masking a genuine hang.
+    45_000
   );
 });
 

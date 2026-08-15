@@ -25,6 +25,8 @@ class AgentAvailabilityRead(BaseModel):
     version: str | None
     last_checked_at: str | None
     capabilities: list[str]
+    product_kind: str = "agent_cli"
+    execution_supported: bool = True
 
 
 class AgentAvailabilityListResponse(BaseModel):
@@ -57,3 +59,5 @@ class AgentConnectionVerifyRead(BaseModel):
     last_checked_at: datetime | None
     reason: str
     capabilities: list[str]
+    product_kind: str = "agent_cli"
+    execution_supported: bool = True

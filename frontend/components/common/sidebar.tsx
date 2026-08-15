@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   MessageSquare,
+  Workflow,
   GitFork,
   Bot,
   Terminal,
@@ -20,6 +21,7 @@ import { ToneBadge } from '@/components/workflow/tone-badge';
 
 const NAV_ITEMS = [
   { label: 'Chat', href: '/chat', icon: MessageSquare },
+  { label: 'Orchestrate', href: '/orchestrate', icon: Workflow },
   { label: 'Workflows', href: '/workflows', icon: GitFork },
   { label: 'Agents', href: '/agents', icon: Bot },
   { label: 'Logs', href: '/logs', icon: Terminal },

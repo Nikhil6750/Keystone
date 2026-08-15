@@ -46,6 +46,8 @@ async def test_get_agents_exposes_no_secret_fields(client: AsyncClient) -> None:
             "version",
             "last_checked_at",
             "capabilities",
+            "product_kind",
+            "execution_supported",
         }
         # Never a raw provider response, email, org ID, or credential.
         assert "email" not in item

@@ -1,0 +1,82 @@
+{
+  "additionalProperties": false,
+  "description": "Structured, explainable routing constraints.\n\nReplaces an earlier schema-less `dict[str, Any]`: every recognized\nconstraint now has a typed, validated, documented shape instead of an\nundocumented key vocabulary a caller had to guess at. Contains no\nprovider-specific settings \u2014 provider detail belongs in\n`AgentExecutionRequest.metadata`, never here.",
+  "properties": {
+    "allow_parallel": {
+      "default": false,
+      "title": "Allow Parallel",
+      "type": "boolean"
+    },
+    "consensus_size": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Consensus Size"
+    },
+    "excluded_agent_types": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Excluded Agent Types",
+      "type": "array"
+    },
+    "max_cost_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Max Cost Usd"
+    },
+    "max_latency_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Max Latency Ms"
+    },
+    "minimum_reliability": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Minimum Reliability"
+    },
+    "preferred_agent_types": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Preferred Agent Types",
+      "type": "array"
+    },
+    "required_capabilities": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Required Capabilities",
+      "type": "array"
+    }
+  },
+  "title": "RoutingConstraints",
+  "type": "object"
+}

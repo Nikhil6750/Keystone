@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.adapters.types import CLIProfile, create_cli_profile
@@ -27,7 +27,10 @@ class Settings(BaseSettings):
     environment: str = "development"
     log_level: str = "INFO"
 
-    database_url: str = "sqlite:///./keystone.db"
+    database_url: str = Field(
+        default="sqlite:///./keystone.db",
+        validation_alias=AliasChoices("KEYSTONE_DATABASE_URL", "DATABASE_URL", "database_url"),
+    )
 
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
@@ -51,12 +54,17 @@ class Settings(BaseSettings):
     )
     retry_jitter_ratio: float = Field(default=0.1, validation_alias="KEYSTONE_RETRY_JITTER_RATIO")
 
-    # --- Circuit breaker ---
     circuit_breaker_failure_threshold: int = Field(
         default=3, validation_alias="KEYSTONE_CIRCUIT_BREAKER_FAILURE_THRESHOLD"
     )
     circuit_breaker_recovery_timeout_seconds: float = Field(
         default=30.0, validation_alias="KEYSTONE_CIRCUIT_BREAKER_RECOVERY_TIMEOUT_SECONDS"
+    )
+
+    # --- Skill Foundry ---
+    skill_vault_root: str | None = Field(default=None, validation_alias="KEYSTONE_SKILL_VAULT_ROOT")
+    allowed_vault_roots: list[str] = Field(
+        default_factory=list, validation_alias="KEYSTONE_ALLOWED_VAULT_ROOTS"
     )
 
     # --- Claude Code ---
@@ -76,8 +84,24 @@ class Settings(BaseSettings):
     claude_code_executable: str = Field(
         default="claude", validation_alias="KEYSTONE_CLAUDE_CODE_EXECUTABLE"
     )
+    # `--permission-mode acceptEdits`: verified live (Stage 8C.3) that
+    # without it, a headless `-p` call has no human to approve a Write/Edit
+    # tool call, so the CLI silently *skips the file write* while still
+    # returning `is_error: false` and a plausible-sounding text result
+    # ("The write was blocked pending your approval...") -- a real coding
+    # task would report success and produce zero files. `acceptEdits`
+    # auto-approves file create/edit operations specifically -- confirmed
+    # narrower than `--dangerously-skip-permissions`/`bypassPermissions`,
+    # which also auto-approves arbitrary Bash tool calls; this flag does
+    # not.
     claude_code_arguments: list[str] = Field(
-        default_factory=lambda: ["-p", "--output-format", "json"],
+        default_factory=lambda: [
+            "-p",
+            "--output-format",
+            "json",
+            "--permission-mode",
+            "acceptEdits",
+        ],
         validation_alias="KEYSTONE_CLAUDE_CODE_ARGUMENTS",
     )
     claude_code_input_mode: str = Field(
@@ -92,9 +116,10 @@ class Settings(BaseSettings):
 
     # --- Codex ---
     # Live-verified against Codex CLI 0.146.0. Always uses non-interactive JSONL
-    # execution, an ephemeral session, and a read-only sandbox. The prompt is sent
-    # via stdin; the isolated process working directory is intentionally not a Git
-    # repository, so the non-interactive command explicitly skips that check.
+    # execution, an ephemeral session, and a workspace-write sandbox so unattended
+    # coding steps can edit their validated workspace. The prompt is sent via stdin;
+    # a fresh workspace need not be a Git repository, so the non-interactive command
+    # explicitly skips that check.
     codex_enabled: bool = Field(default=False, validation_alias="KEYSTONE_CODEX_ENABLED")
     codex_executable: str = Field(default="codex", validation_alias="KEYSTONE_CODEX_EXECUTABLE")
     codex_arguments: list[str] = Field(
@@ -103,7 +128,7 @@ class Settings(BaseSettings):
             "--json",
             "--ephemeral",
             "--sandbox",
-            "read-only",
+            "workspace-write",
             "--skip-git-repo-check",
         ],
         validation_alias="KEYSTONE_CODEX_ARGUMENTS",
@@ -133,9 +158,9 @@ class Settings(BaseSettings):
     # --- Google Antigravity ---
     # A separate, Gemini-*powered* local coding agent with its own native executable
     # (`agy`) — distinct from the standalone Gemini CLI above. Live verification
-    # against 1.1.10 confirmed `--print` is a value flag, so the prompt must
-    # immediately follow it as a discrete argument. Sandbox mode and slash-command
-    # expansion disabling keep this headless invocation constrained.
+    # against 1.1.10 confirmed that headless execution is `agy -p <prompt>`.
+    # The prompt is therefore passed as one discrete argv value, never through a
+    # shell or stdin.
     antigravity_enabled: bool = Field(
         default=False, validation_alias="KEYSTONE_ANTIGRAVITY_ENABLED"
     )
@@ -143,21 +168,14 @@ class Settings(BaseSettings):
         default="agy", validation_alias="KEYSTONE_ANTIGRAVITY_EXECUTABLE"
     )
     antigravity_arguments: list[str] = Field(
-        default_factory=lambda: [
-            "--output-format",
-            "json",
-            "--sandbox",
-            "--disable-slash-commands",
-            "--print",
-            "{prompt}",
-        ],
+        default_factory=lambda: ["-p", "{prompt}"],
         validation_alias="KEYSTONE_ANTIGRAVITY_ARGUMENTS",
     )
     antigravity_input_mode: str = Field(
         default="prompt_argument", validation_alias="KEYSTONE_ANTIGRAVITY_INPUT_MODE"
     )
     antigravity_output_mode: str = Field(
-        default="json", validation_alias="KEYSTONE_ANTIGRAVITY_OUTPUT_MODE"
+        default="text", validation_alias="KEYSTONE_ANTIGRAVITY_OUTPUT_MODE"
     )
     antigravity_timeout_seconds: float | None = Field(
         default=None, validation_alias="KEYSTONE_ANTIGRAVITY_TIMEOUT_SECONDS"

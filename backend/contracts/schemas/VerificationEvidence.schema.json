@@ -1,0 +1,49 @@
+{
+  "additionalProperties": false,
+  "description": "One piece of observable evidence backing a `VerificationResult` \u2014 a\ntest count, an exit code, a diff, a reviewer's sign-off. Never a model's\ninternal reasoning.",
+  "properties": {
+    "description": {
+      "title": "Description",
+      "type": "string"
+    },
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source"
+    },
+    "timestamp": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Timestamp"
+    },
+    "value": {
+      "default": null,
+      "title": "Value"
+    }
+  },
+  "required": [
+    "kind",
+    "description"
+  ],
+  "title": "VerificationEvidence",
+  "type": "object"
+}

@@ -1,0 +1,48 @@
+{
+  "additionalProperties": false,
+  "description": "One piece of observable evidence that influenced a decision.",
+  "properties": {
+    "description": {
+      "title": "Description",
+      "type": "string"
+    },
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "sample_size": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sample Size"
+    },
+    "source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source"
+    },
+    "value": {
+      "default": null,
+      "title": "Value"
+    }
+  },
+  "required": [
+    "kind",
+    "description"
+  ],
+  "title": "EvidenceItem",
+  "type": "object"
+}

@@ -11,9 +11,11 @@ from enum import StrEnum
 class AuditEventType(StrEnum):
     WORKFLOW_CREATED = "workflow_created"
     WORKFLOW_EXECUTION_STARTED = "workflow_execution_started"
+    WORKFLOW_RESUMED = "workflow_resumed"
     WORKFLOW_SUCCEEDED = "workflow_succeeded"
     WORKFLOW_FAILED = "workflow_failed"
     WORKFLOW_COMPENSATION_STARTED = "workflow_compensation_started"
+    WORKFLOW_COMPENSATION_RESUMED = "workflow_compensation_resumed"
     WORKFLOW_COMPENSATED = "workflow_compensated"
     WORKFLOW_COMPENSATION_FAILED = "workflow_compensation_failed"
 

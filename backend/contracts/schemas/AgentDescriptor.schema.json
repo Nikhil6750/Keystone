@@ -1,0 +1,69 @@
+{
+  "$defs": {
+    "AgentCapability": {
+      "description": "Capability tags an agent adapter can declare and a task can require.\n\nMost values describe *task-domain* capability (what kind of work the\nruntime can do). `RAW_COMPLETION`, `STRUCTURED_OUTPUT`, and\n`TOOL_CALLING` describe *interaction-mode* capability instead (how the\nruntime can be talked to) \u2014 kept in this same flat tag set rather than a\nsecond enum, so a task's `required_capabilities` list can freely mix\nboth kinds without the Router needing to reconcile two vocabularies.",
+      "enum": [
+        "code_generation",
+        "code_review",
+        "test_generation",
+        "test_execution",
+        "debugging",
+        "refactoring",
+        "documentation",
+        "planning",
+        "general_reasoning",
+        "file_editing",
+        "shell_execution",
+        "raw_completion",
+        "structured_output",
+        "tool_calling"
+      ],
+      "title": "AgentCapability",
+      "type": "string"
+    },
+    "RuntimeKind": {
+      "description": "What kind of execution runtime an `AgentDescriptor` describes.\n\nPurely classificatory \u2014 the Router/Planner use it to reason about the\nqualitative difference between an autonomous multi-turn CLI agent and a\nsingle-shot model completion endpoint; `AgentAdapter.execute()` stays\nthe same uniform contract for every value, so this never causes a branch\nin the execution contract itself, only in how a candidate is scored.",
+      "enum": [
+        "agent_cli",
+        "model_api",
+        "local_model",
+        "hybrid"
+      ],
+      "title": "RuntimeKind",
+      "type": "string"
+    }
+  },
+  "description": "Static identity and capability declaration for one registered agent.\n\n`runtime_kind` defaults to `AGENT_CLI` \u2014 every currently-implemented\nconnector (Claude Code, Codex, Antigravity, Gemini, the demo adapter) is\nan autonomous CLI, so this default reflects today's reality without\nrequiring any existing caller to change. A model-API/local-model/hybrid\nruntime sets it explicitly.",
+  "properties": {
+    "agent_type": {
+      "title": "Agent Type",
+      "type": "string"
+    },
+    "capabilities": {
+      "items": {
+        "$ref": "#/$defs/AgentCapability"
+      },
+      "title": "Capabilities",
+      "type": "array"
+    },
+    "display_name": {
+      "title": "Display Name",
+      "type": "string"
+    },
+    "metadata": {
+      "additionalProperties": true,
+      "title": "Metadata",
+      "type": "object"
+    },
+    "runtime_kind": {
+      "$ref": "#/$defs/RuntimeKind",
+      "default": "agent_cli"
+    }
+  },
+  "required": [
+    "agent_type",
+    "display_name"
+  ],
+  "title": "AgentDescriptor",
+  "type": "object"
+}

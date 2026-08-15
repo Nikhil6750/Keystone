@@ -1,0 +1,162 @@
+{
+  "$defs": {
+    "AgentPassportMetricBucket": {
+      "description": "Execution counts and latency for one dimension (a task type, a repository, ...).\n\nValidated so that every consumer (the Stage 4B Router in particular) can\ntrust these values without re-checking them: counts are non-negative,\n`success_count` can never exceed `execution_count`, and `median_latency_ms`\n\u2014 when present \u2014 is always finite and non-negative. A malformed bucket\n(e.g. from a buggy future aggregation implementation) is rejected here,\nat construction, rather than silently accepted and left for a downstream\nconsumer to (maybe) defend against.",
+      "properties": {
+        "execution_count": {
+          "default": 0,
+          "title": "Execution Count",
+          "type": "integer"
+        },
+        "failure_count": {
+          "default": 0,
+          "title": "Failure Count",
+          "type": "integer"
+        },
+        "low_sample_size": {
+          "default": false,
+          "title": "Low Sample Size",
+          "type": "boolean"
+        },
+        "median_latency_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Median Latency Ms"
+        },
+        "success_count": {
+          "default": 0,
+          "title": "Success Count",
+          "type": "integer"
+        }
+      },
+      "title": "AgentPassportMetricBucket",
+      "type": "object"
+    }
+  },
+  "description": "One agent type's objective, recomputable execution-evidence profile.",
+  "properties": {
+    "agent_type": {
+      "title": "Agent Type",
+      "type": "string"
+    },
+    "cancellation_count": {
+      "default": 0,
+      "title": "Cancellation Count",
+      "type": "integer"
+    },
+    "execution_count": {
+      "default": 0,
+      "title": "Execution Count",
+      "type": "integer"
+    },
+    "failure_categories": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Failure Categories",
+      "type": "object"
+    },
+    "failure_count": {
+      "default": 0,
+      "title": "Failure Count",
+      "type": "integer"
+    },
+    "last_succeeded_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Last Succeeded At"
+    },
+    "last_verified_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Last Verified At"
+    },
+    "low_sample_size": {
+      "default": false,
+      "title": "Low Sample Size",
+      "type": "boolean"
+    },
+    "median_latency_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Median Latency Ms"
+    },
+    "p95_latency_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "P95 Latency Ms"
+    },
+    "repository_metrics": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AgentPassportMetricBucket"
+      },
+      "title": "Repository Metrics",
+      "type": "object"
+    },
+    "retry_count": {
+      "default": 0,
+      "title": "Retry Count",
+      "type": "integer"
+    },
+    "success_count": {
+      "default": 0,
+      "title": "Success Count",
+      "type": "integer"
+    },
+    "task_type_metrics": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AgentPassportMetricBucket"
+      },
+      "title": "Task Type Metrics",
+      "type": "object"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "agent_type",
+    "updated_at"
+  ],
+  "title": "AgentPassport",
+  "type": "object"
+}

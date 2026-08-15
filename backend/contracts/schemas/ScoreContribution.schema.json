@@ -1,0 +1,61 @@
+{
+  "additionalProperties": false,
+  "description": "How much one scoring factor contributed to a candidate's composite score.\n\nNormalized, non-negative scoring only: `raw_score`, `weight`, and\n`weighted_contribution` are each bounded to `[0.0, 1.0]`. There is no\nnegative \"penalty\" value here \u2014 a candidate that should score worse\nbecause of some condition is expressed as a *low* `raw_score` (e.g.\n`0.1`, not `-0.9`), or, if the condition disqualifies the candidate\noutright rather than merely scoring it low, as an `ExclusionReason`\ninstead. This keeps every number in a `ScoreContribution` directly\ncomparable and averageable without sign-handling logic anywhere\ndownstream.\n\n`weighted_contribution` is not required to equal `raw_score * weight`\nexactly: future scoring may normalize or rescale contributions (e.g.\nacross factors with different evidence quality) before combining them,\nso only the bound is enforced here, not the arithmetic relationship.",
+  "properties": {
+    "factor_name": {
+      "title": "Factor Name",
+      "type": "string"
+    },
+    "low_sample_size": {
+      "default": false,
+      "title": "Low Sample Size",
+      "type": "boolean"
+    },
+    "raw_score": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Raw Score"
+    },
+    "sample_size": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sample Size"
+    },
+    "weight": {
+      "title": "Weight",
+      "type": "number"
+    },
+    "weighted_contribution": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Weighted Contribution"
+    }
+  },
+  "required": [
+    "factor_name",
+    "weight"
+  ],
+  "title": "ScoreContribution",
+  "type": "object"
+}

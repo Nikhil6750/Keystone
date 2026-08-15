@@ -106,9 +106,14 @@ class OrchestrationExecutionRead(BaseModel):
     verification_status: VerificationStatus | None = None
     task_count: int | None = None
     selected_agent_types: tuple[str, ...] = ()
+    attempt_count: int | None = None
+    recovery_used: bool | None = None
+    recovery_action: str | None = None
     learning_event_count: int | None = None
     retrieval_feedback_recorded: bool | None = None
     issue_codes: tuple[str, ...] = ()
+    quality_run_id: str | None = None
+    quality_verdict_status: str | None = None
     error_summary: str | None = None
     created_at: datetime
     updated_at: datetime

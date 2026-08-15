@@ -14,6 +14,7 @@ from app.api.routes.agent_connections import router as agent_connections_router
 from app.api.routes.agents import router as agents_router
 from app.api.routes.audit import router as audit_router
 from app.api.routes.health import router as health_router
+from app.api.routes.intelligence import router as intelligence_router
 from app.api.routes.orchestrations import router as orchestrations_router
 from app.api.routes.quality import router as quality_router
 from app.api.routes.resilience import router as resilience_router
@@ -92,6 +93,7 @@ def _build_orchestration_service_factory(app: FastAPI) -> ServiceFactory:
             skill_registry=getattr(app.state, "skill_registry", None),
             skill_evidence_repo=getattr(app.state, "skill_evidence_repo", None),
             quality_coordinator=getattr(app.state, "quality_coordinator", None),
+            intelligence_builder=getattr(app.state, "intelligence_builder", None),
         )
         return service, db.close
 
@@ -167,6 +169,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         repository=app.state.quality_repository
     )
 
+    from app.engine.intelligence.builder import EngineeringIntelligenceGraphBuilder
+    from app.engine.intelligence.graph_repository import SqlAlchemyIntelligenceGraphRepository
+    from app.engine.intelligence.query_service import EngineeringIntelligenceQueryService
+
+    # Stage 9E Engineering Intelligence Graph state -- projects the
+    # already-persisted Stage 8C.1/9C/9D evidence above; owns no
+    # execution/quality authority of its own (see
+    # `app.engine.intelligence.builder`'s module docstring).
+    app.state.intelligence_graph_repository = SqlAlchemyIntelligenceGraphRepository(
+        session_factory=SessionLocal
+    )
+    app.state.intelligence_builder = EngineeringIntelligenceGraphBuilder(
+        graph_repo=app.state.intelligence_graph_repository,
+        db_session_factory=SessionLocal,
+        quality_repository=app.state.quality_repository,
+    )
+    app.state.intelligence_query_service = EngineeringIntelligenceQueryService(
+        app.state.intelligence_graph_repository
+    )
+
     yield
     logger.info("%s shutting down", settings.app_name)
 
@@ -197,6 +219,7 @@ app.include_router(agent_connections_router, prefix="/api/v1")
 app.include_router(runtime_connections_router, prefix="/api/v1")
 app.include_router(skills_router, prefix="/api/v1")
 app.include_router(quality_router, prefix="/api/v1")
+app.include_router(intelligence_router, prefix="/api/v1")
 
 
 @app.get("/")

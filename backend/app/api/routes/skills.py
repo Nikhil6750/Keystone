@@ -1,5 +1,6 @@
 """Stage 9C Skill Foundry REST API Endpoints."""
 
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -13,7 +14,7 @@ from app.api.deps import (
 )
 from app.contracts.enums import AgentCapability
 from app.contracts.skills import SkillCategory, SkillContract, SkillStatus
-from app.engine.skills.errors import SkillNotFoundError
+from app.engine.skills.errors import SkillNotFoundError, SkillVaultSecurityError
 from app.engine.skills.evidence import (
     SkillEvidenceRepository,
 )
@@ -89,7 +90,7 @@ class SkillSearchMatchResponse(BaseModel):
 
 
 class VaultIngestRequest(BaseModel):
-    vault_path: str
+    vault_path: str | None = None
 
 
 class VaultIngestResponse(BaseModel):
@@ -109,6 +110,46 @@ class ProposalResponse(BaseModel):
     frameworks: list[str]
     supporting_evidence_count: int
     origin_execution_ids: list[str]
+
+
+def _resolve_and_authorize_vault_path(vault_path: str | None) -> Path:
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    allowed_roots: list[Path] = []
+    if settings.skill_vault_root:
+        allowed_roots.append(Path(settings.skill_vault_root).resolve())
+    for r in settings.allowed_vault_roots:
+        if r.strip():
+            allowed_roots.append(Path(r).resolve())
+
+    if not vault_path or not vault_path.strip():
+        if allowed_roots:
+            return allowed_roots[0]
+        raise SkillVaultSecurityError(
+            "No skill vault root configured. "
+            "Ingestion requires a configured KEYSTONE_SKILL_VAULT_ROOT."
+        )
+
+    target = Path(vault_path).resolve()
+    # Check if target is inside or equal to any allowed root
+    authorized = False
+    for root in allowed_roots:
+        try:
+            target.relative_to(root)
+            authorized = True
+            break
+        except ValueError:
+            if target == root:
+                authorized = True
+                break
+
+    if not authorized:
+        raise SkillVaultSecurityError(
+            f"Access denied: vault path '{vault_path}' is not an authorized vault root. "
+            "Must be located within configured vault roots."
+        )
+    return target
 
 
 @router.get("", response_model=list[SkillResponse])
@@ -236,14 +277,20 @@ def search_skills(
 
 @router.post("/vault/ingest", response_model=VaultIngestResponse)
 def ingest_vault(
-    req: VaultIngestRequest,
+    req: VaultIngestRequest | None = None,
     registry: SkillRegistry = Depends(get_skill_registry),  # noqa: B008
 ) -> VaultIngestResponse:
-    """Ingest skills from an Obsidian vault on disk."""
+    """Ingest skills from an authorized Obsidian vault on disk."""
     try:
-        vault = ObsidianSkillVault(vault_root=req.vault_path)
+        path_str = req.vault_path if req else None
+        safe_vault_path = _resolve_and_authorize_vault_path(path_str)
+        vault = ObsidianSkillVault(vault_root=safe_vault_path)
         count, errors = registry.ingest_vault(vault)
         return VaultIngestResponse(ingested_count=count, errors=[[k, v] for k, v in errors])
+    except SkillVaultSecurityError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=f"Vault security violation: {e}"
+        ) from e
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=f"Failed to ingest vault: {e}"

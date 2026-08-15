@@ -14,7 +14,7 @@ This ensures one success does not dominate and one failure does not permanently 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from app.contracts.verification import VerificationStatus
 from app.engine.skills.errors import SkillValidationError
@@ -116,22 +116,28 @@ class SkillEvidenceRepository(Protocol):
 
 
 class InMemorySkillEvidenceRepository:
-    """In-memory implementation of SkillEvidenceRepository."""
+    """In-memory implementation of SkillEvidenceRepository with idempotency guarantees."""
 
     def __init__(self, initial_records: Iterable[SkillExecutionEvidence] = ()) -> None:
-        self._records: list[SkillExecutionEvidence] = []
+        self._records_by_key: dict[tuple[str, str, str, str], SkillExecutionEvidence] = {}
         for r in initial_records:
             self.record_evidence(r)
 
     def record_evidence(self, evidence: SkillExecutionEvidence) -> None:
-        self._records.append(evidence)
+        key = (
+            evidence.execution_id,
+            evidence.task_id,
+            evidence.skill_id,
+            evidence.skill_version,
+        )
+        self._records_by_key[key] = evidence
 
     def get_evidence_for_skill(
         self, skill_id: str, version: str | None = None
     ) -> list[SkillExecutionEvidence]:
         return [
             r
-            for r in self._records
+            for r in self._records_by_key.values()
             if r.skill_id == skill_id and (version is None or r.skill_version == version)
         ]
 
@@ -168,7 +174,173 @@ class InMemorySkillEvidenceRepository:
         )
 
     def get_all_evidence(self) -> list[SkillExecutionEvidence]:
-        return list(self._records)
+        return list(self._records_by_key.values())
+
+
+class SqlAlchemySkillEvidenceRepository:
+    """Database-backed persistent implementation of SkillEvidenceRepository."""
+
+    def __init__(self, session_factory: Any = None) -> None:
+        if session_factory is None:
+            from app.database.session import SessionLocal
+            self._session_factory = SessionLocal
+        else:
+            self._session_factory = session_factory
+
+    def _get_session(self) -> Any:
+        if callable(self._session_factory):
+            return self._session_factory()
+        return self._session_factory
+
+    def record_evidence(self, evidence: SkillExecutionEvidence) -> None:
+        """Persist evidence record to database idempotently."""
+        from app.models.skills import SkillEvidenceRecord
+
+        session = self._get_session()
+        try:
+            existing = (
+                session.query(SkillEvidenceRecord)
+                .filter_by(
+                    execution_id=evidence.execution_id,
+                    task_id=evidence.task_id,
+                    skill_id=evidence.skill_id,
+                    skill_version=evidence.skill_version,
+                )
+                .first()
+            )
+            if existing is not None:
+                # Update existing record idempotently
+                existing.verification_status = (
+                    evidence.verification_status.value
+                    if isinstance(evidence.verification_status, VerificationStatus)
+                    else str(evidence.verification_status)
+                )
+                existing.success = evidence.success
+                existing.failure_category = evidence.failure_category
+                existing.latency_ms = evidence.latency_ms
+                existing.recovery_required = evidence.recovery_required
+                existing.timestamp = evidence.timestamp
+            else:
+                record = SkillEvidenceRecord.from_evidence(evidence)
+                session.add(record)
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            if callable(self._session_factory):
+                session.close()
+
+    def get_evidence_for_skill(
+        self, skill_id: str, version: str | None = None
+    ) -> list[SkillExecutionEvidence]:
+        from app.models.skills import SkillEvidenceRecord
+
+        session = self._get_session()
+        try:
+            query = session.query(SkillEvidenceRecord).filter_by(skill_id=skill_id)
+            if version is not None:
+                query = query.filter_by(skill_version=version)
+            query = query.order_by(SkillEvidenceRecord.timestamp.asc())
+            rows = query.all()
+
+            results = []
+            for row in rows:
+                v_status = (
+                    VerificationStatus(row.verification_status)
+                    if row.verification_status in VerificationStatus._value2member_map_
+                    else VerificationStatus.INCONCLUSIVE
+                )
+                results.append(
+                    SkillExecutionEvidence(
+                        skill_id=row.skill_id,
+                        skill_version=row.skill_version,
+                        task_type=row.task_type,
+                        agent_id=row.agent_id,
+                        execution_id=row.execution_id,
+                        task_id=row.task_id,
+                        verification_status=v_status,
+                        success=row.success,
+                        failure_category=row.failure_category,
+                        latency_ms=row.latency_ms,
+                        recovery_required=row.recovery_required,
+                        timestamp=row.timestamp,
+                    )
+                )
+            return results
+        finally:
+            if callable(self._session_factory):
+                session.close()
+
+    def get_metrics_for_skill(
+        self, skill_id: str, version: str | None = None
+    ) -> SkillMetricsSummary:
+        records = self.get_evidence_for_skill(skill_id, version)
+        if not records:
+            return SkillMetricsSummary(skill_id=skill_id, skill_version=version)
+
+        total = len(records)
+        successes = sum(1 for r in records if r.verification_status is VerificationStatus.PASSED)
+        failures = sum(1 for r in records if r.verification_status is VerificationStatus.FAILED)
+        inconclusives = total - successes - failures
+        severe = sum(
+            1
+            for r in records
+            if r.failure_category
+            in ("FATAL_SYSTEM_ERROR", "CORRUPT_STATE", "SECURITY_VIOLATION", "SEVERE")
+        )
+        recoveries = sum(1 for r in records if r.recovery_required)
+        mean_lat = sum(r.latency_ms for r in records) / total if total > 0 else 0.0
+
+        return SkillMetricsSummary(
+            skill_id=skill_id,
+            skill_version=version,
+            total_samples=total,
+            verified_successes=successes,
+            verified_failures=failures,
+            inconclusive_count=inconclusives,
+            severe_failures=severe,
+            recovery_count=recoveries,
+            mean_latency_ms=mean_lat,
+        )
+
+    def get_all_evidence(self) -> list[SkillExecutionEvidence]:
+        from app.models.skills import SkillEvidenceRecord
+
+        session = self._get_session()
+        try:
+            rows = (
+                session.query(SkillEvidenceRecord)
+                .order_by(SkillEvidenceRecord.timestamp.asc())
+                .all()
+            )
+            results = []
+            for row in rows:
+                v_status = (
+                    VerificationStatus(row.verification_status)
+                    if row.verification_status in VerificationStatus._value2member_map_
+                    else VerificationStatus.INCONCLUSIVE
+                )
+                results.append(
+                    SkillExecutionEvidence(
+                        skill_id=row.skill_id,
+                        skill_version=row.skill_version,
+                        task_type=row.task_type,
+                        agent_id=row.agent_id,
+                        execution_id=row.execution_id,
+                        task_id=row.task_id,
+                        verification_status=v_status,
+                        success=row.success,
+                        failure_category=row.failure_category,
+                        latency_ms=row.latency_ms,
+                        recovery_required=row.recovery_required,
+                        timestamp=row.timestamp,
+                    )
+                )
+            return results
+        finally:
+            if callable(self._session_factory):
+                session.close()
 
 
 __all__ = [
@@ -176,4 +348,5 @@ __all__ = [
     "SkillEvidenceRepository",
     "SkillExecutionEvidence",
     "SkillMetricsSummary",
+    "SqlAlchemySkillEvidenceRepository",
 ]

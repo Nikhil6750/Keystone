@@ -48,6 +48,10 @@ class CompiledTaskNode(BaseModel):
     verification_requirements: dict[str, Any] = Field(default_factory=dict)
     parallel_safe: bool = False
     estimated_complexity: ComplexityLevel = ComplexityLevel.SIMPLE
+    skill_id: str | None = None
+    skill_version: str | None = None
+    skill_name: str | None = None
+    skill_guidance: str | None = None
 
     def to_task_spec(self) -> TaskSpec:
         """Convert compiler node to standard contract TaskSpec."""
@@ -61,6 +65,11 @@ class CompiledTaskNode(BaseModel):
             "preferred_capabilities": [c.value for c in self.preferred_capabilities],
             "verification_requirements": self.verification_requirements,
         }
+        if self.skill_id:
+            input_payload["skill_id"] = self.skill_id
+            input_payload["skill_version"] = self.skill_version
+            input_payload["skill_name"] = self.skill_name
+            input_payload["skill_guidance"] = self.skill_guidance
         outcome = None
         if self.verification_requirements:
             eval_type = self.verification_requirements.get(

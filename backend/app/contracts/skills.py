@@ -42,17 +42,6 @@ class SkillCategory(StrEnum):
     GENERAL = "General"
 
 
-_FORBIDDEN_PROVIDER_FIELD_PREFIXES = (
-    "preferred_codex",
-    "preferred_claude",
-    "preferred_antigravity",
-    "preferred_agent",
-    "codex_",
-    "claude_",
-    "antigravity_",
-)
-
-
 class SkillContractValidationError(ValueError):
     """Raised when a skill definition violates typing or neutral contract invariants."""
 
@@ -91,14 +80,20 @@ class SkillContract:
         if not self.name or not self.name.strip():
             raise SkillContractValidationError("name must not be blank")
 
-        # Check for forbidden provider-specific fields in provenance or custom keys
+        # Structurally forbid any provider-specific preferences in SkillContract
+        # Agent/provider selection is purely empirical via SkillEvidence,
+        # never hardcoded in skill definitions.
         for key in self.provenance:
-            for forbidden in _FORBIDDEN_PROVIDER_FIELD_PREFIXES:
-                if key.lower().startswith(forbidden):
-                    raise SkillContractValidationError(
-                        f"Provider-specific field '{key}' is forbidden in SkillContract. "
-                        "Agent performance belongs in SkillEvidence, not SkillContract."
-                    )
+            key_lower = key.lower()
+            if (
+                key_lower.startswith("preferred_")
+                or key_lower.startswith("provider_")
+                or key_lower.startswith("target_agent")
+            ):
+                raise SkillContractValidationError(
+                    f"Provider-specific field '{key}' is forbidden in SkillContract. "
+                    "Agent performance belongs in SkillEvidence, not SkillContract."
+                )
 
         # Normalize category
         if isinstance(self.category, str):

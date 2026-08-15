@@ -102,15 +102,17 @@ class SkillAdaptiveRAGTracker:
     def record_observation(
         self,
         task_type: str,
-        objective: str,
-        retrieved_skill_ids: list[str],
-        selected_skill_id: str | None,
-        agent_id: str | None,
-        execution_id: str,
-        task_id: str,
+        objective: str = "",
+        retrieved_skill_ids: tuple[str, ...] | list[str] = (),
+        selected_skill_id: str | None = None,
+        agent_id: str | None = None,
+        execution_id: str = "",
+        task_id: str = "",
+        task_fingerprint: str | None = None,
     ) -> SkillRetrievalObservation:
+        fp = task_fingerprint or _compute_task_fingerprint(task_type, objective)
         obs = SkillRetrievalObservation(
-            task_fingerprint=_compute_task_fingerprint(task_type, objective),
+            task_fingerprint=fp,
             task_type=task_type,
             retrieved_skill_ids=tuple(retrieved_skill_ids),
             selected_skill_id=selected_skill_id,
@@ -124,14 +126,16 @@ class SkillAdaptiveRAGTracker:
     def record_feedback(
         self,
         task_type: str,
-        objective: str,
-        skill_id: str,
-        verification_status: VerificationStatus,
-        agent_id: str | None,
-        execution_id: str,
+        objective: str = "",
+        skill_id: str = "",
+        verification_status: VerificationStatus = VerificationStatus.PASSED,
+        agent_id: str | None = None,
+        execution_id: str = "",
+        task_fingerprint: str | None = None,
     ) -> SkillRetrievalFeedback:
+        fp = task_fingerprint or _compute_task_fingerprint(task_type, objective)
         fb = SkillRetrievalFeedback(
-            task_fingerprint=_compute_task_fingerprint(task_type, objective),
+            task_fingerprint=fp,
             task_type=task_type,
             skill_id=skill_id,
             verification_status=verification_status,

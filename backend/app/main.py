@@ -88,6 +88,8 @@ def _build_orchestration_service_factory(app: FastAPI) -> ServiceFactory:
             retry_policy=app.state.retry_policy,
             event_sink=event_sink,
             event_sequence=event_sequence,
+            skill_registry=getattr(app.state, "skill_registry", None),
+            skill_evidence_repo=getattr(app.state, "skill_evidence_repo", None),
         )
         return service, db.close
 
@@ -136,13 +138,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         service_factory=_build_orchestration_service_factory(app),
     )
 
-    from app.engine.skills.evidence import InMemorySkillEvidenceRepository
+    from app.engine.skills.evidence import SqlAlchemySkillEvidenceRepository
     from app.engine.skills.foundry import CandidateSkillFoundry
     from app.engine.skills.lifecycle import SkillLifecycleManager
     from app.engine.skills.registry import SkillRegistry
 
-    app.state.skill_evidence_repo = InMemorySkillEvidenceRepository()
-    app.state.skill_registry = SkillRegistry(evidence_repo=app.state.skill_evidence_repo)
+    app.state.skill_evidence_repo = SqlAlchemySkillEvidenceRepository(session_factory=SessionLocal)
+    app.state.skill_registry = SkillRegistry(
+        evidence_repo=app.state.skill_evidence_repo,
+        session_factory=SessionLocal,
+    )
     app.state.candidate_skill_foundry = CandidateSkillFoundry(
         registry=app.state.skill_registry,
         evidence_repo=app.state.skill_evidence_repo,

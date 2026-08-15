@@ -99,18 +99,19 @@ class SkillLifecycleManager:
         # Check TRUSTED (Degradation checks)
         if current == SkillStatus.TRUSTED:
             conclusive = metrics.verified_successes + metrics.verified_failures
-            if conclusive >= 5:
+            if metrics.verified_failures >= self.policy.trusted_degradation_failure_count:
                 reliability = metrics.smoothed_reliability(
                     prior_alpha=self.policy.prior_alpha, prior_beta=self.policy.prior_beta
                 )
                 if reliability < self.policy.min_reliability_before_demotion:
                     return (
                         SkillStatus.VERIFIED,
-                        f"Degraded performance: smoothed reliability dropped to {reliability:.1%} "
+                        f"Degraded performance: {metrics.verified_failures} failures observed, "
+                        f"smoothed reliability dropped to {reliability:.1%} "
                         f"(below {self.policy.min_reliability_before_demotion:.1%} threshold)",
                     )
             is_severely_degraded = (
-                metrics.verified_failures >= 10
+                metrics.verified_failures >= (self.policy.trusted_degradation_failure_count * 2)
                 and metrics.verified_failures > metrics.verified_successes
             )
             if is_severely_degraded:

@@ -16,11 +16,13 @@ Does not rely only on vector similarity.
 
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from app.contracts.planning import TaskSpec
 from app.contracts.skills import SkillContract, SkillStatus
 from app.engine.planning.compiler import CompiledTaskNode
+from app.engine.skills.adaptive_rag import SkillAdaptiveRAGTracker
 from app.engine.skills.evidence import SkillEvidenceRepository
 from app.engine.skills.registry import SkillRegistry
 
@@ -54,16 +56,18 @@ def _jaccard_similarity(tokens1: set[str], tokens2: set[str]) -> float:
 
 
 class SkillRetriever:
-    """Multi-factor skill retrieval engine."""
+    """Multi-factor skill retrieval engine with adaptive outcome-grounded learning."""
 
     def __init__(
         self,
         registry: SkillRegistry,
         evidence_repo: SkillEvidenceRepository | None = None,
+        adaptive_tracker: SkillAdaptiveRAGTracker | None = None,
         min_score_threshold: float = 0.05,
     ) -> None:
         self.registry = registry
         self.evidence_repo = evidence_repo
+        self.adaptive_tracker = adaptive_tracker
         self.min_score_threshold = min_score_threshold
 
     def retrieve_skills_for_task(
@@ -158,7 +162,7 @@ class SkillRetriever:
                 else:
                     proj_rel = 0.3
 
-            # 5. Verified Utility
+            # 5. Verified Utility (Empirical Reliability + Adaptive RAG Adjustment)
             verified_utility = 0.5  # Neutral baseline prior
             if self.evidence_repo is not None:
                 metrics = self.evidence_repo.get_metrics_for_skill(skill.skill_id)
@@ -166,6 +170,10 @@ class SkillRetriever:
                     verified_utility = metrics.smoothed_reliability(
                         prior_alpha=1.0, prior_beta=1.0
                     )
+
+            if self.adaptive_tracker is not None:
+                adj = self.adaptive_tracker.get_utility_adjustment(skill.skill_id, task_type)
+                verified_utility = min(1.0, max(0.1, verified_utility + adj))
 
             # 6. Status Bonus / Multiplier
             status_multipliers = {
@@ -177,8 +185,13 @@ class SkillRetriever:
             }
             status_bonus = status_multipliers.get(skill.status, 0.8)
 
-            # 7. Freshness (bounded around 1.0)
-            freshness = 1.0
+            # 7. Bounded Timestamp Freshness (bounded in [0.85, 1.0] based on updated_at)
+            now = datetime.now(UTC)
+            updated_dt = skill.updated_at
+            if updated_dt.tzinfo is None:
+                updated_dt = updated_dt.replace(tzinfo=UTC)
+            age_days = max(0.0, (now - updated_dt).total_seconds() / 86400.0)
+            freshness = max(0.85, 1.0 - 0.15 * min(1.0, age_days / 90.0))
 
             # Composite Score calculation
             base_score = (
@@ -194,7 +207,7 @@ class SkillRetriever:
             explanation = (
                 f"Status: {skill.status.value}, TaskTypeMatch: {task_type_match:.2f}, "
                 f"CapMatch: {capability_match:.2f}, Semantic: {semantic_relevance:.2f}, "
-                f"Utility: {verified_utility:.2f}"
+                f"Utility: {verified_utility:.2f}, Freshness: {freshness:.2f}"
             )
 
             if base_score >= self.min_score_threshold:

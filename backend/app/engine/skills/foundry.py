@@ -87,17 +87,36 @@ class CandidateSkillFoundry:
         task_types: tuple[str, ...],
         capabilities: tuple[AgentCapability, ...],
         name: str,
+        procedure: str = "",
+        verification_contract: dict[str, Any] | None = None,
     ) -> SkillContract | None:
-        """Search existing skills for high semantic or task-type overlap.
+        """Search existing skills for high semantic, procedure, or task-type overlap.
 
         Returns matching existing SkillContract if overlap is detected, else None.
         """
         all_skills = self.registry.list_skills(latest_only=True)
-        name_lower = name.lower()
+        name_lower = name.lower().strip()
+
+        import re
+
+        def _tokenize(text: str) -> set[str]:
+            return {w.lower() for w in re.findall(r"[A-Za-z0-9_\-]+", text) if len(w) > 2}
+
+        def _jaccard(s1: set[str], s2: set[str]) -> float:
+            if not s1 or not s2:
+                return 0.0
+            return len(s1 & s2) / len(s1 | s2)
+
+        input_proc_tokens = _tokenize(f"{name} {procedure}")
+        input_criteria = set()
+        if verification_contract and "criteria" in verification_contract:
+            cr_list = verification_contract["criteria"]
+            if isinstance(cr_list, list):
+                input_criteria = {str(c).lower().strip() for c in cr_list}
 
         for skill in all_skills:
             # 1. Exact or near name match
-            if skill.name.lower() == name_lower:
+            if skill.name.lower().strip() == name_lower:
                 return skill
 
             # 2. Complete task type and capability overlap
@@ -108,6 +127,19 @@ class CandidateSkillFoundry:
                 and set(capabilities).issubset(set(skill.capabilities))
             ):
                 return skill
+
+            # 3. High procedure / semantic similarity (> 0.65 Jaccard overlap)
+            skill_proc_tokens = _tokenize(f"{skill.name} {skill.procedure}")
+            if _jaccard(input_proc_tokens, skill_proc_tokens) > 0.65:
+                return skill
+
+            # 4. Verification criteria overlap with matching task type
+            if input_criteria and skill.verification_contract:
+                existing_cr = skill.verification_contract.get("criteria", [])
+                if isinstance(existing_cr, list):
+                    existing_cr_set = {str(c).lower().strip() for c in existing_cr}
+                    if input_criteria & existing_cr_set and set(task_types) & set(skill.task_types):
+                        return skill
 
         return None
 
@@ -136,8 +168,10 @@ class CandidateSkillFoundry:
                 f"(found {len(origin_execution_ids)})",
             )
 
-        # Check for duplicates
-        duplicate = self.check_for_duplicates(task_types, capabilities, name)
+        # Check for duplicates with semantic and procedure overlap
+        duplicate = self.check_for_duplicates(
+            task_types, capabilities, name, procedure, verification_contract
+        )
         if duplicate is not None:
             return (
                 None,

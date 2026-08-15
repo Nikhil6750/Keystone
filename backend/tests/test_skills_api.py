@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 from httpx import AsyncClient
 
 from app.api.deps import (
@@ -11,6 +12,7 @@ from app.api.deps import (
     get_skill_registry,
 )
 from app.contracts.skills import SkillCategory, SkillContract, SkillStatus
+from app.core.config import get_settings
 from app.engine.skills.evidence import InMemorySkillEvidenceRepository
 from app.engine.skills.foundry import CandidateSkillFoundry
 from app.engine.skills.lifecycle import SkillLifecycleManager
@@ -19,7 +21,12 @@ from app.engine.skills.vault import ObsidianSkillVault
 from app.main import app
 
 
-async def test_skills_api_crud_and_search(tmp_path: Path, client: AsyncClient) -> None:
+async def test_skills_api_crud_and_search(
+    tmp_path: Path, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "skill_vault_root", str(tmp_path / "Vault"))
+
     # 1. Populate disposable vault
     vault = ObsidianSkillVault(vault_root=tmp_path / "Vault")
     skill1 = SkillContract(

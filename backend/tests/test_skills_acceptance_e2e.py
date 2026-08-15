@@ -1,11 +1,11 @@
-"""Stage 9C Full E2E Acceptance & Negative Acceptance Test Suite.
+"""Stage 9C Service-Layer Coordinator Acceptance & Negative Acceptance Test Suite.
 
-Certifies:
-1. End-to-end flow: TaskGraph -> SkillRetriever -> SkillAssignment -> AgentSelection
+Certifies service-level flow:
+1. Flow: TaskGraph -> SkillRetriever -> SkillAssignment -> AgentSelection
    -> Verification -> Evidence.
 2. Verified outcome updates retrieval utility and SkillEvidence.
-3. Negative acceptance: A bad candidate skill experiences failure, gets penalized
-   in retrieval, does not promote, and does not corrupt trusted skills.
+3. Negative acceptance: Failing candidate skill gets penalized and does not corrupt trusted skills.
+(For full EndToEndOrchestrationService pipeline testing, see test_skills_production_path_e2e.py).
 """
 
 from pathlib import Path

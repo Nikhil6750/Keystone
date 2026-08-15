@@ -15,6 +15,7 @@ from app.contracts.adapter import AgentDescriptor
 from app.contracts.enums import AgentCapability, AgentStatus, RuntimeKind
 from app.database.base import Base
 from app.database.session import enable_sqlite_foreign_keys
+from app.engine.orchestration.errors import OrchestrationExecutionAlreadyExistsError
 from app.engine.orchestration.events import (
     OrchestrationEvent,
     OrchestrationEventSequence,
@@ -66,6 +67,20 @@ async def test_store_create_then_get_returns_accepted_record() -> None:
     assert record is not None
     assert record.status == OrchestrationExecutionStatus.ACCEPTED
     assert record.result is None
+
+
+async def test_store_rejects_duplicate_id_without_destroying_existing_evidence() -> None:
+    store = InMemoryOrchestrationExecutionStore()
+    await store.create("exec-duplicate")
+    await store.on_event(
+        _make_event("exec-duplicate", 1, OrchestrationEventType.EXECUTION_ACCEPTED)
+    )
+
+    with pytest.raises(OrchestrationExecutionAlreadyExistsError):
+        await store.create("exec-duplicate")
+
+    events = await store.get_events("exec-duplicate")
+    assert [event.sequence for event in events] == [1]
 
 
 async def test_store_get_unknown_execution_returns_none() -> None:
@@ -270,6 +285,55 @@ async def test_coordinator_isolates_concurrent_executions(healthy_db_engine: Eng
     assert all(e.execution_id == id_b for e in events_b)
     assert len(manager.calls) == 2
     assert {call.request_id for call in manager.calls} == {id_a, id_b}
+
+
+async def test_coordinator_rejects_simultaneous_duplicate_execution_ids(
+    healthy_db_engine: Engine,
+) -> None:
+    factory, manager, _registry = build_test_service_factory(
+        db_engine=healthy_db_engine, agent_type="dyn-agent-1"
+    )
+    store = InMemoryOrchestrationExecutionStore()
+    coordinator = OrchestrationExecutionCoordinator(store=store, service_factory=factory)
+    request = _request("exec-same", agent_type="dyn-agent-1")
+
+    results = await asyncio.gather(
+        coordinator.start(request), coordinator.start(request), return_exceptions=True
+    )
+    assert sum(result == "exec-same" for result in results) == 1
+    assert (
+        sum(isinstance(result, OrchestrationExecutionAlreadyExistsError) for result in results) == 1
+    )
+
+    await coordinator.wait_for("exec-same", timeout=5.0)
+    assert len(manager.calls) == 1
+    events = await store.get_events("exec-same")
+    assert events[0].event_type == OrchestrationEventType.EXECUTION_ACCEPTED
+    assert len([event for event in events if event.sequence == 1]) == 1
+
+
+async def test_coordinator_factory_failure_reaches_terminal_failed_state() -> None:
+    def broken_factory(
+        request: OrchestrationRequest,
+        event_sink: OrchestrationEventSink,
+        event_sequence: OrchestrationEventSequence,
+    ) -> tuple[EndToEndOrchestrationService, Callable[[], None]]:
+        del request, event_sink, event_sequence
+        raise RuntimeError("provider bootstrap secret must not leak")
+
+    store = InMemoryOrchestrationExecutionStore()
+    coordinator = OrchestrationExecutionCoordinator(store=store, service_factory=broken_factory)
+
+    execution_id = await coordinator.start(_request("exec-factory-failure"))
+    await coordinator.wait_for(execution_id, timeout=5.0)
+
+    record = await store.get(execution_id)
+    assert record is not None
+    assert record.status == OrchestrationExecutionStatus.FAILED
+    assert record.error_summary == "RuntimeError: an unexpected internal error occurred"
+    assert "secret" not in record.error_summary
+    events = await store.get_events(execution_id)
+    assert events[-1].event_type == OrchestrationEventType.EXECUTION_FAILED
 
 
 async def test_coordinator_maps_persistence_failure_to_failed_status() -> None:

@@ -31,7 +31,12 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Protocol
 
-from app.adapters.connection import AgentConnectionCache, ConnectionStatus
+from app.adapters.connection import (
+    AgentConnectionCache,
+    AuthenticationStatus,
+    ConnectionStatus,
+    InstallationStatus,
+)
 from app.adapters.types import AgentType
 from app.contracts.adapter import AgentDescriptor
 from app.contracts.enums import AgentCapability, AgentStatus, RuntimeKind
@@ -117,7 +122,31 @@ STATIC_AGENT_DESCRIPTORS: dict[str, AgentDescriptor] = {
         agent_type=AgentType.DEMO.value,
         display_name="Demo Agent",
         runtime_kind=RuntimeKind.AGENT_CLI,
-        capabilities=[AgentCapability.CODE_GENERATION, AgentCapability.GENERAL_REASONING],
+        # `DemoAgentAdapter.execute()` always returns the same canned,
+        # clearly-labeled "[DEMO] Simulated result" regardless of what
+        # capability a task actually needed (see app/adapters/demo.py) --
+        # unlike the real CLI adapters above, declaring a broader
+        # capability set here never overclaims what it can *do*, only
+        # what task shapes the Router will consider routing to it. A
+        # narrower set (previously just CODE_GENERATION and
+        # GENERAL_REASONING, mirroring Gemini's real, genuinely limited
+        # capabilities) made the demo agent permanently unroutable for the
+        # ordinary "implement + test" task graphs the real Planner
+        # generates for most goals -- defeating its purpose as the
+        # no-cost, no-external-dependency local E2E path (same rationale
+        # already applied to Claude Code's own capability list above).
+        capabilities=[
+            AgentCapability.CODE_GENERATION,
+            AgentCapability.CODE_REVIEW,
+            AgentCapability.DEBUGGING,
+            AgentCapability.REFACTORING,
+            AgentCapability.TEST_GENERATION,
+            AgentCapability.FILE_EDITING,
+            AgentCapability.GENERAL_REASONING,
+            AgentCapability.TEST_EXECUTION,
+            AgentCapability.PLANNING,
+            AgentCapability.DOCUMENTATION,
+        ],
     ),
 }
 
@@ -220,6 +249,17 @@ class RegistryCandidateProvider:
             state = self.connection_cache.get(str(fallback_key))
         if state is None:
             return AgentStatus.UNKNOWN
+        if state.connection_status is ConnectionStatus.CONNECTED and not (
+            state.enabled
+            and state.registered
+            and state.installation_status is InstallationStatus.INSTALLED
+            and state.authentication_status is AuthenticationStatus.AUTHENTICATED
+        ):
+            # Treat internally inconsistent/corrupted cache state as
+            # unavailable. A "connected" string alone is not sufficient
+            # authority to route execution onto a disabled, missing, or
+            # unauthenticated runtime.
+            return AgentStatus.UNAVAILABLE
         return _CONNECTION_STATUS_TO_AGENT_STATUS.get(state.connection_status, AgentStatus.UNKNOWN)
 
     def _circuit_state_for(self, agent_type: str, fallback_key: object) -> CircuitState:

@@ -16,7 +16,11 @@ from app.engine.compensation_exceptions import (
     InvalidCompensationStateError,
 )
 from app.engine.exceptions import InvalidWorkflowStateError, WorkflowNotFoundError
-from app.engine.orchestration.errors import OrchestrationExecutionNotFoundError
+from app.engine.orchestration.errors import (
+    InvalidOrchestrationRequestError,
+    OrchestrationExecutionAlreadyExistsError,
+    OrchestrationExecutionNotFoundError,
+)
 from app.engine.registry import ExecutorNotRegisteredError
 from app.resilience.circuit_breaker import CircuitBreakerOpenError
 from app.schemas.errors import APIError, APIErrorCode, APIErrorEnvelope
@@ -129,6 +133,24 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
             content=_envelope(APIErrorCode.ORCHESTRATION_EXECUTION_NOT_FOUND, str(exc)),
+        )
+
+    @app.exception_handler(OrchestrationExecutionAlreadyExistsError)
+    async def _orchestration_execution_exists(
+        _: Request, exc: OrchestrationExecutionAlreadyExistsError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=_envelope(APIErrorCode.ORCHESTRATION_EXECUTION_EXISTS, str(exc)),
+        )
+
+    @app.exception_handler(InvalidOrchestrationRequestError)
+    async def _invalid_orchestration_request(
+        _: Request, exc: InvalidOrchestrationRequestError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content=_envelope(APIErrorCode.INVALID_REQUEST, str(exc)),
         )
 
     from app.engine.connections.exceptions import (

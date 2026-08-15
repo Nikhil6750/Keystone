@@ -97,11 +97,20 @@ async def get_orchestration_execution(
         verification_status=result.verification_status if result is not None else None,
         task_count=result.task_count if result is not None else None,
         selected_agent_types=result.selected_agent_types if result is not None else (),
+        attempt_count=result.attempt_count if result is not None else None,
+        recovery_used=result.recovery_used if result is not None else None,
+        recovery_action=(
+            result.recovery_action.value
+            if result is not None and result.recovery_action is not None
+            else None
+        ),
         learning_event_count=(len(result.learning_event_ids) if result is not None else None),
         retrieval_feedback_recorded=(
             result.retrieval_feedback_recorded if result is not None else None
         ),
         issue_codes=result.issue_codes if result is not None else (),
+        quality_run_id=result.quality_run_id if result is not None else None,
+        quality_verdict_status=result.quality_verdict_status if result is not None else None,
         error_summary=record.error_summary,
         created_at=record.created_at,
         updated_at=record.updated_at,

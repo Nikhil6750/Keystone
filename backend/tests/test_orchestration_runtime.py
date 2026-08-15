@@ -1,5 +1,7 @@
 """Tests for `app.engine.orchestration.runtime`."""
 
+import pytest
+
 from app.adapters.connection import (
     AgentConnectionCache,
     AgentConnectionState,
@@ -85,6 +87,44 @@ def test_registry_candidate_provider_reads_connected_status_from_cache() -> None
     )
     candidates = provider.candidates()
     assert candidates[0].status == AgentStatus.AVAILABLE
+
+
+@pytest.mark.parametrize(
+    ("overrides"),
+    [
+        {"enabled": False},
+        {"registered": False},
+        {"installation_status": InstallationStatus.NOT_INSTALLED},
+        {"authentication_status": AuthenticationStatus.UNAUTHENTICATED},
+    ],
+)
+def test_connected_label_cannot_override_unusable_runtime_state(
+    overrides: dict[str, object],
+) -> None:
+    registry = ExecutorRegistry()
+    registry.register("claude_code", RecordingExecutor())
+    cache = AgentConnectionCache(cache_seconds=60.0)
+    state_fields: dict[str, object] = {
+        "agent_type": "claude_code",
+        "display_name": "Claude Code",
+        "executable_name": "claude",
+        "enabled": True,
+        "installation_status": InstallationStatus.INSTALLED,
+        "authentication_status": AuthenticationStatus.AUTHENTICATED,
+        "connection_status": ConnectionStatus.CONNECTED,
+        "registered": True,
+        "execution_mode": "cli",
+        "version": "1.0.0",
+        "last_checked_at": None,
+        "reason": "malformed cached state",
+    }
+    state_fields.update(overrides)
+    cache.set("claude_code", AgentConnectionState(**state_fields))  # type: ignore[arg-type]
+
+    provider = RegistryCandidateProvider(
+        registry=registry, agent_types=("claude_code",), connection_cache=cache
+    )
+    assert provider.candidates()[0].status == AgentStatus.UNAVAILABLE
 
 
 def test_registry_candidate_provider_reads_circuit_state() -> None:

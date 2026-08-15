@@ -103,7 +103,17 @@ def _claim_workflow(
     `claim_workflow_for_compensation_resume` for the public, status-specific
     entry points and their exact semantics.
     """
-    result = cast(
+    # `db.execute(Update(...))` is statically typed as `CursorResult[Any]`
+    # only via this cast: SQLAlchemy's `Session.execute()` overloads return
+    # the broader `Result[Any]` (no `.rowcount`) at the type level even
+    # though an UPDATE genuinely returns a `CursorResult` at runtime. Do not
+    # remove this cast without first confirming `mypy app` (strict, this
+    # repo's pinned mypy/SQLAlchemy versions) is clean without it -- this
+    # exact cast has been removed and restored multiple times across Stage
+    # 9D/9E/prototype reviews; each removal broke `mypy app` with
+    # `"Result[Any]" has no attribute "rowcount"` at this line. Confirmed
+    # still required as of this consolidation.
+    result = cast(  # type: ignore[redundant-cast]
         "CursorResult[Any]",
         db.execute(
             update(Workflow)

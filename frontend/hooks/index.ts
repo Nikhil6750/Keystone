@@ -8,3 +8,4 @@ export * from './use-circuit-breakers';
 export * from './use-audit-events';
 export * from './use-provenance';
 export * from './use-audit-chain-verification';
+export * from './use-orchestration-polling';

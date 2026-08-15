@@ -45,6 +45,19 @@ from app.contracts.explainability import (
     RoutingExplanation,
     ScoreContribution,
 )
+from app.contracts.intelligence import (
+    LOW_SAMPLE_SIZE_THRESHOLD,
+    AgentReliabilityObservation,
+    FailureAttribution,
+    FailureAttributionCategory,
+    IntelligenceEdge,
+    IntelligenceEdgeType,
+    IntelligenceNode,
+    IntelligenceNodeType,
+    QualityGateIntelligence,
+    SkillReliabilityObservation,
+    TaskReliabilityObservation,
+)
 from app.contracts.knowledge import KnowledgeDocument, KnowledgeSearchResult
 from app.contracts.passports import AgentPassport, AgentPassportMetricBucket
 from app.contracts.planning import ExpectedOutcome, PlanningRequest, TaskSpec, WorkflowPlan
@@ -112,6 +125,17 @@ __all__ = [
     "ScoreContribution",
     "KnowledgeDocument",
     "KnowledgeSearchResult",
+    "LOW_SAMPLE_SIZE_THRESHOLD",
+    "AgentReliabilityObservation",
+    "FailureAttribution",
+    "FailureAttributionCategory",
+    "IntelligenceEdge",
+    "IntelligenceEdgeType",
+    "IntelligenceNode",
+    "IntelligenceNodeType",
+    "QualityGateIntelligence",
+    "SkillReliabilityObservation",
+    "TaskReliabilityObservation",
     "AgentPassport",
     "AgentPassportMetricBucket",
     "ExpectedOutcome",

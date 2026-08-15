@@ -93,6 +93,7 @@ from app.engine.adaptive_retrieval.policy import AdaptiveRetrievalPolicy
 from app.engine.adaptive_retrieval.reranking import AdaptiveRetriever, results_only
 from app.engine.benchmark_learning.models import EvidenceSource
 from app.engine.context import ExecutionContext
+from app.engine.intelligence.builder import EngineeringIntelligenceGraphBuilder
 from app.engine.knowledge.context import ContextBudget, ContextBuilder
 from app.engine.knowledge.index import KnowledgeIndex
 from app.engine.knowledge.retrieval import KnowledgeSearchRequest, search
@@ -216,6 +217,7 @@ class EndToEndOrchestrationService:
         skill_adaptive_tracker: SkillAdaptiveRAGTracker | None = None,
         skill_agent_intelligence: SkillAgentIntelligenceEngine | None = None,
         quality_coordinator: QualityFactoryCoordinator | None = None,
+        intelligence_builder: EngineeringIntelligenceGraphBuilder | None = None,
     ) -> None:
         self._db = db
         self._registry = registry
@@ -272,6 +274,9 @@ class EndToEndOrchestrationService:
         # Stage 9D Software Quality Factory Wiring
         self._quality_coordinator = quality_coordinator
         self._quality_runs_by_task_key: dict[str, QualityRun] = {}
+
+        # Stage 9E Engineering Intelligence Graph Wiring
+        self._intelligence_builder = intelligence_builder
 
     # --- Stage 8C.2: observational event emission ---------------------------
 
@@ -432,6 +437,7 @@ class EndToEndOrchestrationService:
                 attempt_count=self._count_attempts(workflow),
                 learning_event_ids=learning_event_ids,
             )
+            self._project_engineering_intelligence(workflow.id, step_to_task)
             await self._emit_execution_completed(execution_id, result)
             return result
 
@@ -513,6 +519,7 @@ class EndToEndOrchestrationService:
             learning_event_ids=all_learning_event_ids,
             retrieval_feedback_recorded=retrieval_feedback_recorded,
         )
+        self._project_engineering_intelligence(final_workflow.id, step_to_task)
         await self._emit_execution_completed(execution_id, result)
         return result
 
@@ -1363,6 +1370,33 @@ class EndToEndOrchestrationService:
                     )
                 except Exception:
                     logger.exception("failed_to_record_skill_adaptive_feedback")
+
+    # --- Stage 9E: Engineering Intelligence Graph projection -----------------
+
+    def _project_engineering_intelligence(
+        self, workflow_id: str, step_to_task: dict[str, TaskSpec]
+    ) -> None:
+        """Project this completed workflow's authoritative execution +
+        quality evidence into the Engineering Intelligence Graph.
+
+        Called only after every authoritative write for this orchestration
+        pass (workflow/step/attempt persistence, Stage 9D quality run
+        persistence, Stage 9C skill evidence) has already completed --
+        never the other way around. `self._intelligence_builder` defaults
+        to `None` (no wiring supplied), in which case this is a no-op, and
+        any exception it raises is caught and logged here, never
+        propagated: intelligence projection is downstream analytical state,
+        never allowed to turn an already-decided orchestration result into
+        a failure (see `app.engine.intelligence.builder`'s module
+        docstring)."""
+        if self._intelligence_builder is None:
+            return
+        try:
+            self._intelligence_builder.ingest_workflow(workflow_id, step_to_task=step_to_task)
+        except Exception:
+            logger.exception(
+                "engineering_intelligence_projection_failed workflow_id=%s", workflow_id
+            )
 
     # --- Shared helpers -----------------------------------------------------
 

@@ -3,6 +3,11 @@
 from app.models.audit_event import AuditEvent
 from app.models.compensation_attempt import CompensationAttempt
 from app.models.enums import AttemptStatus, CompensationAttemptStatus, StepStatus, WorkflowStatus
+from app.models.intelligence import (
+    FailureAttributionRecord,
+    IntelligenceEdgeRecord,
+    IntelligenceNodeRecord,
+)
 from app.models.quality import (
     QualityGateResultRecord,
     QualityProfileRecord,
@@ -25,6 +30,9 @@ __all__ = [
     "AuditEvent",
     "CompensationAttempt",
     "CompensationAttemptStatus",
+    "FailureAttributionRecord",
+    "IntelligenceEdgeRecord",
+    "IntelligenceNodeRecord",
     "LearningEventRecord",
     "QualityGateResultRecord",
     "QualityProfileRecord",

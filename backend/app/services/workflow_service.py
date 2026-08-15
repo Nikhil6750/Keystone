@@ -1,9 +1,9 @@
 """Workflow persistence and state-transition operations."""
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import select, update
+from sqlalchemy import CursorResult, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
@@ -103,14 +103,27 @@ def _claim_workflow(
     `claim_workflow_for_compensation_resume` for the public, status-specific
     entry points and their exact semantics.
     """
-    result = db.execute(
-        update(Workflow)
-        .where(
-            Workflow.id == workflow_id,
-            Workflow.version == expected_version,
-            Workflow.status == required_status,
-        )
-        .values(version=expected_version + 1, updated_at=datetime.now(UTC))
+    # `db.execute(Update(...))` is statically typed as `CursorResult[Any]`
+    # only via this cast: SQLAlchemy's `Session.execute()` overloads return
+    # the broader `Result[Any]` (no `.rowcount`) at the type level even
+    # though an UPDATE genuinely returns a `CursorResult` at runtime. Do not
+    # remove this cast without first confirming `mypy app` (strict, this
+    # repo's pinned mypy/SQLAlchemy versions) is clean without it -- this
+    # exact cast has been removed and restored multiple times across Stage
+    # 9D/9E/prototype reviews; each removal broke `mypy app` with
+    # `"Result[Any]" has no attribute "rowcount"` at this line. Confirmed
+    # still required as of this consolidation.
+    result = cast(
+        "CursorResult[Any]",
+        db.execute(
+            update(Workflow)
+            .where(
+                Workflow.id == workflow_id,
+                Workflow.version == expected_version,
+                Workflow.status == required_status,
+            )
+            .values(version=expected_version + 1, updated_at=datetime.now(UTC))
+        ),
     )
     db.commit()
     return bool(result.rowcount == 1)

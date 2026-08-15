@@ -62,9 +62,7 @@ class Settings(BaseSettings):
     )
 
     # --- Skill Foundry ---
-    skill_vault_root: str | None = Field(
-        default=None, validation_alias="KEYSTONE_SKILL_VAULT_ROOT"
-    )
+    skill_vault_root: str | None = Field(default=None, validation_alias="KEYSTONE_SKILL_VAULT_ROOT")
     allowed_vault_roots: list[str] = Field(
         default_factory=list, validation_alias="KEYSTONE_ALLOWED_VAULT_ROOTS"
     )

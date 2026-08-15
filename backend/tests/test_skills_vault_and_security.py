@@ -154,6 +154,7 @@ def test_vault_path_traversal_protection(tmp_path: Path) -> None:
     # Outside file access attempt
     with pytest.raises(SkillVaultSecurityError, match="escapes vault root"):
         from app.engine.skills.vault import _safe_resolve_path
+
         _safe_resolve_path(vault_dir, "../outside.txt")
 
 

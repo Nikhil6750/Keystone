@@ -1,6 +1,5 @@
 """Deterministic unit tests for SkillEvidence, metrics, and SkillLifecycleManager."""
 
-
 from app.contracts.skills import SkillCategory, SkillContract, SkillStatus
 from app.contracts.verification import VerificationStatus
 from app.engine.skills.evidence import (

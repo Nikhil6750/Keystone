@@ -155,9 +155,7 @@ def parse_skill_markdown(
             c.strip() for c in contraindications_raw.splitlines() if c.strip()
         )
     elif isinstance(contraindications_raw, list):
-        contraindications = tuple(
-            str(c).strip() for c in contraindications_raw if str(c).strip()
-        )
+        contraindications = tuple(str(c).strip() for c in contraindications_raw if str(c).strip())
     else:
         contraindications = ()
 
@@ -318,26 +316,30 @@ def serialize_skill_to_markdown(skill: SkillContract) -> str:
     else:
         lines.append("- None specified")
 
-    lines.extend([
-        "",
-        "## Contraindications and Common Failures",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Contraindications and Common Failures",
+            "",
+        ]
+    )
     if skill.contraindications:
         for c in skill.contraindications:
             lines.append(f"- {c}")
     else:
         lines.append("- None specified")
 
-    lines.extend([
-        "",
-        "## Procedure",
-        "",
-        skill.procedure or "No procedure specified.",
-        "",
-        "## Verification",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Procedure",
+            "",
+            skill.procedure or "No procedure specified.",
+            "",
+            "## Verification",
+            "",
+        ]
+    )
     if skill.verification_contract:
         if "instructions" in skill.verification_contract:
             lines.append(str(skill.verification_contract["instructions"]))

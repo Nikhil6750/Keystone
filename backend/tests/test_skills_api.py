@@ -44,12 +44,8 @@ async def test_skills_api_crud_and_search(
 
     evidence_repo = InMemorySkillEvidenceRepository()
     registry = SkillRegistry(evidence_repo=evidence_repo, vault=vault)
-    foundry = CandidateSkillFoundry(
-        registry=registry, evidence_repo=evidence_repo, vault=vault
-    )
-    lifecycle_mgr = SkillLifecycleManager(
-        registry=registry, evidence_repo=evidence_repo
-    )
+    foundry = CandidateSkillFoundry(registry=registry, evidence_repo=evidence_repo, vault=vault)
+    lifecycle_mgr = SkillLifecycleManager(registry=registry, evidence_repo=evidence_repo)
 
     # Wire isolated test dependencies
     app.dependency_overrides[get_skill_registry] = lambda: registry

@@ -35,9 +35,7 @@ class SkillOrchestrationCoordinator:
     ) -> None:
         self.registry = registry
         self.evidence_repo = evidence_repo
-        self.retriever = retriever or SkillRetriever(
-            registry=registry, evidence_repo=evidence_repo
-        )
+        self.retriever = retriever or SkillRetriever(registry=registry, evidence_repo=evidence_repo)
         self.adaptive_rag = adaptive_rag or SkillAdaptiveRAGTracker()
         self.agent_intelligence = agent_intelligence or SkillAgentIntelligenceEngine(
             evidence_repo=evidence_repo

@@ -63,9 +63,7 @@ class SkillAgentIntelligenceEngine:
         self._prior_weight = prior_weight
         self._prior_mean = prior_mean
 
-    def get_agent_skill_performance(
-        self, skill_id: str, agent_id: str
-    ) -> SkillAgentPerformance:
+    def get_agent_skill_performance(self, skill_id: str, agent_id: str) -> SkillAgentPerformance:
         all_evidence = self._evidence_repo.get_evidence_for_skill(skill_id)
         matching = [e for e in all_evidence if e.agent_id == agent_id]
 
@@ -81,12 +79,8 @@ class SkillAgentIntelligenceEngine:
             )
 
         total = len(matching)
-        successes = sum(
-            1 for e in matching if e.verification_status is VerificationStatus.PASSED
-        )
-        failures = sum(
-            1 for e in matching if e.verification_status is VerificationStatus.FAILED
-        )
+        successes = sum(1 for e in matching if e.verification_status is VerificationStatus.PASSED)
+        failures = sum(1 for e in matching if e.verification_status is VerificationStatus.FAILED)
         mean_lat = sum(e.latency_ms for e in matching) / total if total > 0 else 0.0
         recoveries = sum(1 for e in matching if e.recovery_required)
 
@@ -103,9 +97,7 @@ class SkillAgentIntelligenceEngine:
     def compute_agent_skill_score(self, skill_id: str, agent_id: str) -> float:
         """Returns the empirical score in [0.0, 1.0] for the agent-skill pair."""
         perf = self.get_agent_skill_performance(skill_id, agent_id)
-        return perf.empirical_score(
-            prior_weight=self._prior_weight, prior_mean=self._prior_mean
-        )
+        return perf.empirical_score(prior_weight=self._prior_weight, prior_mean=self._prior_mean)
 
     def rank_agents_for_skill(
         self, skill_id: str, candidate_agent_ids: list[str]

@@ -44,9 +44,7 @@ def test_routing_without_skill_preserves_base_behavior() -> None:
 
     evidence_repo = InMemorySkillEvidenceRepository()
     intel_engine = SkillAgentIntelligenceEngine(evidence_repo=evidence_repo)
-    compiler = AgentOrganizationCompiler(
-        router=Router(), skill_agent_intelligence=intel_engine
-    )
+    compiler = AgentOrganizationCompiler(router=Router(), skill_agent_intelligence=intel_engine)
 
     # Base routing without skill assignment
     team = compiler.assemble_team([task], [c1, c2])
@@ -103,9 +101,7 @@ def test_skill_agent_evidence_influences_routing_within_bounded_policy() -> None
     )
 
     intel_engine = SkillAgentIntelligenceEngine(evidence_repo=evidence_repo)
-    compiler = AgentOrganizationCompiler(
-        router=Router(), skill_agent_intelligence=intel_engine
-    )
+    compiler = AgentOrganizationCompiler(router=Router(), skill_agent_intelligence=intel_engine)
 
     # Task assigned with "sql-optimization" skill
     task_with_skill = CompiledTaskNode(
@@ -144,9 +140,7 @@ def test_neutral_prior_and_insufficient_samples_do_not_skew_routing() -> None:
     )
 
     intel_engine = SkillAgentIntelligenceEngine(evidence_repo=evidence_repo)
-    compiler = AgentOrganizationCompiler(
-        router=Router(), skill_agent_intelligence=intel_engine
-    )
+    compiler = AgentOrganizationCompiler(router=Router(), skill_agent_intelligence=intel_engine)
 
     task = CompiledTaskNode(
         task_id="task-docker",
@@ -181,9 +175,7 @@ def test_single_failure_cannot_blacklist_agent() -> None:
     )
 
     intel_engine = SkillAgentIntelligenceEngine(evidence_repo=evidence_repo)
-    compiler = AgentOrganizationCompiler(
-        router=Router(), skill_agent_intelligence=intel_engine
-    )
+    compiler = AgentOrganizationCompiler(router=Router(), skill_agent_intelligence=intel_engine)
 
     task = CompiledTaskNode(
         task_id="t-2",

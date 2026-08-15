@@ -391,9 +391,7 @@ def test_restart_preserves_learned_skill_retrieval_signal(tmp_path: Path) -> Non
     )
 
     # After restart, learned utility is +0.15 from the 5 persisted passes
-    adj = restarted_adapter.get_utility_adjustment(
-        "persisted-fastapi-skill", "api_implementation"
-    )
+    adj = restarted_adapter.get_utility_adjustment("persisted-fastapi-skill", "api_implementation")
     assert adj == 0.15
 
 
@@ -409,4 +407,3 @@ def test_zero_skill_path_still_works() -> None:
     )
     matches = retriever.retrieve_skills_for_task(task=task)
     assert matches == []
-

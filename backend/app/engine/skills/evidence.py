@@ -183,6 +183,7 @@ class SqlAlchemySkillEvidenceRepository:
     def __init__(self, session_factory: Any = None) -> None:
         if session_factory is None:
             from app.database.session import SessionLocal
+
             self._session_factory = SessionLocal
         else:
             self._session_factory = session_factory

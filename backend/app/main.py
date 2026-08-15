@@ -15,6 +15,7 @@ from app.api.routes.agents import router as agents_router
 from app.api.routes.audit import router as audit_router
 from app.api.routes.health import router as health_router
 from app.api.routes.orchestrations import router as orchestrations_router
+from app.api.routes.quality import router as quality_router
 from app.api.routes.resilience import router as resilience_router
 from app.api.routes.runtime_connections import router as runtime_connections_router
 from app.api.routes.skills import router as skills_router
@@ -90,6 +91,7 @@ def _build_orchestration_service_factory(app: FastAPI) -> ServiceFactory:
             event_sequence=event_sequence,
             skill_registry=getattr(app.state, "skill_registry", None),
             skill_evidence_repo=getattr(app.state, "skill_evidence_repo", None),
+            quality_coordinator=getattr(app.state, "quality_coordinator", None),
         )
         return service, db.close
 
@@ -138,6 +140,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         service_factory=_build_orchestration_service_factory(app),
     )
 
+    from app.engine.quality.coordinator import QualityFactoryCoordinator
+    from app.engine.quality.repository import SqlAlchemyQualityRepository
     from app.engine.skills.evidence import SqlAlchemySkillEvidenceRepository
     from app.engine.skills.foundry import CandidateSkillFoundry
     from app.engine.skills.lifecycle import SkillLifecycleManager
@@ -156,6 +160,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         registry=app.state.skill_registry,
         evidence_repo=app.state.skill_evidence_repo,
     )
+
+    # Stage 9D Software Quality Factory state
+    app.state.quality_repository = SqlAlchemyQualityRepository(session_factory=SessionLocal)
+    app.state.quality_coordinator = QualityFactoryCoordinator(
+        repository=app.state.quality_repository
+    )
+
     yield
     logger.info("%s shutting down", settings.app_name)
 
@@ -185,6 +196,7 @@ app.include_router(orchestrations_router, prefix="/api/v1")
 app.include_router(agent_connections_router, prefix="/api/v1")
 app.include_router(runtime_connections_router, prefix="/api/v1")
 app.include_router(skills_router, prefix="/api/v1")
+app.include_router(quality_router, prefix="/api/v1")
 
 
 @app.get("/")

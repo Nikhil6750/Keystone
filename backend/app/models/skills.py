@@ -136,14 +136,15 @@ class SkillEvidenceRecord(Base):
     __tablename__ = "skill_evidence"
     __table_args__ = (
         UniqueConstraint(
-            "execution_id", "task_id", "skill_id", "skill_version",
-            name="uq_skill_evidence_idempotency"
+            "execution_id",
+            "task_id",
+            "skill_id",
+            "skill_version",
+            name="uq_skill_evidence_idempotency",
         ),
     )
 
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     execution_id: Mapped[str] = mapped_column(String(100), nullable=False)
     task_id: Mapped[str] = mapped_column(String(100), nullable=False)
     skill_id: Mapped[str] = mapped_column(String(100), nullable=False)

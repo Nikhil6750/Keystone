@@ -150,6 +150,8 @@ class OrchestrationResult:
     retrieval_feedback_recorded: bool = False
     warnings: tuple[str, ...] = ()
     issue_codes: tuple[str, ...] = ()
+    quality_run_id: str | None = None
+    quality_verdict_status: str | None = None
 
 
 __all__ = ["OrchestrationOutcome", "OrchestrationRequest", "OrchestrationResult"]

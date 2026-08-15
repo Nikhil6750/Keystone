@@ -77,11 +77,9 @@ class SkillRegistry:
                 key = (skill.skill_id, skill.version)
                 self._skills_by_id_and_version[key] = skill
                 current_latest = self._latest_version_by_id.get(skill.skill_id)
-                if (
-                    current_latest is None
-                    or _parse_version_tuple(skill.version)
-                    >= _parse_version_tuple(current_latest)
-                ):
+                if current_latest is None or _parse_version_tuple(
+                    skill.version
+                ) >= _parse_version_tuple(current_latest):
                     self._latest_version_by_id[skill.skill_id] = skill.version
                 count += 1
             return count
@@ -198,9 +196,7 @@ class SkillRegistry:
     def get_all_versions(self, skill_id: str) -> list[SkillContract]:
         """Return all historical versions of a skill, sorted by version ascending."""
         versions = [
-            skill
-            for (sid, v), skill in self._skills_by_id_and_version.items()
-            if sid == skill_id
+            skill for (sid, v), skill in self._skills_by_id_and_version.items() if sid == skill_id
         ]
         versions.sort(key=lambda s: _parse_version_tuple(s.version))
         return versions

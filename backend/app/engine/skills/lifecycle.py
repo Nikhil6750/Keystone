@@ -62,10 +62,7 @@ class SkillLifecycleManager:
         if current in (SkillStatus.DRAFT, SkillStatus.CANDIDATE):
             min_succ = self.policy.min_verified_successes_for_verification
             max_severe = self.policy.max_severe_failures_allowed_for_verification
-            if (
-                metrics.verified_successes >= min_succ
-                and metrics.severe_failures <= max_severe
-            ):
+            if metrics.verified_successes >= min_succ and metrics.severe_failures <= max_severe:
                 return (
                     SkillStatus.VERIFIED,
                     f"Passed objective verification in {metrics.verified_successes} "

@@ -113,7 +113,7 @@ def _claim_workflow(
     # 9D/9E/prototype reviews; each removal broke `mypy app` with
     # `"Result[Any]" has no attribute "rowcount"` at this line. Confirmed
     # still required as of this consolidation.
-    result = cast(  # type: ignore[redundant-cast]
+    result = cast(
         "CursorResult[Any]",
         db.execute(
             update(Workflow)

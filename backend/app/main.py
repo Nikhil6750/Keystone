@@ -17,6 +17,7 @@ from app.api.routes.health import router as health_router
 from app.api.routes.orchestrations import router as orchestrations_router
 from app.api.routes.resilience import router as resilience_router
 from app.api.routes.runtime_connections import router as runtime_connections_router
+from app.api.routes.skills import router as skills_router
 from app.api.routes.workflows import router as workflows_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
@@ -134,6 +135,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         store=app.state.orchestration_execution_store,
         service_factory=_build_orchestration_service_factory(app),
     )
+
+    from app.engine.skills.evidence import InMemorySkillEvidenceRepository
+    from app.engine.skills.foundry import CandidateSkillFoundry
+    from app.engine.skills.lifecycle import SkillLifecycleManager
+    from app.engine.skills.registry import SkillRegistry
+
+    app.state.skill_evidence_repo = InMemorySkillEvidenceRepository()
+    app.state.skill_registry = SkillRegistry(evidence_repo=app.state.skill_evidence_repo)
+    app.state.candidate_skill_foundry = CandidateSkillFoundry(
+        registry=app.state.skill_registry,
+        evidence_repo=app.state.skill_evidence_repo,
+    )
+    app.state.skill_lifecycle_manager = SkillLifecycleManager(
+        registry=app.state.skill_registry,
+        evidence_repo=app.state.skill_evidence_repo,
+    )
     yield
     logger.info("%s shutting down", settings.app_name)
 
@@ -162,6 +179,7 @@ app.include_router(audit_router, prefix="/api/v1")
 app.include_router(orchestrations_router, prefix="/api/v1")
 app.include_router(agent_connections_router, prefix="/api/v1")
 app.include_router(runtime_connections_router, prefix="/api/v1")
+app.include_router(skills_router, prefix="/api/v1")
 
 
 @app.get("/")

@@ -43,6 +43,7 @@ from app.engine.quality.registry import QualityGateExecutorRegistry
 from app.engine.quality.repository import SqlAlchemyQualityRepository
 from app.engine.registry import ExecutorRegistry
 from app.engine.routing.availability import CandidateAgent
+from app.resilience.circuit_breaker import CircuitState
 
 
 class FakeCandidateProvider(RuntimeCandidateProvider):
@@ -164,6 +165,93 @@ async def test_quality_factory_production_path_success(tmp_path: Path) -> None:
         assert run is not None
         assert run.verdict is not None
         assert run.verdict.passed is True
+
+        # Reusing the production service for a request where Stage 9D is not
+        # applicable must not expose the prior request's authoritative run.
+        legacy_result = await service.orchestrate(
+            OrchestrationRequest(
+                request_id="req-quality-not-applicable-after-pass",
+                goal="Implement feature without a workspace",
+                available_agent_types=["quality-demo-agent"],
+            )
+        )
+        assert legacy_result.quality_run_id is None
+        assert legacy_result.quality_verdict_status is None
+
+
+@pytest.mark.asyncio
+async def test_quality_persistence_failure_does_not_expose_fake_run_id(tmp_path: Path) -> None:
+    class FailingRunRepository(SqlAlchemyQualityRepository):
+        def save_run(self, run: Any) -> None:
+            raise RuntimeError("authoritative save_run unavailable")
+
+    db_file = tmp_path / "quality_persistence_failure.db"
+    engine = create_engine(f"sqlite:///{db_file}", echo=False)
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine)
+
+    q_repo = FailingRunRepository(session_factory=session_factory)
+    q_repo.save_profile(
+        QualityProfile(
+            profile_id="default-profile",
+            name="Default Quality Profile",
+            gates=(
+                QualityGateSpec(
+                    gate_id="python-tests",
+                    gate_type=QualityGateType.TEST,
+                    name="Tests",
+                    required=True,
+                ),
+            ),
+            is_default=True,
+        )
+    )
+    q_registry = QualityGateExecutorRegistry()
+    q_registry.register_executor(
+        QualityGateType.TEST,
+        MockQualityGateExecutor(default_status=QualityGateStatus.PASSED),
+    )
+
+    exec_registry = ExecutorRegistry()
+    exec_registry.register("quality-demo-agent", QualityDemoAdapter())
+    descriptor = AgentDescriptor(
+        agent_type="quality-demo-agent",
+        display_name="Quality Demo Agent",
+        capabilities=[
+            AgentCapability.CODE_GENERATION,
+            AgentCapability.TEST_GENERATION,
+            AgentCapability.TEST_EXECUTION,
+            AgentCapability.FILE_EDITING,
+        ],
+        cost_tier="standard",
+    )
+    candidate = CandidateAgent(
+        descriptor=descriptor,
+        status=AgentStatus.AVAILABLE,
+        circuit_state=CircuitState.CLOSED,
+    )
+    service = EndToEndOrchestrationService(
+        db=session_factory(),
+        registry=exec_registry,
+        candidate_provider=FakeCandidateProvider([candidate]),
+        quality_coordinator=QualityFactoryCoordinator(
+            repository=q_repo,
+            registry=q_registry,
+        ),
+    )
+
+    result = await service.orchestrate(
+        OrchestrationRequest(
+            request_id="req-quality-persistence-failure",
+            goal="Implement feature with verified tests",
+            workspace_root=str(tmp_path),
+            available_agent_types=["quality-demo-agent"],
+        )
+    )
+
+    assert result.outcome != OrchestrationOutcome.VERIFIED_SUCCESS
+    assert result.quality_run_id is None
+    assert result.quality_verdict_status == "ERROR"
 
 
 @pytest.mark.asyncio

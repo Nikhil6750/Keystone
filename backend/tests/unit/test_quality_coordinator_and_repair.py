@@ -264,3 +264,8 @@ def test_coordinator_persistence_failure_blocks_acceptance() -> None:
         assert verdict.passed is False
         assert "Quality persistence failure" in verdict.summary_explanation
         assert run.run_id.startswith("unpersisted-")
+        assert verdict.total_gates == len(run.gate_results) == 2
+        assert verdict.passed_gates == 1
+        assert verdict.error_gates == 1
+        assert run.gate_results[-1].gate_id == "quality-persistence"
+        assert run.gate_results[-1].status == QualityGateStatus.ERROR

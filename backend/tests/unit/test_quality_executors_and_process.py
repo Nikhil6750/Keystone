@@ -76,6 +76,13 @@ def test_validate_workspace_path_containment() -> None:
         with pytest.raises(QualitySecurityError, match="Path escape violation"):
             resolve_and_validate_target_path(ws_root, str(ws_root.parent))
 
+        # Malformed values are rejected instead of being stringified into paths.
+        with pytest.raises(QualitySecurityError, match="expected a string"):
+            resolve_and_validate_target_path(ws_root, {"path": "subdir"})  # type: ignore[arg-type]
+
+        with pytest.raises(QualitySecurityError, match="NUL characters"):
+            resolve_and_validate_target_path(ws_root, "bad\x00path")
+
 
 def test_safe_quality_process_runner_allowlist_enforcement() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -103,6 +110,12 @@ def test_safe_quality_process_runner_rejects_arbitrary_code_evaluation() -> None
 
         with pytest.raises(QualitySecurityError, match="arbitrary Node.js code strings"):
             runner.run(argv=["node", "--eval", "console.log('hi')"])
+
+        with pytest.raises(QualitySecurityError, match="arbitrary Node.js code strings"):
+            runner.run(argv=["node", "-p", "process.version"])
+
+        with pytest.raises(QualitySecurityError, match="arbitrary Node.js code strings"):
+            runner.run(argv=["node", "--print", "process.version"])
 
         # Arbitrary npx package is rejected
         with pytest.raises(QualitySecurityError, match="not in approved verification tools"):

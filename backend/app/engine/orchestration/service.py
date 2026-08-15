@@ -312,6 +312,8 @@ class EndToEndOrchestrationService:
         called directly (not offloaded), matching how `WorkflowEngine`
         itself is synchronous throughout this codebase today."""
         execution_id = request.request_id
+        self._last_quality_run = None
+        self._quality_runs_by_task_key.clear()
         # Already validated by `OrchestrationRequest`'s own field validator
         # (absolute, exists, is a directory) -- read once here and handed
         # to every `WorkflowEngine` this orchestration constructs (Phase D
@@ -1425,7 +1427,14 @@ class EndToEndOrchestrationService:
             retrieval_feedback_recorded=retrieval_feedback_recorded,
             warnings=tuple(warnings),
             issue_codes=tuple(issue_codes),
-            quality_run_id=self._last_quality_run.run_id if self._last_quality_run else None,
+            quality_run_id=(
+                self._last_quality_run.run_id
+                if (
+                    self._last_quality_run
+                    and not self._last_quality_run.run_id.startswith("unpersisted-")
+                )
+                else None
+            ),
             quality_verdict_status=(
                 self._last_quality_run.verdict.status.value
                 if (self._last_quality_run and self._last_quality_run.verdict)

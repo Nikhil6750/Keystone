@@ -7,9 +7,9 @@ and bounded repair management.
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from app.contracts.planning import TaskSpec
@@ -122,9 +122,7 @@ class QualityFactoryCoordinator:
                 created_at=created_at,
                 completed_at=datetime.now(UTC),
             )
-            with contextlib.suppress(Exception):
-                self.repository.save_run(run)
-            return verdict, run
+            return self._persist_run_fail_closed(verdict, run)
 
         # 3. Empty plan check: if invoked Stage 9D produced 0 gates, fail closed
         if not plan.gates:
@@ -163,9 +161,7 @@ class QualityFactoryCoordinator:
                 created_at=created_at,
                 completed_at=datetime.now(UTC),
             )
-            with contextlib.suppress(Exception):
-                self.repository.save_run(run)
-            return empty_verdict, run
+            return self._persist_run_fail_closed(empty_verdict, run)
 
         # 4. Execute Gates
         gate_results: list[QualityGateResult] = []
@@ -195,46 +191,51 @@ class QualityFactoryCoordinator:
             completed_at=completed_at,
         )
 
+        return self._persist_run_fail_closed(verdict, run)
+
+    def _persist_run_fail_closed(
+        self,
+        verdict: QualityVerdict,
+        run: QualityRun,
+    ) -> tuple[QualityVerdict, QualityRun]:
+        """Persist a run or return consistent, explicitly non-authoritative evidence."""
         try:
             self.repository.save_run(run)
+            return verdict, run
         except Exception as exc:
-            logger.exception("failed_to_persist_quality_run run_id=%s error=%s", run_id, exc)
-            # Fail closed: persistence failure cannot produce a verified success verdict!
-            fail_verdict = QualityVerdict(
-                verdict_id=f"verdict-persist-fail-{run_id}",
-                status=QualityVerdictStatus.ERROR,
-                passed=False,
-                blocking_failures=run.gate_results,
-                advisory_failures=(),
-                total_gates=len(run.gate_results),
-                passed_gates=0,
-                failed_gates=len(run.gate_results),
-                skipped_gates=0,
-                error_gates=len(run.gate_results),
-                summary_explanation=(
-                    f"Quality persistence failure: could not persist authoritative "
-                    f"quality evidence ({exc}). Acceptance blocked."
-                ),
-                created_at=datetime.now(UTC),
-            )
-            unpersisted_run = QualityRun(
-                run_id=f"unpersisted-{run_id}",
-                execution_id=run.execution_id,
-                workflow_id=run.workflow_id,
-                task_id=run.task_id,
-                attempt_number=run.attempt_number,
-                agent_id=run.agent_id,
-                skill_id=run.skill_id,
-                skill_version=run.skill_version,
-                profile_id=run.profile_id,
-                gate_results=run.gate_results,
-                verdict=fail_verdict,
-                created_at=run.created_at,
-                completed_at=datetime.now(UTC),
-            )
-            return fail_verdict, unpersisted_run
+            logger.exception("failed_to_persist_quality_run run_id=%s error=%s", run.run_id, exc)
+            persistence_error_message = str(exc)
 
-        return verdict, run
+        summary = (
+            "Quality persistence failure: could not persist authoritative "
+            f"quality evidence ({persistence_error_message}). Acceptance blocked."
+        )
+        persistence_error = QualityGateResult(
+            gate_id="quality-persistence",
+            gate_type=QualityGateType.CUSTOM,
+            name="Quality Evidence Persistence",
+            status=QualityGateStatus.ERROR,
+            required=True,
+            evidence=QualityEvidence(summary=summary),
+            failure_reason=summary,
+            timestamp=datetime.now(UTC),
+        )
+        fail_results = (*run.gate_results, persistence_error)
+        fail_verdict = replace(
+            QualityVerdict.compute(
+                fail_results,
+                verdict_id=f"verdict-persist-fail-{run.run_id}",
+            ),
+            summary_explanation=summary,
+        )
+        unpersisted_run = replace(
+            run,
+            run_id=f"unpersisted-{run.run_id}",
+            gate_results=fail_results,
+            verdict=fail_verdict,
+            completed_at=datetime.now(UTC),
+        )
+        return fail_verdict, unpersisted_run
 
     def _execute_single_gate(
         self,

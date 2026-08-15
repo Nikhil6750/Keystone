@@ -142,9 +142,16 @@ def resolve_and_validate_target_path(
     Raises QualitySecurityError on directory traversal (..), path escape,
     outside absolute path, or symlink escape.
     """
+    if target_path is not None and not isinstance(target_path, (str, Path)):
+        raise QualitySecurityError(
+            "Invalid target_path: expected a string or filesystem path."
+        )
+
     raw_target = str(target_path).strip() if target_path is not None else default
     if not raw_target:
         raw_target = default
+    if "\x00" in raw_target:
+        raise QualitySecurityError("Invalid target_path: NUL characters are not permitted.")
 
     ws_root = Path(workspace_root).resolve()
     if not ws_root.is_dir():

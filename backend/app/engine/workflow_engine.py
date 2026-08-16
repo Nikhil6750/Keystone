@@ -69,6 +69,13 @@ _ERROR_TYPE_TO_FAILURE_CATEGORY: dict[str, FailureCategory] = {
 # is about to produce its step's *final* `LearningEvent`.
 VerificationResolver = Callable[[WorkflowStep, StepAttempt], VerificationStatus | None]
 
+# A per-step working-directory seam a caller may inject (Task Worktree
+# Isolation -- `app.engine.orchestration.worktree.TaskWorkspaceCoordinator
+# .workspace_for`). Returning `None` for a given step means "no override":
+# the engine falls back to its own flat `workspace_root`, so a caller that
+# never passes this (every existing caller/test) sees zero behavior change.
+WorkspaceRootResolver = Callable[[WorkflowStep], "str | None"]
+
 
 def _classify_failed_attempt(
     error_type: str | None,
@@ -157,11 +164,13 @@ class WorkflowEngine:
         learning_persistence: LearningPersistenceService | None = None,
         verification_resolver: VerificationResolver | None = None,
         workspace_root: str | None = None,
+        workspace_root_resolver: WorkspaceRootResolver | None = None,
     ) -> None:
         self._db = db
         self._db_lock = threading.RLock()
         self._registry = registry
         self._workspace_root = workspace_root
+        self._workspace_root_resolver = workspace_root_resolver
         self._circuit_breakers = circuit_breakers or CircuitBreakerRegistry(
             failure_threshold=_DEFAULT_FAILURE_THRESHOLD,
             recovery_timeout_seconds=_DEFAULT_RECOVERY_TIMEOUT_SECONDS,
@@ -947,6 +956,11 @@ class WorkflowEngine:
                 raise
 
             try:
+                effective_workspace_root = self._workspace_root
+                if self._workspace_root_resolver is not None:
+                    resolved_root = self._workspace_root_resolver(step)
+                    if resolved_root is not None:
+                        effective_workspace_root = resolved_root
                 request = StepExecutionRequest(
                     workflow_id=workflow.id,
                     step_id=step.id,
@@ -955,7 +969,7 @@ class WorkflowEngine:
                     step_input=dict(step.input_payload),
                     workflow_input=context.workflow_input,
                     previous_step_outputs=context.previous_step_outputs,
-                    workspace_root=self._workspace_root,
+                    workspace_root=effective_workspace_root,
                 )
                 output = _ensure_json_compatible(executor.execute(request))
             except StepExecutionError as exc:

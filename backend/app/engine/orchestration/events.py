@@ -80,6 +80,11 @@ class OrchestrationEventType(StrEnum):
     STEP_COMPLETED = "step.completed"
     STEP_FAILED = "step.failed"
 
+    WORKSPACE_CREATED = "workspace.created"
+    INTEGRATION_STARTED = "integration.started"
+    INTEGRATION_CONFLICT = "integration.conflict"
+    INTEGRATION_COMPLETED = "integration.completed"
+
     FILE_ACTIVITY = "file.activity"
     EXECUTION_HEARTBEAT = "execution.heartbeat"
     EXECUTION_PROGRESS = "execution.progress"

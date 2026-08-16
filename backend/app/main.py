@@ -94,6 +94,7 @@ def _build_orchestration_service_factory(app: FastAPI) -> ServiceFactory:
             skill_evidence_repo=getattr(app.state, "skill_evidence_repo", None),
             quality_coordinator=getattr(app.state, "quality_coordinator", None),
             intelligence_builder=getattr(app.state, "intelligence_builder", None),
+            enable_worktree_isolation=settings.worktree_isolation_enabled,
         )
         return service, db.close
 

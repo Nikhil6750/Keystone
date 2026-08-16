@@ -49,7 +49,20 @@ const PHASE_PHRASES: Record<string, string[]> = {
     'One final pass…',
     'Making sure everything works…',
   ],
+  integration: [
+    'Combining everyone’s work…',
+    'Merging changes…',
+    'Bringing it together…',
+    'Integrating results…',
+  ],
 };
+
+const INTEGRATION_EVENT_TYPES = new Set([
+  'workspace.created',
+  'integration.started',
+  'integration.conflict',
+  'integration.completed',
+]);
 
 export const ExecutionProgress: React.FC<ExecutionProgressProps> = ({ events }) => {
   const [currentPhase, setCurrentPhase] = useState<string>('planning');
@@ -73,6 +86,8 @@ export const ExecutionProgress: React.FC<ExecutionProgressProps> = ({ events }) 
       setCurrentPhase('testing');
     } else if (type.includes('verification')) {
       setCurrentPhase('verification');
+    } else if (type.includes('integration') || type === 'workspace.created') {
+      setCurrentPhase('integration');
     }
   }, [events]);
 
@@ -215,6 +230,11 @@ export const ExecutionProgress: React.FC<ExecutionProgressProps> = ({ events }) 
   const phrases = PHASE_PHRASES[currentPhase] || PHASE_PHRASES.planning;
   const currentPhraseText = phrases[phraseIndex % phrases.length];
 
+  // Task Worktree Isolation: workspace-created / integration progress,
+  // shown as a short, truthful activity feed -- each entry is a real
+  // backend event, never a fabricated status.
+  const integrationEvents = events.filter((evt) => INTEGRATION_EVENT_TYPES.has(evt.event_type));
+
   return (
     <div className="execution-progress-view space-y-4" role="status" aria-live="polite">
       {/* Rotating Truthful Status Phrase */}
@@ -302,6 +322,30 @@ export const ExecutionProgress: React.FC<ExecutionProgressProps> = ({ events }) 
         </div>
       ) : (
         <div className="text-xs text-slate-500 text-center py-4">Waiting for execution stream…</div>
+      )}
+
+      {/* Isolated-workspace / integration activity */}
+      {integrationEvents.length > 0 && (
+        <div className="space-y-1 pt-1">
+          {integrationEvents.map((evt) => (
+            <div
+              key={evt.event_id}
+              className="flex items-center space-x-2 text-xs text-slate-400 px-1"
+            >
+              {evt.event_type === 'integration.conflict' ? (
+                <AlertCircle size={12} className="text-amber-400 shrink-0" />
+              ) : evt.event_type === 'integration.completed' ? (
+                <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />
+              ) : (
+                <Loader2 size={12} className="text-slate-500 shrink-0" />
+              )}
+              <span className="truncate">
+                {evt.message || evt.event_type}
+                {evt.task_key ? ` (${evt.task_key})` : ''}
+              </span>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

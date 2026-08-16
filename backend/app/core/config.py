@@ -189,6 +189,18 @@ class Settings(BaseSettings):
         default=False, validation_alias="KEYSTONE_AUTO_COMPENSATE_ON_FAILURE"
     )
 
+    # --- Task Worktree Isolation ---
+    # `True` in real production wiring (`app.main`'s orchestration service
+    # factory): every orchestration with a `workspace_root` gets per-task
+    # Git worktree isolation (`app.engine.orchestration.worktree`).
+    # Constructing `EndToEndOrchestrationService` directly (every existing
+    # test) keeps that class's own `enable_worktree_isolation=False`
+    # default unless the caller opts in explicitly -- this setting only
+    # governs `app.main`'s own factory.
+    worktree_isolation_enabled: bool = Field(
+        default=True, validation_alias="KEYSTONE_WORKTREE_ISOLATION_ENABLED"
+    )
+
     # --- Live agent connection verification ---
     agent_workspace_root: str = Field(default=".", validation_alias="KEYSTONE_AGENT_WORKSPACE_ROOT")
     # 60s (the original default) proved impractical: manually verifying three

@@ -43,6 +43,10 @@ EXCLUDED_DIR_NAMES = frozenset(
         ".vscode",
         ".tox",
         "site-packages",
+        # Keystone's own task-worktree/evidence bookkeeping
+        # (`app.engine.orchestration.worktree`) -- never real evidence of
+        # a project's own changes.
+        ".keystone",
     }
 )
 

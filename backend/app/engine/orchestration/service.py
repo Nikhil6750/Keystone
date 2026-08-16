@@ -129,6 +129,7 @@ from app.engine.orchestration.models import (
 )
 from app.engine.orchestration.runtime import RuntimeCandidateProvider
 from app.engine.orchestration.verification_adapter import build_observed_outcome
+from app.engine.orchestration.worktree import TaskWorkspaceCoordinator
 from app.engine.planning.planner import Planner
 from app.engine.quality.coordinator import QualityFactoryCoordinator
 from app.engine.quality.repair import QualityRepairManager
@@ -219,10 +220,13 @@ class EndToEndOrchestrationService:
         skill_agent_intelligence: SkillAgentIntelligenceEngine | None = None,
         quality_coordinator: QualityFactoryCoordinator | None = None,
         intelligence_builder: EngineeringIntelligenceGraphBuilder | None = None,
+        enable_worktree_isolation: bool = False,
     ) -> None:
         self._db = db
         self._registry = registry
         self._workspace_root: str | None = None
+        self._enable_worktree_isolation = enable_worktree_isolation
+        self._task_workspace: TaskWorkspaceCoordinator | None = None
         self._last_quality_run: QualityRun | None = None
         self._candidate_provider = candidate_provider
         self._knowledge_index = knowledge_index
@@ -326,6 +330,11 @@ class EndToEndOrchestrationService:
         # and any recovery cycle), never re-derived from `goal` or any
         # other free-text field.
         self._workspace_root = request.workspace_root
+        self._task_workspace = (
+            TaskWorkspaceCoordinator(self._workspace_root, execution_id)
+            if self._enable_worktree_isolation and self._workspace_root is not None
+            else None
+        )
         warnings: list[str] = []
         issue_codes: list[str] = []
 
@@ -367,6 +376,7 @@ class EndToEndOrchestrationService:
                 warnings=[*warnings, "planner produced an empty task list"],
                 issue_codes=issue_codes,
             )
+            await self._finalize_task_workspace(execution_id, succeeded=False)
             await self._emit_execution_completed(execution_id, result)
             return result
 
@@ -395,6 +405,7 @@ class EndToEndOrchestrationService:
                 warnings=warnings,
                 issue_codes=issue_codes,
             )
+            await self._finalize_task_workspace(execution_id, succeeded=False)
             await self._emit_execution_completed(execution_id, result)
             return result
         agent_type_by_task_key, routing_context_by_task_key = routing
@@ -439,6 +450,7 @@ class EndToEndOrchestrationService:
                 learning_event_ids=learning_event_ids,
             )
             self._project_engineering_intelligence(workflow.id, step_to_task)
+            await self._finalize_task_workspace(execution_id, succeeded=False)
             await self._emit_execution_completed(execution_id, result)
             return result
 
@@ -521,6 +533,9 @@ class EndToEndOrchestrationService:
             retrieval_feedback_recorded=retrieval_feedback_recorded,
         )
         self._project_engineering_intelligence(final_workflow.id, step_to_task)
+        await self._finalize_task_workspace(
+            execution_id, succeeded=outcome == OrchestrationOutcome.VERIFIED_SUCCESS
+        )
         await self._emit_execution_completed(execution_id, result)
         return result
 
@@ -539,6 +554,30 @@ class EndToEndOrchestrationService:
             workflow_id=result.workflow_id,
             safe_issue_codes=result.issue_codes,
         )
+
+    async def _finalize_task_workspace(self, execution_id: str, *, succeeded: bool) -> None:
+        """Merges the integration candidate into the canonical workspace
+        (only when `succeeded`) and always cleans up this execution's
+        worktrees -- called from every `orchestrate()` exit path (Task
+        Worktree Isolation), so a failure reached before Phase D ever ran
+        still leaves nothing behind. A no-op when isolation was never
+        enabled/active for this execution. Runs the real git subprocess
+        work off the event loop (`asyncio.to_thread`), matching how
+        `_phase_e_verify_and_recover` already offloads its own blocking
+        work."""
+        if self._task_workspace is None:
+            return
+        await asyncio.to_thread(self._task_workspace.finalize, succeeded=succeeded)
+        for event in self._task_workspace.drain_events():
+            await self._emit(
+                execution_id,
+                OrchestrationEventType(event.event_type),
+                task_key=event.task_key,
+                message=event.message,
+                relative_path=event.relative_path,
+                safe_issue_codes=event.safe_issue_codes,
+                status=event.status,
+            )
 
     async def _emit_step_events(
         self, execution_id: str, workflow: Workflow, step_to_task: dict[str, TaskSpec]
@@ -781,6 +820,7 @@ class EndToEndOrchestrationService:
             learning_persistence=self._learning_persistence,
             verification_resolver=resolver,
             workspace_root=self._workspace_root,
+            workspace_root_resolver=self._workspace_root_resolver_for(step_to_task),
         )
         watcher = None
         if self._workspace_root:
@@ -833,6 +873,25 @@ class EndToEndOrchestrationService:
         ordered_steps = sorted(workflow.steps, key=lambda step: step.position)
         return {step.id: task for step, task in zip(ordered_steps, ordered_tasks, strict=True)}
 
+    def _workspace_root_resolver_for(
+        self, step_to_task: dict[str, TaskSpec]
+    ) -> Callable[[WorkflowStep], str | None]:
+        """Builds the per-step working-directory override `WorkflowEngine`
+        consults before every step attempt (Task Worktree Isolation). A
+        `None` return (isolation inactive, or `step_to_task` has no entry
+        for this step) means "no override" -- the engine falls back to its
+        own flat `self._workspace_root`, identical to today."""
+
+        def _resolve(step: WorkflowStep) -> str | None:
+            if self._task_workspace is None or not self._task_workspace.enabled:
+                return None
+            task = step_to_task.get(step.id)
+            if task is None:
+                return None
+            return self._task_workspace.workspace_for(task.key)
+
+        return _resolve
+
     def _make_verification_resolver(
         self,
         step_to_task: dict[str, TaskSpec],
@@ -843,12 +902,16 @@ class EndToEndOrchestrationService:
         # Only ever constructed when a real, validated `workspace_root` is
         # present (Stage 8C.3 P1 fix) -- every existing caller/test that
         # never sets `OrchestrationRequest.workspace_root` sees zero
-        # behavior change, since `evidence_collector` then stays `None` and
-        # `build_observed_outcome` receives exactly the executor's own
-        # `output_payload`, unmodified, just as before.
-        evidence_collector = (
+        # behavior change, since `legacy_evidence_collector` then stays
+        # `None` and `build_observed_outcome` receives exactly the
+        # executor's own `output_payload`, unmodified, just as before.
+        # When Task Worktree Isolation is active (`self._task_workspace`),
+        # this single, whole-run collector is never used -- each task gets
+        # its own collector, rooted at its own worktree, from
+        # `self._task_workspace.collector_for` below.
+        legacy_evidence_collector = (
             WorkspaceEvidenceCollector(self._workspace_root)
-            if self._workspace_root is not None
+            if self._workspace_root is not None and self._task_workspace is None
             else None
         )
 
@@ -860,6 +923,14 @@ class EndToEndOrchestrationService:
                 return None
 
             effective_attempt_number = attempt.attempt_number + attempt_number_offset
+
+            task_workspace = self._task_workspace
+            if task_workspace is not None and task_workspace.enabled:
+                exec_root: str | None = task_workspace.workspace_for(task.key)
+                evidence_collector = task_workspace.collector_for(task.key)
+            else:
+                exec_root = self._workspace_root
+                evidence_collector = legacy_evidence_collector
 
             result = None
             if task.expected_outcome is not None:
@@ -881,9 +952,9 @@ class EndToEndOrchestrationService:
                 )
 
             # Stage 9D Software Quality Factory Verification
-            if self._quality_coordinator is not None and self._workspace_root is not None:
+            if self._quality_coordinator is not None and exec_root is not None:
                 q_context = QualityExecutionContext(
-                    workspace_root=self._workspace_root,
+                    workspace_root=exec_root,
                     task_id=task.key,
                     task_type=task.task_type,
                     execution_id=execution_id,
@@ -965,6 +1036,56 @@ class EndToEndOrchestrationService:
                     failure_reason="simulated demo execution cannot be verification evidence",
                     created_at=datetime.now(UTC),
                 )
+
+            should_integrate = (
+                task_workspace is not None
+                and task_workspace.enabled
+                and (result is None or result.status == VerificationStatus.PASSED)
+            )
+            if should_integrate and task_workspace is not None:
+                # Task Worktree Isolation: a task with no configured
+                # verification is integrated unconditionally (identical in
+                # spirit to today's behavior for such a task -- it is never
+                # treated as a failure just because nothing evaluates it);
+                # a task whose own verification already passed is
+                # integrated because it passed. Either way, a real merge
+                # conflict is never resolved here -- the task's verdict is
+                # (re)set to FAILED so the existing Stage 4E recovery
+                # mechanism (`decide_recovery`/`reroute`, both unmodified)
+                # decides what happens next, exactly as it already does for
+                # any other verification failure.
+                integration = task_workspace.integrate(task.key)
+                if integration.status == "conflict":
+                    from app.contracts.enums import BenchmarkEvaluatorType
+
+                    conflict_summary = (
+                        ", ".join(integration.conflicting_files[:5]) or "unknown files"
+                    )
+                    failure_reason = (
+                        f"integration conflict with concurrently completed work "
+                        f"on: {conflict_summary}"
+                    )
+                    if result is not None:
+                        result = result.model_copy(
+                            update={
+                                "status": VerificationStatus.FAILED,
+                                "failure_reason": failure_reason,
+                            }
+                        )
+                    else:
+                        result = VerificationResult(
+                            verification_id=f"ver-{step.id}-{effective_attempt_number}",
+                            workflow_id=step.workflow_id,
+                            step_id=step.id,
+                            status=VerificationStatus.FAILED,
+                            evaluator_type=(
+                                task.expected_outcome.evaluator_type
+                                if task.expected_outcome
+                                else BenchmarkEvaluatorType.UNIT_TEST
+                            ),
+                            failure_reason=failure_reason,
+                            created_at=datetime.now(UTC),
+                        )
 
             if result is not None:
                 results_out[step.id] = result
@@ -1201,6 +1322,7 @@ class EndToEndOrchestrationService:
             learning_persistence=self._learning_persistence,
             verification_resolver=resolver,
             workspace_root=self._workspace_root,
+            workspace_root_resolver=self._workspace_root_resolver_for(new_step_to_task),
         )
         try:
             executed = engine.execute_workflow(recovery_workflow.id)

@@ -52,14 +52,32 @@ gated, git-native merge.
 `workspace_for`/`integrate`/`finalize` are keyed only by `task_key`, a
 Planner-assigned identifier. Whichever adapter the Router selected receives
 its task's directory the same way any other adapter would.
+
+**Untracked files, captured once, at the start.** A `git worktree` is
+checked out from a *commit* -- it never reflects a file the user created but
+never `git add`ed. Without help, every task worktree would be blind to
+whatever new, not-yet-tracked source files the user had sitting in the
+canonical workspace the moment they submitted their goal. `__init__` lists
+exactly those files -- via `git ls-files --others --exclude-standard`,
+i.e. real, `.gitignore`-respecting, git-native untracked-file discovery,
+never a hand-rolled ignore-pattern parser -- once, up front, and copies that
+same fixed list into every task worktree `workspace_for` creates. Reading
+that list is the only interaction this feature has with the canonical
+workspace: it is never `git add`ed, staged, or otherwise mutated there (see
+`_list_safe_untracked_files`). A task that never touches a copied file
+still ends up merging it back byte-identical (no-op for `git merge`); a task
+that edits or replaces it integrates the change through the exact same
+commit/merge path as any tracked file (`integrate()`), no special-casing.
 """
 
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import json
 import logging
 import re
+import shutil
 import subprocess
 import threading
 from dataclasses import dataclass
@@ -67,6 +85,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.engine.orchestration.evidence_collector import WorkspaceEvidenceCollector
+from app.engine.orchestration.workspace_snapshot import EXCLUDED_DIR_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +94,29 @@ _WORKTREES_DIRNAME = ".keystone/worktrees"
 _EVIDENCE_DIRNAME = ".keystone/evidence"
 _CANDIDATE_KEY = "_candidate"
 _MAX_TRACKED_FILES = 200
+_MAX_UNTRACKED_FILES = 2000
 _SLUG_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+
+# Defense-in-depth, on top of (never instead of) real `.gitignore`
+# compliance: filename patterns this module never copies into a task
+# worktree even if a project's own `.gitignore` doesn't happen to cover
+# them. Matched against the basename only, case-insensitively.
+_SECRET_FILENAME_PATTERNS: tuple[str, ...] = (
+    ".env",
+    ".env.*",
+    "*.pem",
+    "*.key",
+    "id_rsa",
+    "id_rsa.*",
+    "id_ed25519",
+    "id_ed25519.*",
+    ".npmrc",
+    ".netrc",
+    "credentials.json",
+    "secrets.json",
+    "*.pfx",
+    "*.p12",
+)
 
 
 def _slug(value: str) -> str:
@@ -111,6 +152,40 @@ def _parse_porcelain_paths(porcelain_output: str) -> list[str]:
         if len(line) > 3:
             paths.append(line[3:].strip().strip('"'))
     return sorted(set(paths))[:_MAX_TRACKED_FILES]
+
+
+def _is_excluded_relative_path(relative_posix_path: str) -> bool:
+    """`True` for a relative path this module must never copy into a task
+    worktree -- any path segment naming an excluded/generated directory
+    (`EXCLUDED_DIR_NAMES`, shared with `workspace_snapshot.py`: node_modules,
+    `.venv`, `.git`, `.keystone`, `dist`, `build`, `__pycache__`, ...), or a
+    basename matching a known secret-filename pattern
+    (`_SECRET_FILENAME_PATTERNS`), checked independently of whatever the
+    project's own `.gitignore` does or does not cover."""
+    segments = relative_posix_path.split("/")
+    if any(segment in EXCLUDED_DIR_NAMES for segment in segments[:-1]):
+        return True
+    basename = segments[-1]
+    return any(fnmatch.fnmatch(basename.lower(), pattern) for pattern in _SECRET_FILENAME_PATTERNS)
+
+
+def _list_safe_untracked_files(canonical_root: str) -> list[str]:
+    """Real, `.gitignore`-respecting untracked-file discovery -- delegates
+    entirely to git's own `--exclude-standard` (honors `.gitignore`,
+    `.git/info/exclude`, and the user's global excludes file) rather than
+    reimplementing ignore-pattern matching. Read-only: this command never
+    stages, adds, or otherwise mutates the canonical workspace. Bounded
+    (`_MAX_UNTRACKED_FILES`) so a pathological workspace can never make
+    worktree creation copy an unbounded number of files."""
+    try:
+        result = _run_git(["ls-files", "--others", "--exclude-standard", "-z"], cwd=canonical_root)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+    candidates = [entry for entry in result.stdout.split("\0") if entry]
+    safe = [entry for entry in candidates if not _is_excluded_relative_path(entry)]
+    return sorted(safe)[:_MAX_UNTRACKED_FILES]
 
 
 @dataclass(frozen=True)
@@ -198,6 +273,16 @@ class TaskWorkspaceCoordinator:
         )
         self._enabled = self._detect_or_init_repo()
         self._baseline_ref = self._capture_baseline_ref() if self._enabled else None
+        # Captured exactly once, "at orchestration start" -- every task
+        # worktree this coordinator ever creates copies this same fixed
+        # list (see module docstring). Read-only against the canonical
+        # workspace; never re-scanned mid-execution, so a file the user
+        # creates *after* submitting the goal is out of scope by design,
+        # identical in spirit to `workspace_root` itself never being
+        # re-resolved mid-run.
+        self._untracked_files = (
+            _list_safe_untracked_files(self._canonical_root) if self._enabled else []
+        )
 
     @property
     def enabled(self) -> bool:
@@ -256,16 +341,15 @@ class TaskWorkspaceCoordinator:
             return False
 
     def _capture_baseline_ref(self) -> str:
-        """The task-worktree starting point: the working tree's current
-        state, uncommitted changes to *tracked* files included, captured
-        without touching HEAD or the working directory (`git stash
-        create` builds a commit object; it never stashes/pops anything).
-        Newly created, not-yet-tracked files are not captured this way --
-        a documented scope boundary, not a silent gap: capturing those
-        losslessly would require mutating the user's real working tree
-        (`git stash push -u`), which this module deliberately never risks.
-        Falls back to `HEAD` when the tree is already clean or `git stash
-        create` cannot run for any reason."""
+        """The task-worktree starting point for *tracked* files: the
+        working tree's current state, uncommitted changes included,
+        captured without touching HEAD or the working directory (`git
+        stash create` builds a commit object; it never stashes/pops
+        anything). Untracked files are handled separately, by copy, not by
+        this ref -- see `_list_safe_untracked_files` and
+        `_copy_untracked_files_into`; a real `git` ref can only ever point
+        at tracked/committed content. Falls back to `HEAD` when the tree is
+        already clean or `git stash create` cannot run for any reason."""
         try:
             result = _run_git(["stash", "create"], cwd=self._canonical_root)
             sha = result.stdout.strip()
@@ -307,6 +391,13 @@ class TaskWorkspaceCoordinator:
                 )
                 return self._canonical_root
 
+            # Untracked-but-safe files (new source the user created before
+            # submitting the goal) -- copied in before the evidence
+            # collector below takes its "before" snapshot, so they read as
+            # this task's genuine starting state, not as something the
+            # agent itself introduced.
+            self._copy_untracked_files_into(path)
+
             self._tasks[task_key] = _TaskState(
                 path=path, branch=branch, collector=WorkspaceEvidenceCollector(path)
             )
@@ -339,6 +430,32 @@ class TaskWorkspaceCoordinator:
             )
             return False
         return True
+
+    def _copy_untracked_files_into(self, worktree_path: str) -> None:
+        """Copies `self._untracked_files` (captured once, read-only,
+        against the canonical workspace -- see `_list_safe_untracked_files`)
+        into a freshly created task worktree, preserving directory
+        structure. A per-file failure (source vanished, permission error)
+        is logged and skipped -- it never aborts worktree creation for the
+        files that *do* copy successfully. Copies content and metadata
+        (`shutil.copy2`), never reads the file through Python text decoding
+        first, so binary files copy losslessly, unlike the bounded,
+        content-reading snapshot `WorkspaceEvidenceCollector` uses for
+        evidence."""
+        canonical_root = Path(self._canonical_root)
+        destination_root = Path(worktree_path)
+        for relative_path in self._untracked_files:
+            source = canonical_root / relative_path
+            if not source.is_file():
+                continue  # deleted/renamed between listing and copying
+            destination = destination_root / relative_path
+            try:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
+            except OSError as exc:
+                logger.warning(
+                    "untracked_file_copy_failed relative_path=%s error=%s", relative_path, exc
+                )
 
     def _evict_task_locked(self, task_key: str) -> None:
         state = self._tasks.pop(task_key, None)
@@ -465,6 +582,52 @@ class TaskWorkspaceCoordinator:
         except OSError:
             logger.warning("worktree_evidence_persist_failed task_key=%s", task_key)
 
+    def _clear_known_untracked_files_locked(self) -> dict[str, bytes]:
+        """`git merge` refuses outright to write to any path a real
+        untracked file currently occupies in canonical -- regardless of
+        whether the incoming content would actually differ, git treats an
+        untracked file as "in the way," never as something it can diff
+        against or silently overwrite. Since the candidate branch may now
+        carry a real commit for exactly those paths (an agent that never
+        touched a copied file still has it in its own commit -- see
+        `integrate()`'s `git add -A`), this removes *only* the specific
+        files this coordinator itself already knows about and already
+        copied (`self._untracked_files`) -- a plain filesystem delete of a
+        path git was never tracking, never a `git rm` -- so the merge that
+        follows is free to write each one's correct final content (the
+        agent's real change, or the exact same content it already had).
+        Returns a byte-for-byte backup keyed by relative path, so the
+        caller can restore every file untouched if the merge that follows
+        does not succeed for some other, unrelated reason."""
+        canonical_root = Path(self._canonical_root)
+        backups: dict[str, bytes] = {}
+        for relative_path in self._untracked_files:
+            target = canonical_root / relative_path
+            if not target.is_file():
+                continue
+            try:
+                backups[relative_path] = target.read_bytes()
+                target.unlink()
+            except OSError as exc:
+                logger.warning(
+                    "untracked_file_clear_failed relative_path=%s error=%s", relative_path, exc
+                )
+        return backups
+
+    def _restore_untracked_backups_locked(self, backups: dict[str, bytes]) -> None:
+        canonical_root = Path(self._canonical_root)
+        for relative_path, content in backups.items():
+            target = canonical_root / relative_path
+            if target.exists():
+                continue  # the merge (or something else) already recreated it
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(content)
+            except OSError as exc:
+                logger.error(
+                    "untracked_file_restore_failed relative_path=%s error=%s", relative_path, exc
+                )
+
     # --- Finalization ------------------------------------------------------
 
     def finalize(self, *, succeeded: bool) -> FinalizeOutcome:
@@ -477,6 +640,7 @@ class TaskWorkspaceCoordinator:
         with self._lock:
             outcome = FinalizeOutcome(merged_to_canonical=False)
             if succeeded and self._candidate_created:
+                untracked_backups = self._clear_known_untracked_files_locked()
                 merge_result = _run_git(
                     [
                         "merge",
@@ -497,6 +661,7 @@ class TaskWorkspaceCoordinator:
                 else:
                     conflicts = self._conflicting_files_locked(self._canonical_root)
                     _run_git(["merge", "--abort"], cwd=self._canonical_root)
+                    self._restore_untracked_backups_locked(untracked_backups)
                     outcome = FinalizeOutcome(
                         merged_to_canonical=False,
                         conflicting_files=tuple(conflicts),

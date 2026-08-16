@@ -16,6 +16,7 @@ and cleanup -- actually fires end to end, not just in isolation.
 """
 
 import inspect
+import subprocess
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -29,6 +30,31 @@ from tests.test_orchestration_workspace_evidence import WorkspaceWritingExecutor
 def _seed_repo(root: Path, **files: str) -> None:
     for name, content in files.items():
         (root / name).write_text(content, encoding="utf-8")
+
+
+def _write_files(root: Path, **files: str) -> None:
+    """Writes files (creating parent directories) without touching git at
+    all -- used to create genuinely *untracked* content after a repo
+    already has a baseline commit, mirroring a real user who edited/added
+    files and then immediately submitted a goal without committing."""
+    for relative_name, content in files.items():
+        path = root / relative_name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+
+def _init_git_baseline(root: Path, **files: str) -> None:
+    """Establishes a real, already-committed repo -- the state
+    `TaskWorkspaceCoordinator` itself would find if it never had to
+    auto-`git init` anything. Files passed here become *tracked*; anything
+    written afterward via `_write_files` stays genuinely untracked."""
+    _write_files(root, **files)
+    env = ["-c", "user.email=test@localhost", "-c", "user.name=Test"]
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", *env, "add", "-A"], cwd=root, check=True, capture_output=True)
+    subprocess.run(
+        ["git", *env, "commit", "-m", "baseline"], cwd=root, check=True, capture_output=True
+    )
 
 
 def _coordinator(root: Path, execution_id: str = "exec-1") -> TaskWorkspaceCoordinator:
@@ -237,6 +263,165 @@ def test_cleanup_removes_worktrees_but_never_deletes_real_user_files(tmp_path: P
     assert not (tmp_path / ".keystone" / "worktrees" / "exec-1").exists()
     # Evidence survives cleanup of the worktrees themselves.
     assert (tmp_path / ".keystone" / "evidence" / "exec-1" / "some-task.json").exists()
+
+
+# --- Untracked files, captured at orchestration start ----------------------
+
+
+def test_untracked_source_file_is_visible_to_agent(tmp_path: Path) -> None:
+    _init_git_baseline(tmp_path, **{"README.md": "hello\n"})
+    _write_files(tmp_path, **{"new_module.py": "def new():\n    pass\n"})
+
+    coord = _coordinator(tmp_path)
+    worktree = Path(coord.workspace_for("some-task"))
+
+    assert (worktree / "new_module.py").exists()
+    assert (worktree / "new_module.py").read_text(encoding="utf-8") == "def new():\n    pass\n"
+
+
+def test_gitignored_untracked_file_is_not_copied(tmp_path: Path) -> None:
+    _init_git_baseline(tmp_path, **{"README.md": "hello\n", ".gitignore": "*.local\n"})
+    _write_files(tmp_path, **{"scratch.local": "not for agents\n"})
+
+    coord = _coordinator(tmp_path)
+    worktree = Path(coord.workspace_for("some-task"))
+
+    assert not (worktree / "scratch.local").exists()
+
+
+def test_secret_filename_never_copied_even_without_gitignore(tmp_path: Path) -> None:
+    """`.gitignore` compliance is the primary defense (previous test); this
+    proves the hardcoded denylist still protects a project whose
+    `.gitignore` simply doesn't mention `.env`."""
+    _init_git_baseline(tmp_path, **{"README.md": "hello\n"})
+    _write_files(tmp_path, **{".env": "SECRET_TOKEN=abc123\n"})
+
+    coord = _coordinator(tmp_path)
+    worktree = Path(coord.workspace_for("some-task"))
+
+    assert not (worktree / ".env").exists()
+
+
+def test_nested_untracked_files_preserve_directory_structure(tmp_path: Path) -> None:
+    _init_git_baseline(tmp_path, **{"README.md": "hello\n"})
+    _write_files(tmp_path, **{"src/pkg/nested_module.py": "VALUE = 1\n"})
+
+    coord = _coordinator(tmp_path)
+    worktree = Path(coord.workspace_for("some-task"))
+    nested = worktree / "src" / "pkg" / "nested_module.py"
+
+    assert nested.exists()
+    assert nested.read_text(encoding="utf-8") == "VALUE = 1\n"
+
+
+def test_no_git_or_keystone_directory_recursion(tmp_path: Path) -> None:
+    _init_git_baseline(tmp_path, **{"README.md": "hello\n"})
+    _write_files(
+        tmp_path,
+        **{
+            "node_modules/pkg/index.js": "module.exports = {};\n",
+            ".keystone/evidence/old-exec/leftover.json": "{}\n",
+        },
+    )
+
+    coord = _coordinator(tmp_path)
+    worktree = Path(coord.workspace_for("some-task"))
+
+    assert not (worktree / "node_modules").exists()
+    assert not (worktree / ".keystone").exists()
+
+
+def test_failed_task_with_untracked_file_preserves_canonical_original(tmp_path: Path) -> None:
+    _init_git_baseline(tmp_path, **{"README.md": "hello\n"})
+    _write_files(tmp_path, **{"draft.py": "original\n"})
+
+    coord = _coordinator(tmp_path)
+    worktree = Path(coord.workspace_for("failing-task"))
+    (worktree / "draft.py").write_text("agent broke it\n", encoding="utf-8")
+    # "failing-task" never reaches `integrate()` -- exactly what a real
+    # execution/verification failure looks like from this coordinator's
+    # point of view (the resolver only calls `integrate()` for a step
+    # whose own attempt succeeded).
+
+    final = coord.finalize(succeeded=True)
+
+    assert final.merged_to_canonical is False  # nothing was ever integrated
+    assert (tmp_path / "draft.py").read_text(encoding="utf-8") == "original\n"
+
+
+def test_successful_modification_of_untracked_file_integrates_to_canonical(tmp_path: Path) -> None:
+    _init_git_baseline(tmp_path, **{"README.md": "hello\n"})
+    _write_files(tmp_path, **{"draft.py": "original\n"})
+
+    coord = _coordinator(tmp_path)
+    worktree = Path(coord.workspace_for("good-task"))
+    (worktree / "draft.py").write_text("agent improved it\n", encoding="utf-8")
+
+    outcome = coord.integrate("good-task")
+    assert outcome.status == "integrated"
+    assert "draft.py" in outcome.files_changed
+
+    final = coord.finalize(succeeded=True)
+    assert final.merged_to_canonical is True
+    assert (tmp_path / "draft.py").read_text(encoding="utf-8") == "agent improved it\n"
+
+
+def test_untouched_untracked_file_round_trips_without_blocking_integration(tmp_path: Path) -> None:
+    """A copied untracked file no task ever modifies must never block the
+    final merge -- its content in the integrated candidate is
+    byte-identical to what canonical already has, so there is nothing for
+    `git merge` to actually overwrite."""
+    _init_git_baseline(tmp_path, **{"README.md": "hello\n"})
+    _write_files(tmp_path, **{"context.txt": "reference material\n"})
+
+    coord = _coordinator(tmp_path)
+    worktree = Path(coord.workspace_for("some-task"))
+    (worktree / "new_output.py").write_text("# real change\n", encoding="utf-8")
+    # "context.txt" was copied in as agent context but never modified.
+
+    assert coord.integrate("some-task").status == "integrated"
+    final = coord.finalize(succeeded=True)
+
+    assert final.merged_to_canonical is True
+    assert (tmp_path / "context.txt").read_text(encoding="utf-8") == "reference material\n"
+    assert (tmp_path / "new_output.py").exists()
+
+
+def test_concurrent_tasks_get_independent_copies_of_untracked_files(tmp_path: Path) -> None:
+    _init_git_baseline(tmp_path, **{"README.md": "hello\n"})
+    _write_files(tmp_path, **{"shared_context.py": "base\n"})
+
+    coord = _coordinator(tmp_path)
+    a = Path(coord.workspace_for("agent-a-task"))
+    b = Path(coord.workspace_for("agent-b-task"))
+
+    assert (a / "shared_context.py").read_text(encoding="utf-8") == "base\n"
+    assert (b / "shared_context.py").read_text(encoding="utf-8") == "base\n"
+
+    (a / "shared_context.py").write_text("edited by A\n", encoding="utf-8")
+    (b / "shared_context.py").write_text("edited by B\n", encoding="utf-8")
+
+    # Two independent filesystem copies -- editing one never touches the
+    # other's, and canonical is untouched by either in-flight edit.
+    assert (a / "shared_context.py").read_text(encoding="utf-8") == "edited by A\n"
+    assert (b / "shared_context.py").read_text(encoding="utf-8") == "edited by B\n"
+    assert (tmp_path / "shared_context.py").read_text(encoding="utf-8") == "base\n"
+
+
+def test_canonical_workspace_is_never_git_added_by_untracked_file_capture(tmp_path: Path) -> None:
+    """Requirement: capturing/copying untracked files must never mutate or
+    `git add` the canonical workspace itself."""
+    _init_git_baseline(tmp_path, **{"README.md": "hello\n"})
+    _write_files(tmp_path, **{"still_untracked.py": "x = 1\n"})
+
+    coord = _coordinator(tmp_path)
+    coord.workspace_for("some-task")
+
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=tmp_path, check=True, capture_output=True, text=True
+    )
+    assert "still_untracked.py" in status.stdout
+    assert status.stdout.strip().startswith("??")  # still untracked, never staged
 
 
 # --- End-to-end wiring through the real orchestration pipeline --------------
